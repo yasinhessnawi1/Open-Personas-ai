@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (web app)
+node_modules/
+.next/
+out/
+
+# ChromaDB local storage
+.chroma/
+
+# Persona working directories
+.persona_work/
+
+# UV
+uv.lock
+
+# Docker
+docker-compose.override.yml
+
+docs/
+CLAUDE.md

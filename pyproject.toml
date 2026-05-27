@@ -1,0 +1,37 @@
+[project]
+name = "persona-workspace"
+version = "0.1.0"
+description = "Persona monorepo workspace"
+requires-python = ">=3.11"
+
+[tool.uv.workspace]
+members = ["packages/core", "packages/runtime", "packages/api"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "ANN", "B", "A", "COM", "C4", "PT", "RET", "SIM", "TCH", "ARG", "PTH", "ERA"]
+ignore = ["ANN101", "ANN102", "COM812"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["packages/core/tests", "packages/runtime/tests", "packages/api/tests"]
+markers = [
+    "integration: marks tests that require external services (Docker, real DB)",
+    "external: marks tests that call real external APIs (Anthropic, OpenAI)",
+    "contract: marks protocol contract compliance tests",
+]
+addopts = "-v --tb=short -m 'not integration and not external'"
