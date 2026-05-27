@@ -84,6 +84,42 @@ Public guarantees:
 
 See [`docs/specs/spec_02/spec_02_backends.md`](../../docs/specs/spec_02/spec_02_backends.md) and [`docs/specs/spec_02/decisions.md`](../../docs/specs/spec_02/decisions.md) for the full surface.
 
+## Tools, MCP, and the Toolbox (Spec 03)
+
+Spec 03 adds `persona.tools/` — the layer that lets a persona act on the world. Built around two Protocols and a single registry:
+
+```
+persona.tools
+├── protocol.py        ToolDescriptor (metadata), AsyncTool (async execute), @tool decorator
+├── formatting.py      format_tool_result(call, result, *, provider_name) -> ConversationMessage
+├── toolbox.py         Toolbox (registry + literal-only allow-list + dispatch)
+├── errors.py          re-exports ToolNotAllowedError, ToolExecutionError, SandboxViolationError,
+│                      MCPConnectionError, MCPServerUnavailableError
+├── _sandbox.py        path resolver; pure function; tests-first, security-reviewed
+├── _factory.py        build_default_toolbox(config, persona, *, audit_logger)
+├── builtin/
+│   ├── web_search.py        Brave default; _SearchProvider Protocol; Tavily/SerpAPI stubs
+│   ├── _search_providers.py internal provider clients
+│   ├── web_fetch.py         httpx + trafilatura; truncation via ToolResult.truncated
+│   ├── file_read.py         sandboxed; UTF-8 with errors=replace; 1 MB cap
+│   └── file_write.py        sandboxed; emits AuditEvent on every write
+└── mcp/
+    ├── client.py            MCPClient (Streamable HTTP via mcp.client.streamable_http)
+    └── adapter.py           MCPToolAdapter (wraps server tools as AsyncTool)
+```
+
+`persona.schema.tools.ToolResult` extends additively with `data: dict[str, Any] | None` and `truncated: bool` (D-03-3). `is_error=True` + `content=<message>` remains the single failure-truth — no separate `error` field.
+
+Public guarantees:
+- One Protocol pair: `ToolDescriptor` (metadata) + `AsyncTool` (async `execute`). Spec-01's `Tool` Protocol kept as a sibling (D-03-2).
+- `@tool` decorator catches argument-validation errors AND function-body exceptions; both return `ToolResult(is_error=True, ...)` (D-03-5).
+- Literal-only allow-list (no wildcards). `None` is permissive with a WARNING log — development convenience only (D-03-7).
+- File tools sandboxed via a path resolver that rejects `..`, absolute paths, NULL bytes, mixed `\\` separators on POSIX, paths >4096 chars, and symlinks escaping the sandbox root (D-03-13..D-03-15).
+- MCP uses Streamable HTTP only in v0.1 (D-03-19); legacy SSE deprecated upstream; stdio deferred. Graceful-degradation `strict=False` for Toolbox auto-load (D-03-20).
+- Audit events on `file_write` and MCP `connect`/`disconnect`/`server_unavailable` only — per-call dispatch audits skipped (D-03-21).
+
+See [`docs/specs/spec_03/spec_03_tools.md`](../../docs/specs/spec_03/spec_03_tools.md) and [`docs/specs/spec_03/decisions.md`](../../docs/specs/spec_03/decisions.md) for the full surface.
+
 ## Dependencies
 
 ```
@@ -98,6 +134,8 @@ httpx>=0.27,<1       # live in spec 02 (OllamaBackend)
 tiktoken>=0.7,<1     # parked; spec 05 (prompt builder)
 anthropic>=0.30,<1   # spec 02 (Anthropic SDK)
 openai>=1.30,<2      # spec 02 (OpenAI/DeepSeek/Groq/Together)
+trafilatura>=2.0,<3  # spec 03 (web_fetch HTML extraction)
+mcp>=1.0,<2          # spec 03 (MCP client; Streamable HTTP transport)
 ```
 
 Optional extras:

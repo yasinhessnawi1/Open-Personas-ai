@@ -19,6 +19,8 @@ from __future__ import annotations
 __all__ = [
     "AuditWriteError",
     "BrokenVersionChainError",
+    "MCPConnectionError",
+    "MCPServerUnavailableError",
     "PersonaError",
     "PersonaNotFoundError",
     "PersonaSelfWriteForbiddenError",
@@ -119,3 +121,21 @@ class ToolExecutionError(PersonaError):
 
 class SandboxViolationError(PersonaError):
     """Raised when a file operation attempts to escape its sandbox directory."""
+
+
+class MCPConnectionError(PersonaError):
+    """Raised when an MCP server cannot be reached in fail-loud mode.
+
+    Spec 03 §7.3: the Toolbox auto-load path catches connection errors and
+    logs a warning instead (graceful degradation per D-03-20), but explicit
+    callers that invoke ``MCPClient.connect(strict=True)`` get this exception.
+    """
+
+
+class MCPServerUnavailableError(PersonaError):
+    """Raised when a registered MCP server is unreachable in strict mode.
+
+    Subclass of :class:`PersonaError` (flat hierarchy per D-03-1). Used by
+    :class:`persona.tools.mcp.client.MCPClient` when ``strict=True`` and the
+    underlying transport fails.
+    """

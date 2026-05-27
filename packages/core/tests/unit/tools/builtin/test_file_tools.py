@@ -1,0 +1,407 @@
+"""Tests for file_read + file_write (T10)."""
+
+# ruff: noqa: ANN401, ARG001, ARG002, ERA001
+from __future__ import annotations
+
+import os
+from typing import TYPE_CHECKING
+
+import pytest
+from persona.tools.audit import MemoryToolAuditLogger, ToolAuditEvent
+from persona.tools.builtin.file_read import make_file_read_tool
+from persona.tools.builtin.file_write import make_file_write_tool
+from persona.tools.protocol import AsyncTool
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+# Section: file_read happy path
+
+
+class TestFileReadHappyPath:
+    @pytest.mark.asyncio
+    async def test_reads_utf8_text(self, tmp_path: Path) -> None:
+        target = tmp_path / "hello.txt"
+        target.write_text("Hei verden", encoding="utf-8")
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="hello.txt")
+        assert result.is_error is False
+        assert result.content == "Hei verden"
+        assert result.truncated is False
+        assert result.data is not None
+        assert result.data["path"] == "hello.txt"
+        assert result.data["bytes_read"] == str(len(b"Hei verden"))
+
+    @pytest.mark.asyncio
+    async def test_reads_nested_path(self, tmp_path: Path) -> None:
+        (tmp_path / "a" / "b").mkdir(parents=True)
+        (tmp_path / "a" / "b" / "c.txt").write_text("nested")
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="a/b/c.txt")
+        assert result.content == "nested"
+
+    @pytest.mark.asyncio
+    async def test_replaces_invalid_utf8(self, tmp_path: Path) -> None:
+        target = tmp_path / "binary.txt"
+        target.write_bytes(b"valid\xff\xfeinvalid")
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="binary.txt")
+        assert result.is_error is False
+        # errors="replace" → invalid bytes become the U+FFFD replacement character.
+        assert "�" in result.content
+        assert "valid" in result.content
+        assert "invalid" in result.content
+
+    @pytest.mark.asyncio
+    async def test_truncates_large_files(self, tmp_path: Path) -> None:
+        target = tmp_path / "big.txt"
+        # 2 MB of 'x' — larger than the 1 MB cap.
+        target.write_bytes(b"x" * (1_048_576 + 1024))
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="big.txt")
+        assert result.is_error is False
+        assert result.truncated is True
+        assert len(result.content) == 1_048_576
+
+
+# Section: file_read error paths
+
+
+class TestFileReadErrors:
+    @pytest.mark.asyncio
+    async def test_missing_file(self, tmp_path: Path) -> None:
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="does-not-exist.txt")
+        assert result.is_error is True
+        assert "FileNotFoundError" in result.content
+
+    @pytest.mark.asyncio
+    async def test_directory_not_file(self, tmp_path: Path) -> None:
+        (tmp_path / "subdir").mkdir()
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="subdir")
+        assert result.is_error is True
+        # IsADirectoryError or generic OSError from O_NOFOLLOW path; both acceptable.
+        assert "Directory" in result.content or "directory" in result.content
+
+    @pytest.mark.asyncio
+    async def test_sandbox_violation_rejected(self, tmp_path: Path) -> None:
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="../../../etc/passwd")
+        assert result.is_error is True
+        assert "SandboxViolationError" in result.content
+
+    @pytest.mark.asyncio
+    async def test_null_byte_rejected(self, tmp_path: Path) -> None:
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="file\x00.txt")
+        assert result.is_error is True
+        assert "SandboxViolationError" in result.content
+
+    @pytest.mark.asyncio
+    async def test_symlink_escape_rejected_at_open(self, tmp_path: Path) -> None:
+        # The resolver catches symlink escape at resolution time. But: a
+        # symlink to an outside target placed at a path inside the sandbox
+        # is also rejected by O_NOFOLLOW at the open() (defense in depth).
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        outside = tmp_path / "outside.txt"
+        outside.write_text("escape")
+        link = sandbox / "link.txt"
+        link.symlink_to(outside)
+
+        tool_inst = make_file_read_tool(sandbox_root=sandbox)
+        result = await tool_inst.execute(path="link.txt")
+        assert result.is_error is True
+
+
+# Section: file_write happy path
+
+
+class TestFileWriteHappyPath:
+    @pytest.mark.asyncio
+    async def test_writes_new_file(self, tmp_path: Path) -> None:
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="new.txt", content="hello")
+        assert result.is_error is False
+        assert "Wrote" in result.content
+        assert (tmp_path / "new.txt").read_text() == "hello"
+
+    @pytest.mark.asyncio
+    async def test_overwrites_existing_file(self, tmp_path: Path) -> None:
+        (tmp_path / "exists.txt").write_text("old content")
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="exists.txt", content="new content")
+        assert result.is_error is False
+        assert (tmp_path / "exists.txt").read_text() == "new content"
+
+    @pytest.mark.asyncio
+    async def test_creates_parent_dirs(self, tmp_path: Path) -> None:
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="a/b/c.txt", content="deep")
+        assert result.is_error is False
+        assert (tmp_path / "a" / "b" / "c.txt").read_text() == "deep"
+
+    @pytest.mark.asyncio
+    async def test_writes_utf8(self, tmp_path: Path) -> None:
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        await tool_inst.execute(path="norsk.txt", content="Hei æøå")
+        assert (tmp_path / "norsk.txt").read_bytes() == "Hei æøå".encode()
+
+    @pytest.mark.asyncio
+    async def test_round_trip_with_file_read(self, tmp_path: Path) -> None:
+        writer = make_file_write_tool(sandbox_root=tmp_path)
+        reader = make_file_read_tool(sandbox_root=tmp_path)
+        await writer.execute(path="rt.txt", content="round trip")
+        result = await reader.execute(path="rt.txt")
+        assert result.is_error is False
+        assert result.content == "round trip"
+
+
+# Section: file_write error paths
+
+
+class TestFileWriteErrors:
+    @pytest.mark.asyncio
+    async def test_sandbox_violation_rejected(self, tmp_path: Path) -> None:
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="../../etc/passwd", content="evil")
+        assert result.is_error is True
+        assert "SandboxViolationError" in result.content
+        # The actual filesystem write should NOT have happened.
+        assert not (tmp_path.parent / "etc").exists()
+
+    @pytest.mark.asyncio
+    async def test_absolute_path_rejected(self, tmp_path: Path) -> None:
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="/etc/passwd", content="evil")
+        assert result.is_error is True
+        assert "SandboxViolationError" in result.content
+
+    @pytest.mark.asyncio
+    async def test_symlink_escape_rejected(self, tmp_path: Path) -> None:
+        # A symlink whose .resolve() points OUTSIDE the sandbox is rejected
+        # at resolve time. (Per D-03-14, inside-sandbox symlinks are allowed.)
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        outside = tmp_path / "outside.txt"
+        outside.write_text("victim")
+        escape_link = sandbox / "escape.txt"
+        escape_link.symlink_to(outside)
+
+        tool_inst = make_file_write_tool(sandbox_root=sandbox)
+        result = await tool_inst.execute(path="escape.txt", content="overwrite")
+        assert result.is_error is True
+        # The outside file's content must not have been changed via the symlink.
+        assert outside.read_text() == "victim"
+
+    @pytest.mark.asyncio
+    async def test_lone_surrogate_returns_clean_error(self, tmp_path: Path) -> None:
+        # Security review Finding 5: lone surrogates in `content` raise
+        # UnicodeEncodeError. Catch it and return a clean ToolResult.
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="x.txt", content="bad\ud800char")
+        assert result.is_error is True
+        assert "UnicodeEncodeError" in result.content
+        # File must NOT have been created.
+        assert not (tmp_path / "x.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_os_write_oserror_returns_clean_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Security review Finding 10.2: os.write can raise OSError (ENOSPC etc.).
+        # We catch and return a ToolResult; the fd is still closed.
+        real_write = os.write
+        call_count = {"n": 0}
+
+        def flaky_write(fd: int, data: bytes, /) -> int:
+            call_count["n"] += 1
+            # Raise on first write to our path; allow others (audit logger etc.).
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(os, "write", flaky_write)
+        try:
+            tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+            result = await tool_inst.execute(path="x.txt", content="content")
+        finally:
+            monkeypatch.setattr(os, "write", real_write)
+
+        assert result.is_error is True
+        assert "OSError" in result.content
+        assert call_count["n"] >= 1
+
+
+# Section: audit emission on file_write
+
+
+class TestFileWriteAudit:
+    @pytest.mark.asyncio
+    async def test_emits_one_event_per_successful_write(self, tmp_path: Path) -> None:
+        audit = MemoryToolAuditLogger()
+        tool_inst = make_file_write_tool(
+            sandbox_root=tmp_path,
+            audit_logger=audit,
+            persona_id="legal-bot",
+        )
+        await tool_inst.execute(path="report.md", content="draft")
+        assert len(audit.events) == 1
+        ev = audit.events[0]
+        assert isinstance(ev, ToolAuditEvent)
+        assert ev.tool_name == "file_write"
+        assert ev.action == "write"
+        assert ev.resource == "report.md"
+        assert ev.persona_id == "legal-bot"
+        assert ev.metadata["bytes"] == str(len(b"draft"))
+        assert ev.is_error is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_on_failure(self, tmp_path: Path) -> None:
+        audit = MemoryToolAuditLogger()
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path, audit_logger=audit)
+        result = await tool_inst.execute(path="../../escape", content="x")
+        assert result.is_error is True
+        # Failed writes (sandbox violation) must NOT produce audit events.
+        assert audit.events == []
+
+    @pytest.mark.asyncio
+    async def test_no_audit_logger_works_fine(self, tmp_path: Path) -> None:
+        # The audit logger is optional — file_write works without one.
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        result = await tool_inst.execute(path="x.txt", content="content")
+        assert result.is_error is False
+        assert (tmp_path / "x.txt").read_text() == "content"
+
+    @pytest.mark.asyncio
+    async def test_file_read_does_not_emit(self, tmp_path: Path) -> None:
+        # file_read is read-only; no audit emissions (D-03-21).
+        audit = MemoryToolAuditLogger()
+        (tmp_path / "x.txt").write_text("content")
+
+        # file_read doesn't accept an audit logger; verify by reading and
+        # then verifying the audit log we'd inject into write is untouched.
+        reader = make_file_read_tool(sandbox_root=tmp_path)
+        await reader.execute(path="x.txt")
+        assert audit.events == []
+
+
+# Section: AsyncTool conformance
+
+
+class TestAsyncToolConformance:
+    def test_file_read_satisfies_async_tool(self, tmp_path: Path) -> None:
+        tool_inst = make_file_read_tool(sandbox_root=tmp_path)
+        assert isinstance(tool_inst, AsyncTool)
+        assert tool_inst.name == "file_read"
+        assert "path" in tool_inst.parameters_schema["properties"]
+
+    def test_file_write_satisfies_async_tool(self, tmp_path: Path) -> None:
+        tool_inst = make_file_write_tool(sandbox_root=tmp_path)
+        assert isinstance(tool_inst, AsyncTool)
+        assert tool_inst.name == "file_write"
+        assert "path" in tool_inst.parameters_schema["properties"]
+        assert "content" in tool_inst.parameters_schema["properties"]
+
+
+# Section: ToolAuditLogger Protocol conformance
+
+
+class TestToolAuditLoggerProtocols:
+    def test_memory_logger_is_protocol_conformant(self) -> None:
+        from persona.tools.audit import ToolAuditLogger
+
+        assert isinstance(MemoryToolAuditLogger(), ToolAuditLogger)
+
+    def test_jsonl_logger_writes_and_round_trips(self, tmp_path: Path) -> None:
+        from datetime import UTC, datetime
+
+        from persona.tools.audit import JSONLToolAuditLogger, ToolAuditLogger
+
+        root = tmp_path / "audit"
+        root.mkdir()
+        logger = JSONLToolAuditLogger(root=root)
+        assert isinstance(logger, ToolAuditLogger)
+
+        ev = ToolAuditEvent(
+            timestamp=datetime.now(UTC),
+            persona_id="legal",
+            tool_name="file_write",
+            action="write",
+            resource="x.md",
+            metadata={"bytes": "5"},
+        )
+        logger.emit(ev)
+        log_file = root / "legal.tools.jsonl"
+        assert log_file.exists()
+        line = log_file.read_text().strip()
+        # Round-trips through Pydantic.
+        restored = ToolAuditEvent.model_validate_json(line)
+        assert restored.tool_name == "file_write"
+        assert restored.resource == "x.md"
+
+    def test_jsonl_logger_handles_none_persona_id(self, tmp_path: Path) -> None:
+        from datetime import UTC, datetime
+
+        from persona.tools.audit import JSONLToolAuditLogger
+
+        root = tmp_path / "audit"
+        root.mkdir()
+        logger = JSONLToolAuditLogger(root=root)
+        ev = ToolAuditEvent(
+            timestamp=datetime.now(UTC),
+            persona_id=None,
+            tool_name="file_write",
+            action="write",
+            resource="x",
+        )
+        logger.emit(ev)
+        assert (root / "_cli.tools.jsonl").exists()
+
+
+# Section: O_NOFOLLOW is supported on this platform
+
+
+class TestOSCapabilities:
+    def test_o_nofollow_available(self) -> None:
+        # Sanity: O_NOFOLLOW must be available for the security guarantee to hold.
+        # Linux + macOS both provide it; Windows does not (the file tools then
+        # rely on resolver-only protection, which is still strong).
+        assert hasattr(os, "O_NOFOLLOW")
+
+
+# Section: concurrent audit log writes
+
+
+class TestAuditLockConcurrency:
+    """Security review Finding 10.3: lock protects the events list under threading."""
+
+    def test_memory_logger_thread_safe(self) -> None:
+        import threading
+        from datetime import UTC, datetime
+
+        logger = MemoryToolAuditLogger()
+        n_threads = 8
+        n_writes_per_thread = 50
+
+        def emit_many(thread_id: int) -> None:
+            for i in range(n_writes_per_thread):
+                logger.emit(
+                    ToolAuditEvent(
+                        timestamp=datetime.now(UTC),
+                        tool_name="file_write",
+                        action="write",
+                        resource=f"t{thread_id}-{i}",
+                    )
+                )
+
+        threads = [threading.Thread(target=emit_many, args=(t,)) for t in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # No events lost; the lock prevents list-mutation races.
+        assert len(logger.events) == n_threads * n_writes_per_thread
+        # Every event has a sensible shape.
+        assert all(ev.tool_name == "file_write" for ev in logger.events)

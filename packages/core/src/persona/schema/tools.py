@@ -52,6 +52,13 @@ class ToolResult(BaseModel):
             error description. The runtime feeds these back to the model so
             it can recover (try different args, give up, ask the user).
         metadata: Arbitrary string-keyed metadata (latency, source URL, etc.).
+        data: Structured data for programmatic consumers (e.g.,
+            ``web_search`` returns ``data={"results": [...]}`` while
+            ``content`` is the human-readable summary). Added in spec 03
+            (D-03-3); ``None`` for tools that produce only text.
+        truncated: True when the tool truncated its result to fit a budget
+            (e.g., ``web_fetch`` past ``max_chars``, ``file_read`` past 1 MB).
+            Added in spec 03 (D-03-3).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -61,6 +68,10 @@ class ToolResult(BaseModel):
     call_id: str = ""
     is_error: bool = False
     metadata: dict[str, str] = Field(default_factory=dict)
+    # Spec 03 — D-03-3. Additive optional fields; failure still expressed via
+    # is_error + content, not a separate error channel.
+    data: dict[str, Any] | None = None
+    truncated: bool = False
 
 
 @runtime_checkable

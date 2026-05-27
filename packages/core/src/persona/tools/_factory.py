@@ -1,0 +1,108 @@
+"""``build_default_toolbox`` — compose a Toolbox from config + Persona (T12).
+
+Wires the four built-in tools and (asynchronously) loads any MCP servers
+declared in :class:`PersonaCoreConfig.mcp_servers`. The persona's
+``tools`` allow-list filters which tools the Toolbox advertises.
+
+Graceful degradation: MCP servers are connected with ``strict=False``
+per D-03-20 — unreachable servers log a warning and audit a
+``server_unavailable`` event, but the toolbox still builds.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from persona.logging import get_logger
+from persona.tools.builtin.file_read import make_file_read_tool
+from persona.tools.builtin.file_write import make_file_write_tool
+from persona.tools.builtin.web_fetch import make_web_fetch_tool
+from persona.tools.builtin.web_search import make_web_search_tool
+from persona.tools.mcp.client import load_mcp_clients
+from persona.tools.toolbox import Toolbox
+
+if TYPE_CHECKING:
+    from persona.config import PersonaCoreConfig
+    from persona.schema.persona import Persona
+    from persona.tools.audit import ToolAuditLogger
+    from persona.tools.mcp.client import MCPClient
+    from persona.tools.protocol import AsyncTool
+
+__all__ = ["build_default_toolbox"]
+
+_logger = get_logger("tools.factory")
+
+
+async def build_default_toolbox(
+    config: PersonaCoreConfig,
+    persona: Persona,
+    *,
+    tool_audit_logger: ToolAuditLogger | None = None,
+) -> tuple[Toolbox, list[MCPClient]]:
+    """Compose a Toolbox for the given persona.
+
+    Args:
+        config: Runtime configuration with `web_search_*`, `tools_sandbox_root`,
+            and `mcp_servers` fields populated from env vars (spec-03 D-03-9
+            through D-03-23).
+        persona: The persona whose `tools` allow-list filters which tools
+            the Toolbox advertises. Empty allow-list means the Toolbox
+            advertises nothing (still safe to dispatch through; every call
+            raises `ToolNotAllowedError`).
+        tool_audit_logger: Optional logger for `file_write` + MCP lifecycle
+            events (D-03-21).
+
+    Returns:
+        A tuple ``(toolbox, mcp_clients)``. The caller is responsible for
+        eventually calling ``await client.disconnect()`` on each MCP client
+        (typically during shutdown). The clients are returned even when
+        their connect failed (graceful degradation) so the caller can
+        still disconnect any that succeeded.
+    """
+    # Built-in tools (always present; the persona's allow-list decides
+    # whether they're exposed via get_specs / dispatch).
+    api_key = (
+        config.web_search_api_key.get_secret_value()
+        if config.web_search_api_key is not None
+        else None
+    )
+    builtins: list[AsyncTool] = [
+        make_web_search_tool(
+            provider_name=config.web_search_provider,
+            api_key=api_key,
+        ),
+        make_web_fetch_tool(),
+        make_file_read_tool(sandbox_root=config.tools_sandbox_root),
+        make_file_write_tool(
+            sandbox_root=config.tools_sandbox_root,
+            audit_logger=tool_audit_logger,
+            persona_id=persona.persona_id,
+        ),
+    ]
+
+    # MCP-discovered tools. Graceful degradation per D-03-20.
+    mcp_clients: list[MCPClient] = []
+    mcp_tools: list[AsyncTool] = []
+    parsed_servers = config.mcp_servers_parsed
+    if parsed_servers:
+        mcp_clients = await load_mcp_clients(
+            parsed_servers,
+            audit_logger=tool_audit_logger,
+            persona_id=persona.persona_id,
+            strict=False,
+        )
+        for c in mcp_clients:
+            mcp_tools.extend(c.get_tools())
+
+    all_tools: list[AsyncTool] = [*builtins, *mcp_tools]
+
+    _logger.info(
+        "build_default_toolbox composed",
+        persona_id=persona.persona_id or "<unknown>",
+        builtin_count=len(builtins),
+        mcp_tool_count=len(mcp_tools),
+        allow_list_size=len(persona.tools),
+    )
+
+    toolbox = Toolbox(all_tools, allow_list=list(persona.tools) if persona.tools else None)
+    return toolbox, mcp_clients

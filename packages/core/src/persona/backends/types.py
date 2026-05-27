@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from persona.schema.tools import ToolCall  # noqa: TC001 — Pydantic needs runtime ref
 
 if TYPE_CHECKING:
-    from persona.schema.tools import Tool
+    from persona.tools.protocol import ToolDescriptor
 
 __all__ = [
     "ChatResponse",
@@ -154,16 +154,17 @@ class StreamChunk(BaseModel):
     usage: TokenUsage | None = None
 
 
-def tool_spec_from_tool(tool: Tool) -> ToolSpec:
-    """Convert a runtime :class:`Tool` into a wire-shape :class:`ToolSpec`.
+def tool_spec_from_tool(tool: ToolDescriptor) -> ToolSpec:
+    """Convert a tool's metadata surface into a wire-shape :class:`ToolSpec`.
 
     Spec 01's ``Tool`` Protocol carries ``name``, ``description``, and
-    ``parameters_schema``. Spec 02's ``ToolSpec`` is the JSON-shaped
-    counterpart shipped to providers. This helper bridges them so callers
-    don't redefine the conversion at every site.
+    ``parameters_schema`` and is a :class:`ToolDescriptor` subtype. Spec
+    03's ``AsyncTool`` also extends ``ToolDescriptor``. This helper accepts
+    either (D-03-2) and produces the JSON-shaped counterpart shipped to
+    providers. Callers don't redefine the conversion at every site.
 
     Args:
-        tool: Any object satisfying the :class:`Tool` Protocol.
+        tool: Any object satisfying :class:`persona.tools.protocol.ToolDescriptor`.
 
     Returns:
         A :class:`ToolSpec` with the same name, description, and JSON
