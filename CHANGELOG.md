@@ -11,7 +11,15 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
-_Nothing here yet._
+### In progress — Spec 02: model backends and provider abstraction
+
+- `ChatBackend` Protocol (async; `chat()` + `chat_stream()`); `OpenAICompatibleBackend` (Anthropic via `anthropic` SDK; OpenAI/DeepSeek/Groq/Together via `openai` SDK with `base_url` override); `OllamaBackend` (raw `httpx`); `HFLocalBackend` behind `[local]` extras (lazy weight load).
+- Five new domain exceptions: `ProviderError`, `AuthenticationError`, `RateLimitError`, `ModelNotFoundError`, `BackendTimeoutError` — all subclasses of `PersonaError`.
+- Prompt-based tool-calling shim (`{"tool": ..., "args": {...}}` JSON blocks) for providers / models without native tool calling.
+- `BackendConfig` (Pydantic Settings, `PERSONA_*` env-only) + `load_backend()` factory.
+- CLI: `persona chat` will wire through a real backend; `EchoBackend` placeholder removed.
+
+Tracked at [`docs/specs/spec_02/`](docs/specs/spec_02/).
 
 ## [0.1.0] — 2026-05-27
 

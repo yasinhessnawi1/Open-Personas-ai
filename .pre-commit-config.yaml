@@ -4,7 +4,10 @@
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.5.0
+    # Keep in sync with the ruff version installed by the dev group in
+    # pyproject.toml; CI uses the latter. A too-old pin re-enforces rules
+    # (e.g. ANN101/ANN102) the project ruff config no longer needs to ignore.
+    rev: v0.8.0
     hooks:
       - id: ruff
         args: [--fix]
