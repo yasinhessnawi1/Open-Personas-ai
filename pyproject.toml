@@ -37,11 +37,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "ANN", "B", "A", "COM", "C4", "PT", "RET", "SIM", "TCH", "ARG", "PTH", "ERA"]
-# ANN101/ANN102 (missing-type-annotation-for-{self,cls}) were removed from
-# modern ruff but the pre-commit hook is pinned to ruff v0.5.0 which still
-# enforces them. Ignoring both here keeps `uv run ruff` and `pre-commit`
-# in sync. Remove the ignores when we bump the pre-commit rev.
-ignore = ["COM812", "ANN101", "ANN102"]
+ignore = ["COM812"]
 
 [tool.ruff.format]
 quote-style = "double"

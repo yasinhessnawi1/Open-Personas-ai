@@ -60,6 +60,30 @@ Everything else under `persona/` is private (`_`-prefixed or implementation deta
 
 See [`docs/specs/spec_01/spec_01_core.md`](../../docs/specs/spec_01/spec_01_core.md) §5–§7 for the full semantic spec.
 
+## Model backends (Spec 02)
+
+Spec 02 adds `persona.backends/` — a single async `ChatBackend` Protocol with three concrete implementations behind a `load_backend(config)` factory:
+
+```
+persona.backends
+├── protocol.py    ChatBackend (Protocol; async chat + chat_stream)
+├── config.py      BackendConfig (Pydantic Settings, PERSONA_* env)
+├── types.py       ChatResponse, StreamChunk, TokenUsage, ToolSpec, ToolCallDelta
+├── errors.py      ProviderError, AuthenticationError, RateLimitError,
+│                  ModelNotFoundError, BackendTimeoutError
+├── openai_compat.py  OpenAICompatibleBackend (anthropic SDK + openai SDK)
+├── ollama.py      OllamaBackend (raw httpx; shim tool-calling by default)
+└── hf_local.py    HFLocalBackend (lazy weight load; [local] extras only)
+```
+
+Public guarantees:
+- One Protocol; every backend implements `chat()` and `chat_stream()`.
+- Tool calls native where the provider supports them (Anthropic, OpenAI, allow-listed DeepSeek/Groq/Together models); prompt-based JSON-block shim everywhere else.
+- Credentials env-only (`PERSONA_API_KEY`, optional `PERSONA_BASE_URL`); never logged.
+- Construction-time `AuthenticationError` for missing keys (fail fast). `HFLocalBackend` lazy-loads weights on first call.
+
+See [`docs/specs/spec_02/spec_02_backends.md`](../../docs/specs/spec_02/spec_02_backends.md) and [`docs/specs/spec_02/decisions.md`](../../docs/specs/spec_02/decisions.md) for the full surface.
+
 ## Dependencies
 
 ```
@@ -70,12 +94,14 @@ sentence-transformers>=3.0,<4
 typer>=0.12,<1
 pyyaml>=6.0,<7
 loguru>=0.7,<1
-httpx>=0.27,<1       # parked; spec 02 (model backends)
+httpx>=0.27,<1       # live in spec 02 (OllamaBackend)
 tiktoken>=0.7,<1     # parked; spec 05 (prompt builder)
+anthropic>=0.30,<1   # spec 02 (Anthropic SDK)
+openai>=1.30,<2      # spec 02 (OpenAI/DeepSeek/Groq/Together)
 ```
 
 Optional extras:
-- `[local]` — torch, transformers, bitsandbytes, accelerate (for Gemma/Llama local backends in spec 02).
+- `[local]` — torch, transformers, bitsandbytes, accelerate (for `HFLocalBackend` in spec 02).
 - `[postgres]` — asyncpg, sqlalchemy[asyncio], pgvector (for spec 07's PostgresPGVectorStore).
 
 Dependency rationale lives in [`docs/specs/spec_01/research.md`](../../docs/specs/spec_01/research.md) §1.
@@ -90,7 +116,6 @@ Coverage target: every public class and function has at least one test.
 
 ## What this package does *not* contain
 
-- Model backends (spec 02).
 - Tool implementations (spec 03).
 - Skill implementations (spec 04).
 - Conversation loop, router, agentic loop (spec 05/06).
