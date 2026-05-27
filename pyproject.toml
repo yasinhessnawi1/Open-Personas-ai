@@ -7,6 +7,10 @@ requires-python = ">=3.11"
 [tool.uv.workspace]
 members = ["packages/core", "packages/runtime", "packages/api"]
 
+[tool.uv.sources]
+persona-core = { workspace = true }
+persona-runtime = { workspace = true }
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
