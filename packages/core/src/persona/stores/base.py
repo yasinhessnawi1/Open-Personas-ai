@@ -31,7 +31,7 @@ from persona.stores.versioning import (
 
 if TYPE_CHECKING:
     from persona.audit import AuditLogger, StoreKind
-    from persona.stores.chroma import ChromaBackend
+    from persona.stores.backend import Backend
 
 __all__ = ["TypedStore"]
 
@@ -54,7 +54,7 @@ class TypedStore:
     def __init__(
         self,
         *,
-        backend: ChromaBackend,
+        backend: Backend,
         audit_logger: AuditLogger,
     ) -> None:
         self._backend = backend
@@ -207,7 +207,7 @@ class TypedStore:
 
     def delete(self, persona_id: str) -> None:
         existing = self._backend.get_all(persona_id=persona_id, store_kind=self.STORE_KIND)
-        self._backend.delete_collection(persona_id, self.STORE_KIND)
+        self._backend.delete_persona(persona_id, self.STORE_KIND)
         if existing:
             self._emit_audit(
                 persona_id=persona_id,

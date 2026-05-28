@@ -13,6 +13,29 @@ Per-spec entries are added by the close-out phase of each spec.
 
 _Nothing here yet._
 
+## [0.7.0] — 2026-05-28
+
+Spec 07 close-out. The production storage layer: a `PostgresBackend` transport (in `persona-core`, behind the `[postgres]` extra) plus the full SQL schema, Alembic migration, and row-level-security policies (in `persona-api`). The headline architectural decision is that there is **no** standalone `PostgresPGVectorStore` — the existing four typed stores compose the new transport unchanged, so policy/versioning/audit/decay are reused, not re-implemented. The `MemoryStore` protocol stays synchronous (D-07-1, psycopg3 sync); the spec's async §4 sketch was superseded.
+
+### Added
+- `persona.stores.backend.Backend` — a `@runtime_checkable` transport protocol (`upsert`/`query`/`get_all`/`delete_persona`/`delete_documents`) extracted from `ChromaBackend`'s real surface. `TypedStore` now composes any `Backend`, so Chroma and Postgres are Liskov-interchangeable (D-07-3). ([`backend.py`](packages/core/src/persona/stores/backend.py))
+- `persona.stores.postgres.PostgresBackend` — the production transport (psycopg3 sync + SQLAlchemy Core + pgvector). Embeds at write via an injected `Embedder`, asserts the embedding dim is exactly 384 (fail-fast), round-trips `ChunkProvenance` through promoted columns, and populates `chunk.distance` from the cosine `<=>` operator. **No decay SQL** — `EpisodicStore`'s Python-side `exp(-elapsed/tau)` (D-01-4) re-rank is reused, giving automatic Chroma parity (the spec's §4.3 decay SQL is superseded). ([`postgres.py`](packages/core/src/persona/stores/postgres.py))
+- `persona_api.db.models` — the canonical SQLAlchemy Core schema (11 tables). `memory_chunks` promotes the versioning/provenance fields (`logical_id`/`version`/`superseded_by` + `content_hash` + the `ChunkProvenance` fields) to indexed columns (D-07-4); user metadata lives in a `metadata` JSONB column; identity chunks store NULL provenance. Indexes: `(persona_id, kind)`, `(persona_id, kind, logical_id)`, a partial `WHERE superseded_by IS NULL` current-heads index, and an HNSW `vector_cosine_ops` index. Composite FK `(persona_id, owner_id) → personas` on `conversations`/`runs` (defence-in-depth, security finding 1). ([`models.py`](packages/api/src/persona_api/db/models.py))
+- `persona_api.db.engine` — `create_db_engine`, `set_current_user`, and the `rls_connection` context manager. The RLS user id is set via `set_config('app.current_user_id', :uid, true)` (parameterised, transaction-local) — **not** `SET LOCAL ... = :uid`, which is a syntax error with a bound param (D-07-5, verified by spike). ([`engine.py`](packages/api/src/persona_api/db/engine.py))
+- `persona_api.db.rls` — per-table RLS policy SQL with the correct FK-chain joins (personas/conversations/runs direct `owner_id`; messages/turn_logs → conversations; memory_chunks → personas; credits/credit_transactions → `user_id`). `ENABLE` + `FORCE ROW LEVEL SECURITY`; fail-closed `current_setting(...,true)`; `WITH CHECK` mirrors `USING`. ([`rls.py`](packages/api/src/persona_api/db/rls.py))
+- `persona-api` Alembic env + `001_initial` migration — synchronous runner (`postgresql+psycopg://`), reads `DATABASE_URL`. `001_initial` creates the extension, all tables/indexes, and RLS policies in one atomic upgrade (RLS in `001`, no unsafe window). Real `downgrade`. ([`env.py`](packages/api/alembic/env.py), [`001_initial.py`](packages/api/alembic/versions/001_initial.py))
+
+### Changed
+- `persona.stores.base.TypedStore.__init__` — `backend` parameter widened from `ChromaBackend` to the `Backend` protocol (additive; the spec-01 store regression suite stays green). `delete()` calls the storage-neutral `delete_persona` (D-07-3). ([`base.py`](packages/core/src/persona/stores/base.py))
+- `persona.stores.chroma.ChromaBackend` — `delete_collection` renamed to `delete_persona` (the Chroma `delete_collection` SDK call stays internal). ([`chroma.py`](packages/core/src/persona/stores/chroma.py))
+- `packages/core/pyproject.toml` — the `[postgres]` extra swapped from `asyncpg`+`sqlalchemy[asyncio]` to `psycopg[binary]`+`sqlalchemy` (sync; D-07-1).
+- Root `pyproject.toml` — depends on `persona-core[postgres]` so a plain `uv sync` installs the extra; added a mypy override ignoring `pgvector.*` missing stubs.
+- `.env.example` / `alembic.ini` — `DATABASE_URL` dialect changed `postgresql+asyncpg://` → `postgresql+psycopg://`.
+- `docker-compose.yml` — dropped the obsolete `version:` key.
+
+### Security
+- Row-level security on every tenant-scoped table; tenant isolation proven by adversarial integration tests (cross-tenant query returns zero rows; `WITH CHECK` blocks cross-tenant writes; fail-closed when the user GUC is unset). A `security-reviewer` pass surfaced a defence-in-depth gap (a tenant could attach a conversation/run to another tenant's persona via the single-column FK, even though RLS hid the row) — closed with the composite `(persona_id, owner_id)` FK and a regression test.
+
 ## [0.6.0] — 2026-05-28
 
 Spec 06 close-out. The agentic loop (`persona_runtime.agentic`) — the plan-act-reflect execution engine for end-to-end tasks ("draft a complaint about my landlord refusing to fix mould"). Pure orchestration over specs 01–05; zero new dependencies. The simplest possible agent loop (architecture §5.2): one model decides at each step whether to call a tool, ask the user, or produce a final answer.

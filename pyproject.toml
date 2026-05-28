@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 # whole monorepo into one virtualenv. Without this, members' deps only land
 # when `uv sync --all-packages` is run — easy to forget, blocks mypy/pytest.
 dependencies = [
-    "persona-core",
+    "persona-core[postgres]",
     "persona-runtime",
     "persona-api",
 ]
@@ -50,6 +50,12 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+
+# pgvector ships no py.typed marker / stubs (spec 07 [postgres] extra). Ignore
+# its missing imports rather than vendoring stubs for a third-party lib.
+[[tool.mypy.overrides]]
+module = ["pgvector.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["packages/core/tests", "packages/runtime/tests", "packages/api/tests"]

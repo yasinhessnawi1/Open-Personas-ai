@@ -91,7 +91,7 @@ class ChromaBackend:
             metadatas=[_chunk_to_metadata(c) for c in chunks],
         )
 
-    def delete_collection(self, persona_id: str, store_kind: str) -> None:
+    def delete_persona(self, persona_id: str, store_kind: str) -> None:
         try:
             self._client.delete_collection(collection_name_for(persona_id, store_kind))
         except Exception:  # noqa: BLE001 — Chroma raises a generic NotFoundError-ish thing

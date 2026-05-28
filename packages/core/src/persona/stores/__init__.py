@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from persona.stores.backend import Backend
 from persona.stores.base import TypedStore
 from persona.stores.chroma import CHROMA_QUERY_BATCH_CAP, ChromaBackend
 from persona.stores.embedder import Embedder, SentenceTransformerEmbedder
@@ -33,6 +34,7 @@ from persona.stores.worldview import WorldviewStore
 __all__ = [
     "CHROMA_QUERY_BATCH_CAP",
     "AuditWriteError",
+    "Backend",
     "BrokenVersionChainError",
     "ChromaBackend",
     "Embedder",

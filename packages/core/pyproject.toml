@@ -28,8 +28,8 @@ local = [
     "accelerate>=0.31,<1",
 ]
 postgres = [
-    "asyncpg>=0.29,<1",
-    "sqlalchemy[asyncio]>=2.0,<3",
+    "psycopg[binary]>=3.1,<4",
+    "sqlalchemy>=2.0,<3",
     "pgvector>=0.3,<1",
 ]
 
