@@ -13,6 +13,33 @@ Per-spec entries are added by the close-out phase of each spec.
 
 _Nothing here yet._
 
+## [0.5.0] — 2026-05-28
+
+Spec 05 close-out. `persona-runtime` — the conversation loop, prompt builder, router, tier registry, and per-turn logging. The first integration spec; composes specs 01–04 into a runnable turn loop. First code outside `persona-core`.
+
+### Added
+- `persona_runtime.errors.TierNotConfiguredError` — the one new runtime domain exception (D-05-2); everything else re-raises spec-01/02/03 domain exceptions unchanged (hexagonal). ([`errors.py`](packages/runtime/src/persona_runtime/errors.py))
+- `persona_runtime.tier` — `TierConfig` (frozen dataclass) + `TierRegistry` (lazy-instantiate + cache via `load_backend`; `small→mid→frontier` fallback; single-backend fallback from `PERSONA_*`; `TierNotConfiguredError` if nothing resolves). `aclose()` duck-types backend cleanup (`getattr(backend, "aclose"/"disconnect")`) and is owned by the composition root, not the loop (D-05-3, D-05-4). `tier_registry_from_env()` presence-checks `<PREFIX>PROVIDER`. ([`tier.py`](packages/runtime/src/persona_runtime/tier.py))
+- `persona_runtime.router.Router` — rule-based, no ML (architecture §5.3). Precedence: per-persona override → first-turn-frontier → boilerplate-small → persona-critical-frontier → mid default. `_is_persona_critical` derives keywords per-call from the persona's constraints + worldview (D-05-5); word-boundary regex. ([`router.py`](packages/runtime/src/persona_runtime/router.py))
+- `persona_runtime.prompt` — `RetrievedContext` (frozen Pydantic bundle) + `PromptBuilder.build(...)`. System block in spec §5.1 order (identity → constraints → self-facts → worldview → episodic → skill index → active skill content → footer); worldview epistemic tags in parentheses. Receives already-budgeted `matched_skill_content: str` — no `SKILL_TOKEN_BUDGET` on the builder (the `SkillInjector` owns the 2000 budget; D-05-7). Context-window reduction drops episodic → worldview → self-facts; identity/constraints/skill-index are the never-truncated floor (spec §5.3). Token estimate via `persona.skills.count_tokens` (D-05-8). ([`prompt.py`](packages/runtime/src/persona_runtime/prompt.py))
+- `persona_runtime.logging` — `TurnLog` (frozen Pydantic, not the spec's `@dataclass`; crosses the spec-08 Postgres boundary, D-05-9) + `TurnLogWriter` Protocol + `JSONLTurnLogWriter` (path mirrors D-01-6 audit convention; `PERSONA_TURNLOG_PATH` override) + `MemoryTurnLogWriter`. `_PRICE_TABLE` + `estimate_cost_cents` — hand-maintained estimate; unknown `(provider, model)` → `0.0` + warn-once (S05-3, D-05-10). ([`logging.py`](packages/runtime/src/persona_runtime/logging.py))
+- `persona_runtime.loop.ConversationLoop` — the keystone. `async turn(conversation, user_message) -> AsyncIterator[StreamChunk]` runs the full spec §4.1 sequence. The sync/async summariser bridge (D-05-X): predicts compaction via `_will_compact` (replicating `manage()`'s boundary math, cross-checked by a lockstep test), pre-computes the small-tier summary, hands `manage()` a sync no-op assembler — never `asyncio.run()` in a sync callable. Unified `max_tool_rounds` counter for tool + use_skill re-prompts (one increment per round, D-05-11); use_skill intercept on `result.data["skill_name"]` with once-per-turn injection. Tool-call reconstruction from streamed `ToolCallDelta`s by `call_id` (D-05-13). Episodic write-back is the last step before the final chunk; a partially-consumed turn writes nothing (async-generator suspend, D-05-12). The loop receives the `Conversation`, never owns it (D-S05-4). ([`loop.py`](packages/runtime/src/persona_runtime/loop.py))
+- `persona_runtime.__init__` re-exports the public surface: `ConversationLoop`, `PromptBuilder`, `RetrievedContext`, `Router`, `TierConfig`, `TierRegistry`, `tier_registry_from_env`, `TurnLog`, `TurnLogWriter`, `JSONLTurnLogWriter`, `MemoryTurnLogWriter`, `TierNotConfiguredError`. ([`__init__.py`](packages/runtime/src/persona_runtime/__init__.py))
+
+### Changed
+- `packages/runtime/pyproject.toml` — added `tiktoken>=0.7,<1` as a direct dependency (already transitive via `persona-core`; declared directly per engineering standards §5). No other new dependencies — spec 05 is pure orchestration.
+- `packages/core/SPEC.md` — added a "Runtime (Spec 05)" subsection (the runtime is a separate consumer package; the dependency arrow points one way).
+- `.env.example` — documented the tier-fallback semantics and added `PERSONA_TURNLOG_PATH`.
+
+### Tests
+- **96 new runtime tests** (7 errors + 12 tier + 25 router + 9 prompt + 14 logging + 19 loop + 5 integration + 5 end-to-end/context). Two are load-bearing: the boundary-prediction lockstep (loop `_will_compact` vs real `manage()` across K-1/K/K+1 × 3 configs) and the early-consumer-exit episodic-skip (acceptance #10).
+- One `python-reviewer` pass on `loop.py`: one valid finding (round counter was incremented per-call, not per-round) fixed + regression-tested; the reviewer's other findings were verified non-bugs against the `manage()` source.
+- Runtime test tree intentionally has **no `__init__.py`** (adding them collides `tests.conftest`/`tests.unit` with the core package); a `tests/conftest.py` puts the shared `_fakes` helper on `sys.path`.
+
+### Documentation
+- `docs/specs/spec_05/{spec_05_runtime.md, spec_05_kickoff.md, tasks.md, tasks.yaml, research.md, decisions.md, state.md, handover.md, README.md, closeout.md}` — full lifecycle of Spec 05 captured.
+- D-05-1..D-05-13 + D-05-X + D-S05-4 added to root [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ## [0.4.0] — 2026-05-27
 
 Spec 04 close-out. Skills layer — scanner, injector, index renderer, `use_skill` synthetic activation tool, two built-in skill packs.

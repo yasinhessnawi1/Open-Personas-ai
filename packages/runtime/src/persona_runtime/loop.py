@@ -1,0 +1,476 @@
+"""The ConversationLoop — the integration keystone (T07).
+
+One ``turn(conversation, user_message)`` runs the full per-turn sequence
+(spec §4.1): retrieve context → manage history → build prompt → route →
+stream-generate with a tool-call sub-loop → episodic write-back → final chunk.
+Everything it composes (stores, history manager, backends, toolbox, skills)
+already exists and is green; this module is the conductor.
+
+The decisions that shape this file:
+
+- **D-05-X (sync/async summariser bridge):** the history manager is sync and
+  pure. The loop predicts whether ``manage()`` will compact this turn (the same
+  ``boundary > compacted_up_to`` math), pre-computes the summary by awaiting the
+  small tier, then hands ``manage()`` a sync no-op assembler that returns the
+  pre-computed string. Never ``asyncio.run()`` inside that callable.
+- **D-05-11 (one round counter):** tool re-prompts and ``use_skill`` re-prompts
+  share one ``max_tool_rounds`` budget. At the cap, append a system nudge and do
+  one final tool-free generation.
+- **D-05-12 (episodic write-back):** the write is the LAST step, after the
+  generation loop and before the final yield. Because ``turn`` is an async
+  generator, a consumer that stops iterating early (or an exception mid-stream)
+  never reaches the write — a failed/cancelled turn writes nothing. No
+  ``try/finally``.
+- **D-05-13 (tool-call reconstruction):** streamed ``ToolCallDelta`` fragments
+  are accumulated by ``call_id`` and parsed into ``ToolCall``s at stream end;
+  malformed args JSON → empty dict (the ``@tool`` decorator validates).
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from persona.logging import get_logger
+from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
+from persona.schema.conversation import ConversationMessage
+from persona.schema.tools import ToolCall
+from persona.skills import render_skill_index
+from persona.tools import format_tool_result
+
+from persona_runtime.logging import TurnLog, estimate_cost_cents
+from persona_runtime.prompt import RetrievedContext
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from persona.backends import ChatBackend, StreamChunk, TokenUsage
+    from persona.history import ConversationHistoryManager
+    from persona.schema.conversation import Conversation
+    from persona.schema.persona import Persona
+    from persona.schema.skills import SkillSpec
+    from persona.skills import SkillInjector, SkillScanner
+    from persona.stores.protocol import MemoryStore
+    from persona.tools import Toolbox
+
+    from persona_runtime.logging import TurnLogWriter
+    from persona_runtime.prompt import PromptBuilder
+    from persona_runtime.router import Router
+    from persona_runtime.tier import TierRegistry
+
+__all__ = ["ConversationLoop"]
+
+_logger = get_logger("runtime.loop")
+
+_RETRIEVE_TOP_K = 3
+_DEFAULT_MAX_TOKENS = 4096
+_MAX_TOOL_ROUNDS_NUDGE = (
+    "You have used the maximum number of tool calls for this turn. "
+    "Please provide your response based on the information gathered so far."
+)
+_SUMMARISE_INSTRUCTION = (
+    "Summarise the following conversation excerpt into a short paragraph, "
+    "preserving names, facts, and decisions. Be concise."
+)
+
+
+def _backend_max_tokens(backend: ChatBackend) -> int:
+    """Best-effort context budget for the prompt builder.
+
+    The ``ChatBackend`` Protocol does not expose ``max_tokens`` (it's on the
+    backend's ``BackendConfig``), so we read it opportunistically and fall back
+    to a safe default. The prompt builder treats this as the whole-prompt window.
+    """
+    value = getattr(backend, "max_tokens", None)
+    return value if isinstance(value, int) and value > 0 else _DEFAULT_MAX_TOKENS
+
+
+def _text_chunk(text: str) -> StreamChunk:
+    """A non-final content chunk."""
+    from persona.backends import StreamChunk
+
+    return StreamChunk(delta=text)
+
+
+def _final_chunk(usage: TokenUsage | None) -> StreamChunk:
+    """The authoritative end-of-turn chunk (``is_final=True``)."""
+    from persona.backends import StreamChunk
+
+    return StreamChunk(delta="", is_final=True, usage=usage)
+
+
+class ConversationLoop:
+    """Orchestrates a single conversation turn (spec §4).
+
+    Pure dependency injection (engineering standards §1.2). The loop owns no
+    state beyond its collaborators; it receives the ``Conversation`` per
+    :meth:`turn` and never owns it (D-S05-4). The composition root owns the
+    :class:`~persona_runtime.tier.TierRegistry` lifecycle, not the loop (D-05-4).
+    """
+
+    def __init__(
+        self,
+        *,
+        persona: Persona,
+        stores: dict[str, MemoryStore],
+        toolbox: Toolbox,
+        skill_scanner: SkillScanner,
+        skill_injector: SkillInjector,
+        scanned_skills: list[SkillSpec],
+        history_manager: ConversationHistoryManager,
+        prompt_builder: PromptBuilder,
+        router: Router,
+        tier_registry: TierRegistry,
+        turn_log_writer: TurnLogWriter,
+        max_tool_rounds: int = 5,
+    ) -> None:
+        self._persona = persona
+        self._stores = stores
+        self._toolbox = toolbox
+        self._scanner = skill_scanner
+        self._injector = skill_injector
+        self._scanned_skills = scanned_skills
+        self._skills_by_name = {s.name: s for s in scanned_skills}
+        self._history = history_manager
+        self._builder = prompt_builder
+        self._router = router
+        self._tiers = tier_registry
+        self._turn_log_writer = turn_log_writer
+        self._max_tool_rounds = max_tool_rounds
+
+    async def turn(
+        self,
+        conversation: Conversation,
+        user_message: str,
+    ) -> AsyncIterator[StreamChunk]:
+        """Process one user turn, yielding StreamChunks for the response.
+
+        Handles tool calls and ``use_skill`` activation internally (dispatch →
+        feed result → re-generate, capped at ``max_tool_rounds``). Writes
+        episodic memory + a :class:`TurnLog` only after generation completes
+        (D-05-12). The current ``user_message`` and the assistant response are
+        appended to ``conversation`` on success.
+
+        Args:
+            conversation: The live conversation (mutated on success; D-S05-4).
+            user_message: This turn's user message.
+
+        Yields:
+            :class:`StreamChunk` objects ending with ``is_final=True``.
+        """
+        persona_id = self._require_persona_id()
+        started = time.perf_counter()
+
+        context = self._retrieve(persona_id, user_message)
+        history, compacted = await self._manage_history(conversation)
+        skill_index = render_skill_index(self._scanned_skills)
+        tier = self._router.choose(self._persona, user_message, conversation)
+        backend = self._tiers.get(tier)
+        max_tokens = _backend_max_tokens(backend)
+
+        # Mutable per-turn state for the generation sub-loop. ``tool_messages``
+        # accumulates the tool-result / system messages appended across rounds;
+        # the base prompt is rebuilt each round (to pick up newly injected skill
+        # content) and these are appended after it.
+        rounds = 0
+        skill_used: str | None = None
+        matched_skill_content: str | None = None
+        injected_this_turn = False
+        tool_call_count = 0
+        usage: TokenUsage | None = None
+        assistant_text = ""
+        tool_messages: list[ConversationMessage] = []
+
+        while True:
+            prompt_messages = [
+                *self._builder.build(
+                    self._persona,
+                    context,
+                    history,
+                    skill_index,
+                    user_message,
+                    max_tokens=max_tokens,
+                    matched_skill_content=matched_skill_content,
+                ),
+                *tool_messages,
+            ]
+            round_text, round_calls, round_usage = await self._consume_stream(
+                backend, prompt_messages
+            )
+            assistant_text = round_text
+
+            at_cap = rounds >= self._max_tool_rounds
+            if round_calls and not at_cap:
+                # Stream the round's tool-call narration (not the turn's final
+                # text). Any pre-tool text the model emitted is surfaced so the
+                # UI can show "Astrid is searching…" (architecture §7.2).
+                if round_text:
+                    yield _text_chunk(round_text)
+                if round_usage is not None:
+                    usage = round_usage
+                # Dispatch each call; feed results back; intercept use_skill.
+                for call in round_calls:
+                    result = await self._toolbox.dispatch(call)
+                    tool_call_count += 1
+                    tool_messages.append(
+                        format_tool_result(call, result, provider_name=backend.provider_name)
+                    )
+                    if (
+                        call.name == "use_skill"
+                        and result.data is not None
+                        and "skill_name" in result.data
+                    ):
+                        name = str(result.data["skill_name"])
+                        if injected_this_turn:
+                            tool_messages.append(
+                                ConversationMessage(
+                                    role="system",
+                                    content=(
+                                        "A skill was already activated this turn. "
+                                        "Request additional skills on the next turn."
+                                    ),
+                                    created_at=datetime.now(UTC),
+                                )
+                            )
+                        elif name in self._skills_by_name:
+                            matched_skill_content = await self._injector.inject(
+                                self._skills_by_name[name]
+                            )
+                            skill_used = name
+                            injected_this_turn = True
+                # One round = one re-prompt-after-dispatch (D-05-11), regardless
+                # of how many tool calls this round contained. The counter bounds
+                # re-generations, not individual dispatches.
+                rounds += 1
+                continue
+
+            if round_calls and at_cap:
+                # Cap reached with the model still calling tools: nudge + one
+                # final tool-free generation (D-05-11). Do not dispatch further.
+                tool_messages.append(
+                    ConversationMessage(
+                        role="system",
+                        content=_MAX_TOOL_ROUNDS_NUDGE,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                final_prompt = [
+                    *self._builder.build(
+                        self._persona,
+                        context,
+                        history,
+                        skill_index,
+                        user_message,
+                        max_tokens=max_tokens,
+                        matched_skill_content=matched_skill_content,
+                    ),
+                    *tool_messages,
+                ]
+                assistant_text, _final_calls, round_usage = await self._consume_stream(
+                    backend, final_prompt
+                )
+
+            # Normal completion (or post-cap final text). Stream the text now;
+            # the single is_final=True chunk is yielded AFTER write-back so a
+            # consumer that stops at is_final still triggers the write (D-05-12).
+            if assistant_text:
+                yield _text_chunk(assistant_text)
+            if round_usage is not None:
+                usage = round_usage
+            break
+
+        # 7. Post-generation write-back — the LAST step before the final chunk
+        #    (D-05-12). An early consumer-exit mid-stream never reaches here
+        #    because the generator stays suspended at an earlier yield.
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        self._write_episodic(persona_id, user_message, assistant_text)
+        self._write_turn_log(
+            conversation=conversation,
+            tier=tier,
+            backend=backend,
+            usage=usage,
+            latency_ms=latency_ms,
+            tool_calls=tool_call_count,
+            skill_used=skill_used,
+            compacted=compacted,
+        )
+        now = datetime.now(UTC)
+        conversation.messages.append(
+            ConversationMessage(role="user", content=user_message, created_at=now)
+        )
+        conversation.messages.append(
+            ConversationMessage(role="assistant", content=assistant_text, created_at=now)
+        )
+
+        # 8. The authoritative end of the turn — yielded last, after write-back.
+        yield _final_chunk(usage)
+
+    # ----- internals -------------------------------------------------------
+
+    def _require_persona_id(self) -> str:
+        pid = self._persona.persona_id
+        if pid is None:
+            msg = "persona_id is required for the conversation loop"
+            raise ValueError(msg)
+        return pid
+
+    def _retrieve(self, persona_id: str, user_message: str) -> RetrievedContext:
+        """Retrieve per-turn context using the real store signatures (§4.1)."""
+        identity = self._stores["identity"].get_all(persona_id)
+        self_facts = self._stores["self_facts"].query(persona_id, user_message, _RETRIEVE_TOP_K)
+        worldview = self._stores["worldview"].query(persona_id, user_message, _RETRIEVE_TOP_K)
+        episodic = self._stores["episodic"].query(persona_id, user_message, _RETRIEVE_TOP_K)
+        return RetrievedContext(
+            identity=identity,
+            self_facts=self_facts,
+            worldview=worldview,
+            episodic=episodic,
+        )
+
+    async def _manage_history(
+        self, conversation: Conversation
+    ) -> tuple[list[ConversationMessage], bool]:
+        """Run history management with the pre-computed-summary bridge (D-05-X).
+
+        Returns the prompt-ready history and whether compaction fired this turn.
+        """
+        compacted = self._will_compact(conversation)
+        precomputed: str | None = None
+        if compacted:
+            boundary = conversation.turn_count - self._history.keep_recent
+            new_range = list(conversation.messages[conversation.compacted_up_to : boundary])
+            precomputed = await self._summarise(new_range)
+
+        def _assembler(_messages: list[ConversationMessage]) -> str:
+            # manage() only calls this when compacting; precomputed is set then.
+            return precomputed or ""
+
+        history = self._history.manage(conversation, summariser=_assembler)
+        return history, compacted
+
+    def _will_compact(self, conversation: Conversation) -> bool:
+        """Replica of manage()'s 'will I summarise this turn?' decision (D-05-X).
+
+        Cross-checked against the real manager in test_loop.py across K-1/K/K+1.
+        """
+        turn_count = conversation.turn_count
+        if turn_count <= self._history.compact_every:
+            return False
+        boundary = turn_count - self._history.keep_recent
+        return boundary > conversation.compacted_up_to
+
+    async def _summarise(self, messages: list[ConversationMessage]) -> str:
+        """Summarise an excerpt on the small tier (the one async summary call)."""
+        backend = self._tiers.get("small")
+        rendered = "\n".join(f"{m.role}: {m.content}" for m in messages)
+        prompt = [
+            ConversationMessage(
+                role="system", content=_SUMMARISE_INSTRUCTION, created_at=datetime.now(UTC)
+            ),
+            ConversationMessage(role="user", content=rendered, created_at=datetime.now(UTC)),
+        ]
+        response = await backend.chat(prompt)
+        return response.content.strip()
+
+    async def _consume_stream(
+        self, backend: ChatBackend, prompt_messages: list[ConversationMessage]
+    ) -> tuple[str, list[ToolCall], TokenUsage | None]:
+        """Drive one stream to completion, accumulating text + tool calls (D-05-13).
+
+        Returns ``(text, reconstructed_calls, final_usage)``. Tool-call deltas are
+        accumulated by ``call_id``; args JSON is parsed at the end (malformed →
+        empty dict, fail-safe).
+        """
+        text = ""
+        usage: TokenUsage | None = None
+        names: dict[str, str] = {}
+        args_json: dict[str, str] = {}
+        order: list[str] = []
+        async for chunk in backend.chat_stream(prompt_messages, tools=self._toolbox.get_specs()):
+            text += chunk.delta
+            if chunk.usage is not None:
+                usage = chunk.usage
+            delta = chunk.tool_call_delta
+            if delta is not None:
+                if delta.call_id not in names:
+                    order.append(delta.call_id)
+                    names[delta.call_id] = ""
+                    args_json[delta.call_id] = ""
+                names[delta.call_id] += delta.name_delta
+                args_json[delta.call_id] += delta.arguments_delta
+        calls = [self._build_call(cid, names[cid], args_json[cid]) for cid in order]
+        return text, calls, usage
+
+    @staticmethod
+    def _build_call(call_id: str, name: str, raw_args: str) -> ToolCall:
+        try:
+            args = json.loads(raw_args) if raw_args else {}
+        except json.JSONDecodeError:
+            args = {}  # fail-safe (D-05-13); the @tool decorator validates
+        if not isinstance(args, dict):
+            args = {}
+        return ToolCall(name=name, args=args, call_id=call_id)
+
+    def _write_episodic(self, persona_id: str, user_text: str, assistant_text: str) -> None:
+        """Write one combined episodic chunk per turn (D-05-12; mirrors the CLI)."""
+        store = self._stores["episodic"]
+        index = len(store.get_all(persona_id, include_superseded=True))
+        chunk_id = make_chunk_id(persona_id, "episodic", index)
+        now = datetime.now(UTC)
+        store.write(
+            persona_id,
+            [
+                PersonaChunk(
+                    id=chunk_id,
+                    text=f"USER: {user_text}\nASSISTANT: {assistant_text}",
+                    metadata={"importance": "0.5"},
+                    created_at=now,
+                    provenance=ChunkProvenance(
+                        source=WriteSource.SYSTEM,
+                        logical_id=chunk_id,
+                        version=1,
+                        written_at=now,
+                        written_by="runtime.loop",
+                    ),
+                ),
+            ],
+            source=WriteSource.SYSTEM,
+            written_by="runtime.loop",
+        )
+
+    def _write_turn_log(
+        self,
+        *,
+        conversation: Conversation,
+        tier: str,
+        backend: ChatBackend,
+        usage: TokenUsage | None,
+        latency_ms: float,
+        tool_calls: int,
+        skill_used: str | None,
+        compacted: bool,
+    ) -> None:
+        prompt_tokens = usage.prompt_tokens if usage is not None else 0
+        completion_tokens = usage.completion_tokens if usage is not None else 0
+        cost = estimate_cost_cents(
+            backend.provider_name, backend.model_name, prompt_tokens, completion_tokens
+        )
+        self._turn_log_writer.write(
+            TurnLog(
+                conversation_id=conversation.conversation_id,
+                turn_index=conversation.turn_count,
+                tier_used=tier,
+                model_name=backend.model_name,
+                provider=backend.provider_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+                cost_cents=cost,
+                tool_calls=tool_calls,
+                skill_used=skill_used,
+                history_compacted=compacted,
+                timestamp=datetime.now(UTC),
+            )
+        )

@@ -149,6 +149,32 @@ Public guarantees:
 
 See [`docs/specs/spec_04/spec_04_skills.md`](../../docs/specs/spec_04/spec_04_skills.md) and [`docs/specs/spec_04/decisions.md`](../../docs/specs/spec_04/decisions.md) for the full surface.
 
+## Runtime (Spec 05) — a separate package
+
+Spec 05 introduces **`persona-runtime`** (`packages/runtime/`), the first code outside `persona-core`. It is a **consumer** of this package — it imports the stores, backends, toolbox, skills, and history manager and defines only orchestration. `persona-core` does not depend on `persona-runtime`; the dependency arrow points one way (architecture §3, hexagonal layering). This subsection is recorded here because `SPEC.md` is the project's package spec; the runtime has no separate `SPEC.md` in v0.1.
+
+The runtime ships four orchestration types:
+
+```
+persona_runtime
+├── errors.py    TierNotConfiguredError (the only new runtime exception; D-05-2)
+├── tier.py      TierConfig + TierRegistry (lazy-cache, small→mid→frontier fallback, aclose())
+├── router.py    Router.choose(persona, message, conversation) -> "frontier"|"mid"|"small"
+├── prompt.py    PromptBuilder.build(...) + RetrievedContext; context-window budget reduction
+├── logging.py   TurnLog (Pydantic) + TurnLogWriter Protocol + JSONL writer + cost table
+└── loop.py      ConversationLoop.turn(conversation, user_message) -> AsyncIterator[StreamChunk]
+```
+
+Key contracts:
+- **The turn sequence** (architecture §5.1, spec §4.1): retrieve context (identity `get_all` + self_facts/worldview/episodic `query(persona_id, msg, top_k=3)`) → manage history → build prompt → route → stream-generate with a tool-call sub-loop → episodic write-back → final chunk. The loop **receives** the `Conversation`, never owns it (D-S05-4) — stateless per request; the composition root (API / CLI / tests) loads and persists it.
+- **The sync/async summariser bridge** (D-05-X): the history manager stays sync + pure; the loop pre-computes the small-tier summary (`await`) on boundary-crossing turns and hands `manage()` a sync no-op assembler. Never `asyncio.run()` inside the sync callable.
+- **Routing** (architecture §5.3): rule-based, no ML. Per-persona override → first-turn-frontier → boilerplate-small → persona-critical-frontier → mid default.
+- **Tier config** via `PERSONA_{FRONTIER,MID,SMALL}_{PROVIDER,MODEL,API_KEY}` env triples; fallback small→mid→frontier; single-backend fallback from `PERSONA_PROVIDER` when no tiers set (D-05-3). `TierRegistry.aclose()` is owned by the composition root, not the loop (D-05-4).
+- **Skill budget** lives in ONE place — `SkillInjector.TOKEN_BUDGET` (spec 04). The `PromptBuilder` receives already-budgeted content; it does not re-enforce (D-05-7).
+- The CLI is **not** rewired to the full loop in spec 05 — it stays on its spec-02 direct path; the API (spec 08) is the first real composition root.
+
+See [`docs/specs/spec_05/spec_05_runtime.md`](../../docs/specs/spec_05/spec_05_runtime.md) and [`docs/specs/spec_05/decisions.md`](../../docs/specs/spec_05/decisions.md) for the full surface.
+
 ## Dependencies
 
 ```

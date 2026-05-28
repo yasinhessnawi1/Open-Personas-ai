@@ -1,0 +1,31 @@
+"""Runtime domain exceptions (D-05-2).
+
+The runtime is a composition layer (hexagonal architecture,
+ENGINEERING_STANDARDS.md §1.2). It defines exactly **one** new exception —
+:class:`TierNotConfiguredError` — for the one genuinely-new failure mode: a
+model tier that cannot be resolved even after fallback. Every other failure
+(provider 429s, tool-not-allowed, schema mismatches) is a spec-01/02/03 domain
+exception that the runtime lets propagate **unchanged**, rather than wrapping it
+in a parallel runtime vocabulary the caller would then have to unwrap.
+
+Note on ``MaxToolRoundsExceeded``: there is deliberately **no** such exception.
+Hitting ``max_tool_rounds`` is not an error — the loop handles it gracefully
+(spec §4.2: append a system nudge, do one final generation). Adding an exception
+here would invert that contract; don't.
+"""
+
+from __future__ import annotations
+
+from persona.errors import PersonaError
+
+__all__ = ["TierNotConfiguredError"]
+
+
+class TierNotConfiguredError(PersonaError):
+    """No model tier could be resolved for a requested tier name.
+
+    Raised by :class:`persona_runtime.tier.TierRegistry` when a tier name does
+    not resolve even after the ``small → mid → frontier`` fallback and the
+    single-backend fallback (D-05-3). Carries ``context`` with the requested
+    tier and the configured tier names so the operator can see the gap.
+    """
