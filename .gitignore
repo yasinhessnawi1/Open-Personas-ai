@@ -17,6 +17,7 @@ coverage.xml
 .env
 .env.local
 .env.*.local
+.secrets/
 
 # IDEs
 .vscode/
@@ -40,6 +41,7 @@ out/
 
 # Persona working directories
 .persona_work/
+.persona_audit/
 
 # UV
 uv.lock

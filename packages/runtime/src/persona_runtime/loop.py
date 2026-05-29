@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -100,6 +101,21 @@ def _final_chunk(usage: TokenUsage | None) -> StreamChunk:
     from persona.backends import StreamChunk
 
     return StreamChunk(delta="", is_final=True, usage=usage)
+
+
+@dataclass
+class _RoundOutcome:
+    """Mutable accumulator a streamed round fills while it yields text deltas.
+
+    Lets ``_stream_round`` yield each text delta as it arrives (so the SSE streams
+    char-by-char — acceptance §6 #2) while still capturing the full text, the
+    reconstructed tool calls, and the final usage for the tool sub-loop +
+    episodic write-back.
+    """
+
+    text: str = ""
+    calls: list[ToolCall] = field(default_factory=list)
+    usage: TokenUsage | None = None
 
 
 class ConversationLoop:
@@ -210,18 +226,16 @@ class ConversationLoop:
                 ),
                 *tool_messages,
             ]
-            round_text, round_calls, round_usage = await self._consume_stream(
-                backend, prompt_messages
-            )
+            outcome = _RoundOutcome()
+            async for delta in self._stream_round(backend, prompt_messages, outcome):
+                yield _text_chunk(delta)
+            round_text, round_calls, round_usage = outcome.text, outcome.calls, outcome.usage
             assistant_text = round_text
 
             at_cap = rounds >= self._max_tool_rounds
             if round_calls and not at_cap:
-                # Stream the round's tool-call narration (not the turn's final
-                # text). Any pre-tool text the model emitted is surfaced so the
-                # UI can show "Astrid is searching…" (architecture §7.2).
-                if round_text:
-                    yield _text_chunk(round_text)
+                # The round's pre-tool narration (e.g. "Astrid is searching…")
+                # already streamed delta-by-delta above (architecture §7.2).
                 if round_usage is not None:
                     usage = round_usage
                 # Surface the round's tool calls (the chat/run-viewer SSE
@@ -288,15 +302,16 @@ class ConversationLoop:
                     ),
                     *tool_messages,
                 ]
-                assistant_text, _final_calls, round_usage = await self._consume_stream(
-                    backend, final_prompt
-                )
+                final_outcome = _RoundOutcome()
+                async for delta in self._stream_round(backend, final_prompt, final_outcome):
+                    yield _text_chunk(delta)
+                assistant_text = final_outcome.text
+                round_usage = final_outcome.usage
 
-            # Normal completion (or post-cap final text). Stream the text now;
-            # the single is_final=True chunk is yielded AFTER write-back so a
-            # consumer that stops at is_final still triggers the write (D-05-12).
-            if assistant_text:
-                yield _text_chunk(assistant_text)
+            # Normal completion (or post-cap final text) — the text already
+            # streamed delta-by-delta above. The single is_final=True chunk is
+            # yielded AFTER write-back so a consumer that stops at is_final still
+            # triggers the write (D-05-12).
             if round_usage is not None:
                 usage = round_usage
             break
@@ -394,24 +409,29 @@ class ConversationLoop:
         response = await backend.chat(prompt)
         return response.content.strip()
 
-    async def _consume_stream(
-        self, backend: ChatBackend, prompt_messages: list[ConversationMessage]
-    ) -> tuple[str, list[ToolCall], TokenUsage | None]:
-        """Drive one stream to completion, accumulating text + tool calls (D-05-13).
+    async def _stream_round(
+        self,
+        backend: ChatBackend,
+        prompt_messages: list[ConversationMessage],
+        outcome: _RoundOutcome,
+    ) -> AsyncIterator[str]:
+        """Stream one model round, **yielding each text delta as it arrives** so the
+        turn streams char-by-char (acceptance §6 #2) — while accumulating the full
+        text, reconstructed tool calls, and usage into ``outcome`` for the tool
+        sub-loop + episodic write-back (D-05-13).
 
-        Returns ``(text, reconstructed_calls, final_usage)``. Tool-call deltas are
-        accumulated by ``call_id``; args JSON is parsed at the end (malformed →
-        empty dict, fail-safe).
+        Tool-call deltas are accumulated by ``call_id``; args JSON is parsed at
+        stream end (malformed → empty dict, fail-safe).
         """
-        text = ""
-        usage: TokenUsage | None = None
         names: dict[str, str] = {}
         args_json: dict[str, str] = {}
         order: list[str] = []
         async for chunk in backend.chat_stream(prompt_messages, tools=self._toolbox.get_specs()):
-            text += chunk.delta
+            if chunk.delta:
+                outcome.text += chunk.delta
+                yield chunk.delta
             if chunk.usage is not None:
-                usage = chunk.usage
+                outcome.usage = chunk.usage
             delta = chunk.tool_call_delta
             if delta is not None:
                 if delta.call_id not in names:
@@ -420,8 +440,7 @@ class ConversationLoop:
                     args_json[delta.call_id] = ""
                 names[delta.call_id] += delta.name_delta
                 args_json[delta.call_id] += delta.arguments_delta
-        calls = [self._build_call(cid, names[cid], args_json[cid]) for cid in order]
-        return text, calls, usage
+        outcome.calls = [self._build_call(cid, names[cid], args_json[cid]) for cid in order]
 
     @staticmethod
     def _build_call(call_id: str, name: str, raw_args: str) -> ToolCall:

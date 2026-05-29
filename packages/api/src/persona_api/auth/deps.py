@@ -180,6 +180,15 @@ async def get_current_user(
     """
     token = _bearer_token(request)
     user = await verify(token)
+    # JIT-provision the users row: the provider (Clerk) issues JWTs but the API
+    # has no signup, and persona/conversation/run/credits all FK users.id
+    # (webhook mirroring deferred in spec 08). A system action on the superuser
+    # engine; idempotent. None in unit tests without a superuser DSN.
+    admin_engine = getattr(request.app.state, "admin_engine", None)
+    if admin_engine is not None:
+        from persona_api.services.user_service import ensure_user
+
+        ensure_user(admin_engine, user_id=user.id, email=user.email)
     reset_token = current_user_id.set(user.id)
     try:
         yield user

@@ -33,11 +33,15 @@ class ScriptedRound:
         self,
         *,
         text: str = "",
+        text_deltas: list[str] | None = None,
         tool_name: str | None = None,
         tool_args: dict[str, Any] | None = None,
         call_id: str = "call-1",
     ) -> None:
         self.text = text
+        # When set, the round streams these as SEPARATE chunks (exercises
+        # delta-by-delta streaming); otherwise `text` is emitted as one chunk.
+        self.text_deltas = text_deltas
         self.tool_name = tool_name
         self.tool_args = tool_args or {}
         self.call_id = call_id
@@ -151,6 +155,9 @@ class ScriptedBackend:
                     arguments_delta=json.dumps(rnd.tool_args),
                 ),
             )
+        elif rnd.text_deltas:
+            for piece in rnd.text_deltas:
+                yield StreamChunk(delta=piece)
         elif rnd.text:
             yield StreamChunk(delta=rnd.text)
         yield StreamChunk(

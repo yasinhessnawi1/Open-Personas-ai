@@ -1,0 +1,191 @@
+{
+  "app": {
+    "name": "Open Persona",
+    "tagline": "Typed-memory AI personas with a tier-routed runtime."
+  },
+  "scaffold": {
+    "title": "Open Persona — web app",
+    "subtitle": "Scaffold is live. Auth, personas, chat, runs, and authoring land in the spec-09 tasks.",
+    "cta": "View personas"
+  },
+  "landing": {
+    "kicker": "Typed-memory persona runtime",
+    "headline": "AI personas with a memory you can read.",
+    "subhead": "Open Persona gives every agent a typed identity, a worldview, and episodic memory — then routes each turn to the right model tier.",
+    "signIn": "Sign in",
+    "getStarted": "Get started",
+    "openApp": "Open Persona",
+    "tierRail": "Routed per turn",
+    "tierSmall": "Small",
+    "tierMid": "Mid",
+    "tierFrontier": "Frontier",
+    "features": {
+      "identity": {
+        "title": "Identity is data",
+        "body": "Name, worldview, self-facts, and constraints live in typed, versioned stores — not buried in a prompt you can't inspect."
+      },
+      "tools": {
+        "title": "Transparent tools",
+        "body": "Every tool call and its result stream inline, collapsed by default. Transparency without the noise — no black box."
+      },
+      "runs": {
+        "title": "Agentic runs",
+        "body": "Hand off a task and watch the plan-act-reflect loop unfold step by step, answering its questions as it works."
+      },
+      "routing": {
+        "title": "Tier-routed",
+        "body": "Each turn runs on the right model — small, mid, or frontier — so you spend on power only when a turn needs it."
+      }
+    },
+    "ctaTitle": "Give your AI a self worth trusting.",
+    "footer": "Open source · built on a typed-memory core."
+  },
+  "nav": {
+    "personas": "Personas",
+    "conversations": "Conversations",
+    "settings": "Settings",
+    "newPersona": "New persona",
+    "menu": "Open menu",
+    "primary": "Primary"
+  },
+  "theme": {
+    "toggle": "Toggle theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "settings": {
+    "title": "Settings",
+    "account": "Account",
+    "accountHint": "Manage your account from the avatar menu in the header.",
+    "credits": "Credits",
+    "creditsHint": "Credits are spent per turn, by model tier.",
+    "preferences": "Preferences",
+    "theme": "Theme",
+    "themeHint": "Light, dark, or follow your system.",
+    "tierBadges": "Model tier badges",
+    "tierBadgesHint": "Show which tier answered each turn in chat.",
+    "language": "Language",
+    "languageHint": "English ships now; the pseudo-locale verifies full i18n coverage.",
+    "langEnglish": "English",
+    "langPseudo": "Pseudo",
+    "usage": "Usage",
+    "usageEmpty": "No usage yet — start a conversation or a run.",
+    "colWhen": "When",
+    "colTier": "Tier",
+    "colModel": "Model",
+    "colTokens": "Tokens",
+    "colCost": "Cost"
+  },
+  "conversations": {
+    "title": "Conversations",
+    "subtitle": "Every chat you've had with your personas.",
+    "empty": "No conversations yet",
+    "emptyHint": "Open a persona and start a chat.",
+    "untitled": "Untitled conversation"
+  },
+  "personas": {
+    "title": "Personas",
+    "subtitle": "Your typed-memory agents.",
+    "empty": "No personas yet",
+    "emptyHint": "Describe one in a sentence and the authoring flow drafts the rest.",
+    "create": "New persona",
+    "startChat": "Start chat",
+    "startRun": "Start a task",
+    "edit": "Edit",
+    "background": "Background",
+    "constraints": "Constraints",
+    "selfFacts": "Self-facts",
+    "worldview": "Worldview",
+    "tools": "Tools",
+    "skills": "Skills",
+    "none": "None declared.",
+    "backToList": "All personas",
+    "runTaskTitle": "Give {name} a task"
+  },
+  "runs": {
+    "backToPersona": "Back to persona",
+    "runByline": "{name} · agentic run",
+    "start": "Start task",
+    "starting": "Starting…",
+    "taskPlaceholder": "Describe a task for {name} to carry out…",
+    "statusLabel": "Run status",
+    "status": {
+      "running": "Running",
+      "completed": "Completed",
+      "cancelled": "Cancelled",
+      "max_steps_reached": "Max steps",
+      "error": "Error"
+    },
+    "stepLabel": "Step {n}",
+    "finalLabel": "Final",
+    "maxStepsNote": "Step budget reached — best-effort summary:",
+    "answered": "Answered.",
+    "answer": "Answer",
+    "answerPlaceholder": "Type your answer…",
+    "tierLabel": "Model tier: {tier}",
+    "cancel": "Cancel run",
+    "working": "Working…",
+    "noSteps": "No steps recorded."
+  },
+  "author": {
+    "describeByline": "New persona",
+    "describeTitle": "Describe your persona",
+    "describeHint": "One or two sentences. The frontier model drafts the identity, worldview, and constraints — you refine from there.",
+    "describePlaceholder": "e.g. A warm but rigorous Norwegian tenancy-law assistant who never gives binding legal advice…",
+    "examplesTitle": "Need a starting point?",
+    "example1": "A patient Python tutor for absolute beginners who explains with small runnable examples.",
+    "example2": "A blunt startup advisor who pressure-tests ideas and always asks about distribution.",
+    "example3": "A Norwegian tenancy-law assistant who cites husleieloven and never gives binding advice.",
+    "generate": "Generate persona",
+    "authorError": "Authoring failed. Try rephrasing your description.",
+    "rateLimited": "Too many authoring requests — wait a moment and try again.",
+    "loadingTitle": "Authoring your persona",
+    "loadingStep1": "Shaping identity and voice…",
+    "loadingStep2": "Forming worldview and self-facts…",
+    "loadingStep3": "Setting constraints and capabilities…",
+    "reviewByline": "Created — review & refine",
+    "reviewTitle": "Review your persona",
+    "editTitle": "Edit {name}",
+    "backToPersona": "Back to persona",
+    "identityTitle": "Identity",
+    "name": "Name",
+    "role": "Role",
+    "background": "Background",
+    "language": "Language",
+    "constraints": "Constraints",
+    "constraintPlaceholder": "One constraint…",
+    "addConstraint": "Add constraint",
+    "selfFactsTitle": "Self-facts",
+    "fact": "Fact",
+    "addSelfFact": "Add self-fact",
+    "worldviewTitle": "Worldview",
+    "claim": "Claim",
+    "domain": "Domain",
+    "validTime": "Valid time",
+    "addClaim": "Add claim",
+    "toolsTitle": "Tools",
+    "skillsTitle": "Skills",
+    "noTools": "No tools available.",
+    "noSkills": "No skills available.",
+    "remove": "Remove",
+    "editRawYaml": "Edit raw YAML",
+    "hideRawYaml": "Hide raw YAML",
+    "yamlInvalid": "Invalid YAML — the form keeps its last valid state. {error}",
+    "refineSoon": "Clarifying questions and an iterative refinement loop arrive in a later release.",
+    "save": "Save persona",
+    "saving": "Saving…",
+    "saveError": "Couldn't save — {error}",
+    "saveFailed": "Something went wrong while saving."
+  },
+  "chat": {
+    "placeholder": "Message {name}…",
+    "send": "Send",
+    "thinking": "{name} is thinking…",
+    "toolUsing": "Used {tool}",
+    "toolError": "Tool error",
+    "error": "Something went wrong while streaming. The conversation was reloaded.",
+    "empty": "Send a message to start.",
+    "tierLabel": "Model tier: {tier}"
+  }
+}

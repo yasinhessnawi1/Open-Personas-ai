@@ -134,6 +134,21 @@ class TestPlainTurn:
         assert len(writer.logs) == 1
         assert writer.logs[0].tier_used == "frontier"  # first turn -> frontier
 
+    @pytest.mark.asyncio
+    async def test_streams_text_delta_by_delta(self) -> None:
+        # The model emits its reply in pieces; the loop must yield each as its own
+        # chunk (acceptance §6 #2 — streams char-by-char), not collapse the whole
+        # response into a single buffered chunk.
+        backend = ScriptedBackend([ScriptedRound(text_deltas=["Hel", "lo, ", "Astrid", " here."])])
+        loop, _stores, _writer = _make_loop(backend)
+
+        chunks = [c async for c in loop.turn(_conv(0), "hi")]
+
+        content = [c for c in chunks if c.delta and not c.is_final]
+        assert len(content) >= 4, "expected delta-by-delta chunks, not one buffered chunk"
+        assert "".join(c.delta for c in chunks) == "Hello, Astrid here."
+        assert chunks[-1].is_final is True
+
 
 class TestToolCallLoop:
     @pytest.mark.asyncio

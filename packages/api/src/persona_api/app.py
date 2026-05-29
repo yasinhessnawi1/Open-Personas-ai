@@ -19,11 +19,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from persona_runtime.errors import TierNotConfiguredError
 from persona_runtime.tier import tier_registry_from_env
 
 from persona_api.background.run_worker import RunRegistry
 from persona_api.config import APIConfig
+from persona_api.db.engine import create_db_engine
 from persona_api.errors import register_exception_handlers
 from persona_api.middleware.rate_limit import (
     InMemoryRateLimitStore,
@@ -63,6 +65,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             config.effective_app_database_url, pool_size=config.db_pool_size
         )
     app.state.rls_engine = rls_engine
+    # Superuser engine for JIT user provisioning (spec-09 integration): a freshly
+    # authenticated Clerk user has no `users` row (webhook mirroring deferred,
+    # spec 08), yet everything FKs users.id. The auth dep upserts it via this
+    # RLS-bypassing engine. None when no superuser DSN is set.
+    admin_engine: Engine | None = (
+        create_db_engine(config.database_url) if config.database_url else None
+    )
+    app.state.admin_engine = admin_engine
     # The embedder for persona memory population (D-08-8). Lazy: weights load on
     # first encode, not at startup. Shared (thread-safe read path).
     app.state.embedder = persona_service.default_embedder(config.embedder_model)
@@ -107,6 +117,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await run_registry.aclose()  # cancel in-flight run tasks (S08-2)
         if runtime_factory is not None:
             await runtime_factory.aclose()  # tier_registry.aclose() + MCP disconnect (D-05-4)
+        if admin_engine is not None:
+            admin_engine.dispose()
         if rls_engine is not None:
             rls_engine.dispose()
 
@@ -129,6 +141,24 @@ def create_app(config: APIConfig | None = None) -> FastAPI:
     app.state.config = config
 
     register_exception_handlers(app)
+
+    # CORS for the spec-09 web app (browser → API is cross-origin). Bearer auth
+    # (no cookies) → allow_credentials=False; expose the rate-limit headers so the
+    # browser client can read them. Origins from PERSONA_API_CORS_ORIGINS.
+    if config.cors_origins_list:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=config.cors_origins_list,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=[
+                "X-RateLimit-Limit",
+                "X-RateLimit-Remaining",
+                "X-RateLimit-Reset",
+                "Retry-After",
+            ],
+        )
 
     # Routers are registered as they land (T07 personas, T08 conversations,
     # T11 runs, T12 me/health, T13 tools). Kept as an explicit include list so

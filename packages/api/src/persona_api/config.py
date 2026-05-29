@@ -87,6 +87,11 @@ class APIConfig(BaseSettings):
     credits_per_turn: int = 1
     authoring_credit_cost: int = 1000
 
+    # CORS origins allowed to call the API from a browser (spec-09 web app).
+    # Comma-separated; the web dev server is http://localhost:3000 by default.
+    # Empty disables CORS (server-to-server only). Read from PERSONA_API_CORS_ORIGINS.
+    cors_origins: str = "http://localhost:3000"
+
     @property
     def effective_app_database_url(self) -> str:
         """The DSN the request path connects with (RLS-enforced).
@@ -102,3 +107,8 @@ class APIConfig(BaseSettings):
     def jwt_algorithms_list(self) -> list[str]:
         """The allowed JWT algorithms as a list."""
         return [a.strip() for a in self.jwt_algorithms.split(",") if a.strip()]
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """The CORS-allowed origins as a list (empty disables CORS)."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
