@@ -88,6 +88,11 @@ personas = Table(
     Column("owner_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("yaml", Text, nullable=False),
     Column("schema_version", Text, nullable=False, server_default=text("'1.0'")),
+    # Visual identity for the persona list / chat header (nullable: user-uploaded
+    # or auto-generated-from-initials by the frontend). Added by migration 003,
+    # pre-spec-09 patch. Not part of the persona YAML schema — a presentation
+    # field owned by the API row.
+    Column("avatar_url", Text),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # Lets conversations/runs reference (persona_id, owner_id) as a composite FK
@@ -133,6 +138,10 @@ messages = Table(
     Column("role", Text, nullable=False),
     Column("content", Text, nullable=False),
     Column("tool_calls", JSONB),
+    # Connector passthrough (spec 08, D-08-3, migration 002). Nullable: the web
+    # UI sends no channel. The API stores it opaquely and never branches on
+    # `platform` — all connector logic is the future spec 12's.
+    Column("channel", JSONB),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("role IN ('system', 'user', 'assistant', 'tool')", name="messages_role_check"),
     Index("idx_messages_conversation", "conversation_id"),

@@ -11,7 +11,34 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
-_Nothing here yet._
+### Added (pre-spec-09 API polish)
+- **Auto-title on first message** — the first turn of a conversation generates a short title from the user's message via the small tier (best-effort: a summariser failure keeps the default title and never breaks the turn). Wired as an injectable `title_builder` on `app.state` (the runtime factory builds it from the small tier). ([`chat_service.py`](packages/api/src/persona_api/services/chat_service.py), [`runtime_factory.py`](packages/api/src/persona_api/services/runtime_factory.py))
+- **`personas.avatar_url`** — a nullable presentation field (not part of the persona YAML schema) for the persona-list / chat-header visual identity. Accepted on create/PATCH (PATCH leaves it untouched when omitted), surfaced on `PersonaSummary`/`PersonaDetail`. Migration `003_add_persona_avatar`. ([`003_add_persona_avatar.py`](packages/api/alembic/versions/003_add_persona_avatar.py))
+- **`DELETE /v1/conversations/:id`** — deletes a conversation and cascades to its messages + turn_logs (FK `ON DELETE CASCADE`); RLS-scoped (404 cross-tenant). ([`conversations.py`](packages/api/src/persona_api/routes/conversations.py))
+
+## [0.8.0] — 2026-05-28
+
+Spec 08 close-out. The **hosted FastAPI service** (`persona-api`) — the composition root where the sync stores (07), the sync runtime loops (05–06), the toolbox (03), and the backends (02) wire together inside async FastAPI. Auth + RLS, persona CRUD + LLM authoring, SSE streaming chat, background agentic runs, rate limiting, a credits stub, observability, and an auto-generated OpenAPI surface. The headline is the **structural RLS contract** (D-08-1): a per-request engine pool listener sets `app.current_user_id` on every connection from a request-scoped contextvar, so tenant isolation is a property of the engine — not a per-route discipline that could be forgotten. A security-reviewer pass found and the fix closed a HIGH JWT algorithm-confusion bug; the full tenant-boundary review is otherwise clean.
+
+### Added
+- `persona_api.app` — the `create_app()` factory + lifespan composition root. The lifespan owns the RLS engine, the embedder, the rate limiter, the agentic-run registry, and the app-scoped `TierRegistry`; on shutdown it calls `await tier_registry.aclose()` + `await client.disconnect()` per MCP client (D-05-4). ([`app.py`](packages/api/src/persona_api/app.py), [`config.py`](packages/api/src/persona_api/config.py))
+- `persona_api.middleware.rls_context` — **the structural RLS mechanism (D-08-1).** `make_rls_engine` attaches `checkout`/`checkin` pool listeners that `set_config('app.current_user_id', <uid or ''>, false)` from a request-scoped `contextvar` and reset it — so every connection a request touches (route queries AND the runtime store's own `engine.begin()`) is tenant-scoped, and an absent uid fails closed. Settled by an adversarial spike (Phase 3). ([`rls_context.py`](packages/api/src/persona_api/middleware/rls_context.py))
+- `persona_api.auth` — the injectable `verify_token` seam (D-08-4). `python-jose` JWT verification with the key bound to the token's algorithm family (HMAC→secret, RSA/EC→public key) to prevent algorithm-confusion; fail-fast on key/alg mismatch. `get_current_user` sets the RLS contextvar for the request. Tests override the seam with a fake JWT. ([`deps.py`](packages/api/src/persona_api/auth/deps.py))
+- `persona_api.schemas` — frozen Pydantic request/response models. The approved connector-agnostic change (D-08-3): an optional nullable `ChannelContext` on the message request + `format_hints` on the SSE `done` event — opaque passthrough the API never branches on. ([`requests.py`](packages/api/src/persona_api/schemas/requests.py), [`responses.py`](packages/api/src/persona_api/schemas/responses.py))
+- Routes: personas CRUD + LLM authoring; conversations + SSE chat (KEYSTONE 1); agentic runs start/events/respond/cancel (KEYSTONE 2); `/me/credits` + `/me/usage`; `/v1/tools` + `/v1/skills`; `/healthz`. ([`routes/`](packages/api/src/persona_api/routes/))
+- Services: `persona_service` (CRUD + memory-store population on create, D-08-8), `chat_service` (SSE chat, persist-after-final, channel passthrough), `run_service` + `background/run_worker` (in-process `asyncio.Task` runs, per-run event-bus queue, blocking `user_respond`, cancel, per-step persist — D-08-5), `authoring_service`, `credits_service` (deduct-after-success, D-08-6), `audit_service`, `catalog_service`, `runtime_factory` (builds the real loops per request). ([`services/`](packages/api/src/persona_api/services/))
+- `persona_api.middleware.rate_limit` — per-user/per-endpoint/per-minute limiter (§6) with in-memory + Postgres stores; `X-RateLimit-*` headers. ([`rate_limit.py`](packages/api/src/persona_api/middleware/rate_limit.py))
+- `PostgresTurnLogWriter` (D-08-7) — the spec-05 `TurnLogWriter` Protocol against `turn_logs`, injected into the conversation loop. ([`turn_log_writer.py`](packages/api/src/persona_api/services/turn_log_writer.py))
+- Alembic `002_add_message_channel` — the first incremental migration: a nullable `messages.channel` JSONB column (D-08-3). ([`002_add_message_channel.py`](packages/api/alembic/versions/002_add_message_channel.py))
+
+### Changed
+- `persona.registry.PersonaRegistry` — added a public `load_persona(persona)` (the string/object-input sibling of `load(path)`) so the API indexes a request-body persona without reaching into private internals; `load(path)` delegates to it. ([`registry.py`](packages/core/src/persona/registry.py))
+- `persona.tools.build_default_toolbox` — added an `extra_tools=` parameter so the composition root folds in the `use_skill` tool (D-04-10: not auto-registered) without touching the Toolbox's private state. ([`_factory.py`](packages/core/src/persona/tools/_factory.py))
+- `persona-runtime` ships a `py.typed` marker so `persona-api` (standard mypy) can import its types. ([`py.typed`](packages/runtime/src/persona_runtime/py.typed))
+
+### Security
+- **HIGH (fixed):** the JWT verifier chose the verification key independently of the algorithm — an RS256 deployment that left `jwt_algorithms` at its HS256 default could be tricked into verifying an HS256 token forged with the (public) RSA key as the HMAC secret (algorithm-confusion). Fixed by binding the key to the token's algorithm family + fail-fast on key/alg mismatch; regression-tested. The full tenant-boundary security-reviewer pass (8 threat classes) is otherwise clean.
+- **Open (deployment, → spec 11):** the JWT audience check is skipped when `PERSONA_API_JWT_AUDIENCE` is unset (the v0.1 default, since the auth provider is deferred). Set it in production once a provider is chosen.
 
 ## [0.7.0] — 2026-05-28
 

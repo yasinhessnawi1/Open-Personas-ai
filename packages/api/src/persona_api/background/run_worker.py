@@ -1,0 +1,168 @@
+"""Background agentic-run worker + in-process event bus (spec 08, T11, D-08-5).
+
+A run executes as an ``asyncio.Task``. Its lifecycle state lives in a per-run
+:class:`RunHandle`:
+
+- an **event queue** (``asyncio.Queue[RunEvent | None]``) — the loop's
+  ``on_event`` pushes each event; the SSE ``/events`` endpoint drains it; a
+  ``None`` sentinel signals end-of-stream.
+- a **response queue** (``asyncio.Queue[str]``) — ``/respond`` pushes the user's
+  answer; the loop's ``user_respond`` callback awaits it (D-06-10).
+- a **CancelToken** — ``/cancel`` flips it; the loop stops at the next step
+  boundary (D-06-7).
+
+Each step is persisted to ``runs.steps`` as it accumulates (crash-viewable, not
+resumable — S08-2), and the final ``Run`` (status/output) is written on
+completion. In-process + single-worker (S08-4); a process restart loses the
+task but the persisted steps remain viewable.
+
+The §11 fallback (ask-user terminates the run, user responds as a new run) is
+available if the blocking callback proves fragile — not the v0.1 default.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from typing import TYPE_CHECKING
+
+from persona.logging import get_logger
+from persona_runtime.agentic.run import CancelToken, RunStatus
+from sqlalchemy import update
+
+from persona_api.db.models import runs as runs_t
+from persona_api.middleware.rls_context import current_user_id
+
+if TYPE_CHECKING:
+    from persona_runtime.agentic.events import RunEvent
+    from persona_runtime.agentic.loop import AgenticLoop
+    from persona_runtime.agentic.run import Run
+    from sqlalchemy import Engine
+
+_log = get_logger("api.run_worker")
+
+__all__ = ["RunHandle", "RunRegistry"]
+
+
+class RunHandle:
+    """The in-process state of one running agentic run."""
+
+    def __init__(self, run_id: str, owner_id: str) -> None:
+        self.run_id = run_id
+        self.owner_id = owner_id
+        self.events: asyncio.Queue[RunEvent | None] = asyncio.Queue()
+        self.responses: asyncio.Queue[str] = asyncio.Queue()
+        self.cancel_token = CancelToken()
+        self.task: asyncio.Task[None] | None = None
+
+    async def on_event(self, event: RunEvent) -> None:
+        """The loop's event callback: publish to the SSE queue."""
+        await self.events.put(event)
+
+    async def user_respond(self, _question: str) -> str:
+        """The loop's ask-user callback: block until ``/respond`` pushes an answer."""
+        return await self.responses.get()
+
+
+class RunRegistry:
+    """App-scoped registry of in-flight runs. Single-worker, in-process (S08-4)."""
+
+    def __init__(self, rls_engine: Engine) -> None:
+        self._engine = rls_engine
+        self._handles: dict[str, RunHandle] = {}
+
+    def get(self, run_id: str) -> RunHandle | None:
+        return self._handles.get(run_id)
+
+    def start(
+        self,
+        *,
+        run_id: str,
+        owner_id: str,
+        loop: AgenticLoop,
+        task_text: str,
+    ) -> RunHandle:
+        """Create a handle and launch the run as an ``asyncio.Task``."""
+        handle = RunHandle(run_id, owner_id)
+        self._handles[run_id] = handle
+        handle.task = asyncio.create_task(self._run(handle, loop, task_text))
+        return handle
+
+    async def _run(self, handle: RunHandle, loop: AgenticLoop, task_text: str) -> None:
+        """The task body: drive the loop, persist progress + final Run, end the stream.
+
+        The background task runs OUTSIDE any request scope, so it sets the RLS
+        contextvar to the run's owner for its own DB writes — otherwise the
+        checkout listener scopes to '' and RLS silently blocks the persistence
+        UPDATEs (verified: a background UPDATE with no scope affects 0 rows).
+        The loop's own store calls (memory_chunks) are likewise scoped to the
+        owner via this contextvar — correct, since the run acts as the owner.
+        """
+        token = current_user_id.set(handle.owner_id)
+        # Accumulate the per-step event log so a restart mid-run leaves the run
+        # VIEWABLE (S08-2: progress visible, not resumable). The final Run (with
+        # the authoritative Step objects) overwrites this on completion.
+        event_log: list[dict[str, object]] = []
+
+        async def _on_event(event: RunEvent) -> None:
+            await handle.on_event(event)
+            event_log.append(event.model_dump(mode="json"))
+            self._persist_progress(handle.run_id, event_log)
+
+        try:
+            run = await loop.run(
+                task_text,
+                on_event=_on_event,
+                user_respond=handle.user_respond,
+                cancel_token=handle.cancel_token,
+            )
+            # Persist by the API's run_id (the DB row), NOT run.id — the loop
+            # assigns its own internal id, distinct from the API's row id.
+            self._persist_final(handle.run_id, run)
+        except Exception as exc:  # noqa: BLE001 — a background task must never crash silently
+            _log.error("agentic run {rid} failed: {err}", rid=handle.run_id, err=str(exc))
+            self._persist_error(handle.run_id, str(exc))
+        finally:
+            current_user_id.reset(token)
+            await handle.events.put(None)  # end-of-stream sentinel for SSE
+
+    def _persist_progress(self, run_id: str, event_log: list[dict[str, object]]) -> None:
+        """Snapshot the event log to runs.steps as it grows (crash-viewable)."""
+        with self._engine.begin() as conn:
+            conn.execute(update(runs_t).where(runs_t.c.id == run_id).values(steps=event_log))
+
+    def _persist_final(self, run_id: str, run: Run) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                update(runs_t)
+                .where(runs_t.c.id == run_id)
+                .values(
+                    status=str(run.status),
+                    steps=[s.model_dump(mode="json") for s in run.steps],
+                    output=run.output,
+                    error=run.error,
+                    finished_at=run.finished_at,
+                )
+            )
+
+    def _persist_error(self, run_id: str, message: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                update(runs_t)
+                .where(runs_t.c.id == run_id)
+                .values(status=str(RunStatus.ERROR), error=message)
+            )
+
+    async def aclose(self) -> None:
+        """Cancel all in-flight run tasks on shutdown (S08-2: lost, but viewable)."""
+        for handle in self._handles.values():
+            if handle.task is not None and not handle.task.done():
+                handle.cancel_token.cancel()
+                handle.task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await handle.task
+
+
+# Re-export the callback aliases for the service's type hints.
+OnEvent = "Callable[[RunEvent], Awaitable[None]]"
+UserRespond = "Callable[[str], Awaitable[str]]"

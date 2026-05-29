@@ -38,6 +38,7 @@ async def build_default_toolbox(
     persona: Persona,
     *,
     tool_audit_logger: ToolAuditLogger | None = None,
+    extra_tools: list[AsyncTool] | None = None,
 ) -> tuple[Toolbox, list[MCPClient]]:
     """Compose a Toolbox for the given persona.
 
@@ -51,6 +52,10 @@ async def build_default_toolbox(
             raises `ToolNotAllowedError`).
         tool_audit_logger: Optional logger for `file_write` + MCP lifecycle
             events (D-03-21).
+        extra_tools: Additional tools the composition root supplies — notably the
+            `use_skill` tool (D-04-10: NOT auto-registered; the runtime/API
+            composes it when the persona has skills). Folded into the Toolbox
+            alongside the built-ins + MCP tools, subject to the same allow-list.
 
     Returns:
         A tuple ``(toolbox, mcp_clients)``. The caller is responsible for
@@ -94,13 +99,14 @@ async def build_default_toolbox(
         for c in mcp_clients:
             mcp_tools.extend(c.get_tools())
 
-    all_tools: list[AsyncTool] = [*builtins, *mcp_tools]
+    all_tools: list[AsyncTool] = [*builtins, *mcp_tools, *(extra_tools or [])]
 
     _logger.info(
         "build_default_toolbox composed",
         persona_id=persona.persona_id or "<unknown>",
         builtin_count=len(builtins),
         mcp_tool_count=len(mcp_tools),
+        extra_tool_count=len(extra_tools or []),
         allow_list_size=len(persona.tools),
     )
 

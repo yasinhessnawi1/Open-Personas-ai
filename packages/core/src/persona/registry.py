@@ -77,14 +77,29 @@ class PersonaRegistry:
             to access identity/self_facts/etc. without re-reading the file.
         """
         persona = Persona.from_yaml(path)
-        assert persona.persona_id is not None  # set by from_yaml
-        persona_id = persona.persona_id
         self._log.info(
             "loading persona persona_id={persona_id} path={path}",
-            persona_id=persona_id,
+            persona_id=persona.persona_id,
             path=str(path),
         )
+        return self.load_persona(persona)
 
+    def load_persona(self, persona: Persona) -> Persona:
+        """Index an already-validated persona's author-time chunks.
+
+        The string/object-input sibling of :meth:`load` (which reads a YAML
+        file): the hosted API validates the YAML from a request body into a
+        :class:`Persona` and indexes it here, under its RLS-scoped stores
+        (spec 08, D-08-8). Same idempotency guarantees as :meth:`load`.
+
+        Args:
+            persona: A validated persona. ``persona_id`` must be set (the API
+                derives/assigns it before calling).
+
+        Returns:
+            The same persona, for caller convenience.
+        """
+        assert persona.persona_id is not None  # caller (or from_yaml) sets it
         # Identity is immutable at runtime; the registry indexes it directly
         # via the backend on first load.
         self._index_identity_if_first_load(persona)

@@ -39,6 +39,14 @@ line-length = 100
 select = ["E", "F", "W", "I", "N", "UP", "ANN", "B", "A", "COM", "C4", "PT", "RET", "SIM", "TCH", "ARG", "PTH", "ERA"]
 ignore = ["COM812"]
 
+[tool.ruff.lint.per-file-ignores]
+# FastAPI (persona-api, spec 08): `Depends()`/`Query()` in argument defaults is
+# the framework idiom (B008); and FastAPI resolves dependency/route signatures
+# via get_type_hints at runtime, so names used in those annotations must be real
+# runtime imports — the type-checking rules' "move into TYPE_CHECKING" would
+# break dependency resolution (the request param gets mis-read as a query param).
+"packages/api/**" = ["B008", "TC001", "TC002", "TC003"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
@@ -55,6 +63,12 @@ disallow_incomplete_defs = true
 # its missing imports rather than vendoring stubs for a third-party lib.
 [[tool.mypy.overrides]]
 module = ["pgvector.*"]
+ignore_missing_imports = true
+
+# python-jose (persona-api, spec 08 auth) ships no stubs. Ignore missing imports
+# rather than depend on the partial third-party types-python-jose stubs.
+[[tool.mypy.overrides]]
+module = ["jose.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
