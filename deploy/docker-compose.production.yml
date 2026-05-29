@@ -1,8 +1,11 @@
 # Open Persona — production Docker Compose (Spec 11, T10)
 # Single VPS deploy: API + Postgres+pgvector co-located, single uvicorn worker.
-# Copy this file + ../.env.production to the VPS, then `docker compose -f docker-compose.production.yml up -d`.
-# Migrations are NOT auto-run on startup (spec 07, §7) — run them explicitly after `up`:
-#   docker compose -f docker-compose.production.yml run --rm api uv run alembic -c alembic/alembic.ini upgrade head
+# Copy this file + .env.production + bootstrap.sh to the VPS, then:
+#   docker compose -f docker-compose.production.yml up -d
+#   ./bootstrap.sh            # creates persona_app role, runs alembic, grants privileges
+# Migrations are NOT auto-run on startup (spec 07, §7) — bootstrap.sh is idempotent
+# and is the one-shot first-boot script. Re-run after migration bumps; it handles
+# upgrade head + leaves default privileges in place so new tables inherit grants.
 
 services:
   postgres:
