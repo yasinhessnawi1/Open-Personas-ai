@@ -7,9 +7,15 @@ edge terminates TLS automatically, so no Caddy is needed.
 ## What Fly buys you here
 
 - **TLS for free** — `fly certs add api.openpersona.dev` and you're done.
-- **Managed Postgres** — `fly pg create` + `fly pg attach` wires `DATABASE_URL`.
 - **One-Machine deploy** — matches S08-4 / D-08-5 (in-process run bus, in-memory rate limiter).
 - **Volume-backed audit logs** — survives Machine restarts.
+
+> **Note on Postgres:** Fly Managed Postgres (`fly mpg`) starts at $38/mo
+> for the Basic plan, and the legacy unmanaged `fly pg` is no longer
+> officially supported. The launch path uses **Neon** (free tier, pgvector,
+> Frankfurt region — matches Fly `fra` for <5 ms DB latency) instead —
+> see §1 below. The cost stays at $0 for Postgres, and we sidestep the
+> support-status warning on legacy Fly PG.
 
 ## Prerequisites
 
@@ -19,57 +25,160 @@ edge terminates TLS automatically, so no Caddy is needed.
 
 ---
 
-## 1. Create the app + Postgres + volume
+## 1. Create the Fly app + volume + Neon Postgres
 
 ```bash
-# Pick your own app name (Fly requires globally-unique).
 APP=open-persona-api
-PG_APP=open-persona-db
 REGION=fra            # Frankfurt — close to Vercel's fra1 (D-11-2)
 
 # 1a. The API app.
 flyctl apps create $APP --org personal
 
-# 1b. The audit-log volume (small; the JSONL logs rotate).
+# 1b. The audit-log volume (small; the JSONL logs rotate). Free under 3 GB.
 flyctl volumes create persona_audit --app $APP --region $REGION --size 1 --yes
-
-# 1c. Managed Postgres+pgvector cluster (single node — single-tenant v0.1).
-flyctl pg create \
-  --name $PG_APP \
-  --region $REGION \
-  --vm-size shared-cpu-1x \
-  --initial-cluster-size 1 \
-  --volume-size 3 \
-  --image-ref flyio/postgres-flex:15
-
-# 1d. Attach the cluster to the API app. This:
-#     * creates a new DB user named after $APP
-#     * grants it on a fresh DB named $APP
-#     * sets DATABASE_URL on the API as a secret
-flyctl pg attach $PG_APP --app $APP
 ```
 
-The attached `DATABASE_URL` comes in `postgres://...` form; the API expects
-the `postgresql+psycopg://` dialect. Patch it now:
+### 1c. Provision a Neon Postgres project (one-time, 5 minutes)
+
+1. Go to **https://console.neon.tech** and sign up (Google or GitHub; **no card required**).
+2. Create a project:
+   - Project name: `open-persona`
+   - Postgres version: 16
+   - **Region: AWS Europe (Frankfurt) — `eu-central-1`** (matches Fly `fra`; <5 ms DB latency).
+   - Database name: leave the default `neondb`.
+3. On the project page, copy the **direct (unpooled) DSN** — toggle "Pooled connection" *off*.
+   - Pooled DSN uses PgBouncer transaction mode, which silently breaks our D-08-1
+     structural-RLS pattern (session-level `set_config('app.current_user_id', …, false)` is
+     lost between transactions). The direct DSN supports session-level state; SQLAlchemy
+     maintains its own pool on top.
+4. Paste the DSN into your local `.env` as `DATABASE_URL=postgresql://...`. The repo's
+   `.env` is gitignored.
+
+### 1d. Bootstrap the Neon database
+
+Done from your laptop (the API container doesn't need outbound psql tools):
 
 ```bash
-# Read the existing DSN and rewrite the scheme.
-ATTACHED=$(flyctl ssh console --app $APP -C 'printenv DATABASE_URL')
-PATCHED=${ATTACHED/postgres:\/\//postgresql+psycopg://}
-flyctl secrets set --app $APP DATABASE_URL="$PATCHED"
+# Generate a strong password for the non-superuser persona_app role and persist it.
+PG_APP_PW=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+grep -q "^PERSONA_APP_DB_PASSWORD=" .env || echo "PERSONA_APP_DB_PASSWORD=$PG_APP_PW" >> .env
 ```
 
-> **Aside on pgvector:** the `flyio/postgres-flex` image includes the
-> `vector` extension binary. The Alembic migration runs
-> `CREATE EXTENSION IF NOT EXISTS vector` for you (D-07-6).
+Then run this Python (it parses `.env`, patches the SQLAlchemy dialect, creates
+`persona_app`, runs `alembic upgrade head`, and grants the role tables + sequences):
+
+```bash
+.venv/bin/python <<'PY'
+import os, re
+from pathlib import Path
+for line in Path('.env').read_text().splitlines():
+    line = line.strip()
+    if not line or line.startswith('#') or '=' not in line: continue
+    k, _, v = line.partition('=')
+    os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+dsn = os.environ['DATABASE_URL']
+if dsn.startswith('postgresql://') and '+psycopg' not in dsn:
+    dsn = dsn.replace('postgresql://', 'postgresql+psycopg://', 1)
+pw = os.environ['PERSONA_APP_DB_PASSWORD']
+
+from sqlalchemy import create_engine, text
+eng = create_engine(dsn, isolation_level='AUTOCOMMIT')
+with eng.connect() as c:
+    c.execute(text(f"""
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='persona_app') THEN
+    EXECUTE format('CREATE ROLE persona_app LOGIN NOSUPERUSER PASSWORD %L', '{pw}');
+  END IF;
+END$$;
+GRANT USAGE ON SCHEMA public TO persona_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO persona_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO persona_app;
+"""))
+
+import sys
+sys.path[0:0] = ['packages/core/src','packages/runtime/src','packages/api/src']
+from alembic import command
+from alembic.config import Config
+cfg = Config('packages/api/alembic/alembic.ini')
+cfg.set_main_option('script_location', 'packages/api/alembic')
+cfg.set_main_option('sqlalchemy.url', dsn)
+command.upgrade(cfg, 'head')
+
+# Grants on the now-existing tables (idempotent).
+with eng.connect() as c:
+    c.execute(text('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO persona_app'))
+    c.execute(text('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO persona_app'))
+PY
+```
+
+### 1e. Switch `DATABASE_URL` from pooled to direct (if you grabbed the pooled DSN)
+
+Neon's direct host is the pooled host with `-pooler` stripped. If your DSN shows
+`ep-xxx-pooler.c-N.eu-central-1.aws.neon.tech`, drop the `-pooler`. The
+launch-session helper did this automatically; the same script for reuse:
+
+```bash
+sed -i.bak 's/-pooler\././' .env && rm .env.bak    # macOS BSD sed; on Linux: -i ''
+```
 
 ---
 
-## 2. Set the API secrets
+## 2. Stage the API secrets on the Fly app
 
-Read each value from your `.env` (DeepSeek key, Anthropic key, etc.) and the
-Clerk dashboard. Use `flyctl secrets set` (encrypted at rest, redacted in
-logs).
+We use `flyctl secrets import` (stdin NAME=VALUE lines — safer than argv-leaking
+secrets). The Clerk PEM is multiline so it goes via a separate `flyctl secrets
+set` call. Both use `--stage` so nothing tries to redeploy mid-staging.
+
+```bash
+# Stage 16 single-line secrets from .env (incl. DATABASE_URL + APP_DATABASE_URL we
+# build by swapping persona_app credentials onto the same host/db/params).
+.venv/bin/python <<'PY' | flyctl secrets import --app open-persona-api --stage
+import os, re
+from pathlib import Path
+env = {}
+for line in Path('.env').read_text().splitlines():
+    line = line.strip()
+    if not line or line.startswith('#') or '=' not in line: continue
+    k, _, v = line.partition('=')
+    env[k.strip()] = v.strip().strip('"').strip("'")
+
+dsn = env['DATABASE_URL']
+if dsn.startswith('postgresql://') and '+psycopg' not in dsn:
+    dsn = dsn.replace('postgresql://', 'postgresql+psycopg://', 1)
+m = re.match(r'(.+)://[^:]+:[^@]+@(.+)$', dsn)
+app_dsn = f'{m.group(1)}://persona_app:{env["PERSONA_APP_DB_PASSWORD"]}@{m.group(2)}'
+deepseek = env['PERSONA_MID_API_KEY']
+
+secrets = {
+    'DATABASE_URL': dsn, 'APP_DATABASE_URL': app_dsn,
+    'PERSONA_PROVIDER':'deepseek','PERSONA_MODEL':'deepseek-chat','PERSONA_API_KEY':deepseek,
+    'PERSONA_FRONTIER_PROVIDER':env['PERSONA_FRONTIER_PROVIDER'],
+    'PERSONA_FRONTIER_MODEL':env['PERSONA_FRONTIER_MODEL'],
+    'PERSONA_FRONTIER_API_KEY':env['PERSONA_FRONTIER_API_KEY'],
+    'PERSONA_MID_PROVIDER':env['PERSONA_MID_PROVIDER'],
+    'PERSONA_MID_MODEL':env['PERSONA_MID_MODEL'],
+    'PERSONA_MID_API_KEY':env['PERSONA_MID_API_KEY'],
+    'PERSONA_SMALL_PROVIDER':'deepseek','PERSONA_SMALL_MODEL':'deepseek-chat','PERSONA_SMALL_API_KEY':deepseek,
+    'PERSONA_WEB_SEARCH_PROVIDER':'tavily',
+    'PERSONA_WEB_SEARCH_API_KEY':env['PERSONA_WEB_SEARCH_API_KEY'],
+}
+for k, v in secrets.items(): print(f'{k}={v}')
+PY
+
+# Stage the Clerk PEM separately (multiline values can't go through secrets-import).
+flyctl secrets set --app open-persona-api --stage \
+  PERSONA_API_JWT_PUBLIC_KEY="$(cat packages/api/.secrets/clerk-jwt-public.pem)"
+
+# Sanity:
+flyctl secrets list --app open-persona-api
+```
+
+> **Note.** The launch-session used Tavily as the search provider (free 1k/mo,
+> no card required); D-03-9 originally specified Brave. Both providers work —
+> set `PERSONA_WEB_SEARCH_PROVIDER` to whichever key you have.
+
+For reference, the original Brave-style argv set looked like:
 
 ```bash
 flyctl secrets set --app $APP \
@@ -101,85 +210,30 @@ under `[env]` — no action needed.
 
 ```bash
 # From the repo root (the Dockerfile's COPY paths assume that as context).
-flyctl deploy -c deploy/fly.toml
+# --remote-only does the build on Fly's builders — saves local disk + bandwidth.
+flyctl deploy -c deploy/fly.toml --app open-persona-api --remote-only
 ```
 
-The Machine will report unhealthy at first (no tables yet) — that's expected;
-healthchecks turn green after step 4.
+First build is ~3–5 minutes (uv sync of the whole workspace + sentence-transformers).
+Subsequent builds use Docker layer caching and are much faster.
+
+The Machine should report healthy on first start because §1d already ran the
+schema migration + grants against Neon. Verify:
+
+```bash
+flyctl status --app open-persona-api
+curl -fsS https://open-persona-api.fly.dev/healthz   # {"status":"ok","db":"connected"}
+```
 
 ---
 
-## 4. First-boot bootstrap — Postgres role + alembic + grants
+## 4. (Schema + persona_app are already done in §1d)
 
-Same three steps the local `bootstrap.sh` does, but via Fly tooling. **All
-idempotent — safe to re-run.**
-
-### 4a. Create the `persona_app` non-superuser role + grants
-
-```bash
-# Open psql against the Postgres cluster (NOT the API app).
-flyctl pg connect --app $PG_APP -d $APP
-```
-
-At the prompt, paste:
-
-```sql
--- Pick a strong password — you'll need it for APP_DATABASE_URL below.
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'persona_app') THEN
-    CREATE ROLE persona_app LOGIN PASSWORD 'REPLACE_ME_PERSONA_APP_PW' NOSUPERUSER;
-  END IF;
-END$$;
-
-GRANT USAGE ON SCHEMA public TO persona_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO persona_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO persona_app;
-\q
-```
-
-### 4b. Run the migration (creates tables, RLS policies, indexes)
-
-```bash
-flyctl ssh console --app $APP \
-  -C "sh -c 'cd /app/packages/api && uv run alembic -c alembic/alembic.ini upgrade head'"
-```
-
-### 4c. Grant on the now-existing tables
-
-```bash
-flyctl pg connect --app $PG_APP -d $APP
-```
-
-```sql
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO persona_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO persona_app;
-\q
-```
-
-### 4d. Set `APP_DATABASE_URL` as a secret
-
-Use the same hostname Fly composed for `DATABASE_URL`, swapping the user and
-password:
-
-```bash
-# Read DATABASE_URL, extract host/port/db, splice persona_app credentials.
-DSN=$(flyctl ssh console --app $APP -C 'printenv DATABASE_URL')
-# DSN looks like: postgresql+psycopg://<app_user>:<app_pw>@<host>:5432/<db>
-HOST_DB=$(echo "$DSN" | sed -E 's|.*@||')          # host:5432/db
-flyctl secrets set --app $APP \
-  APP_DATABASE_URL="postgresql+psycopg://persona_app:REPLACE_ME_PERSONA_APP_PW@${HOST_DB}"
-```
-
-The Machine restarts after `secrets set` — healthcheck should go green within
-~30 s. Verify:
-
-```bash
-flyctl status --app $APP
-curl -fsS https://$APP.fly.dev/healthz   # {"status":"ok","db":"connected"}
-```
+The legacy "fly pg connect + ssh console alembic + grants again" flow that the
+Fly-managed-PG path used is collapsed into §1d's single Python script: it
+provisions the role, runs alembic, and grants on the now-existing tables in
+one transactional batch. Future migration bumps re-run the same script (the
+DO-block + alembic upgrade are both idempotent).
 
 ---
 
