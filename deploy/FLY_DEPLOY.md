@@ -85,6 +85,7 @@ flyctl secrets set --app $APP \
   PERSONA_SMALL_PROVIDER=deepseek \
   PERSONA_SMALL_MODEL=deepseek-chat \
   PERSONA_SMALL_API_KEY=$DEEPSEEK_KEY \
+  PERSONA_WEB_SEARCH_PROVIDER=tavily \
   PERSONA_WEB_SEARCH_API_KEY=$SEARCH_KEY \
   PERSONA_API_JWT_PUBLIC_KEY="$(cat packages/api/.secrets/clerk-jwt-public.pem)"
   # CORS — set this LATER (§5) once Vercel gives you the persona-web URL.
