@@ -420,6 +420,25 @@ All five files were retokenised (every `text-[0.65rem]` → `.type-caption`, `te
 
 ---
 
+## F5 promotions (Spec F5 T07 — D-F5-X-document-primitives-f2-promotion)
+
+The two F3-local document-chip components were promoted to canonical F2 home via the strangler-fig pattern. **11th additive-precedent chain entry.**
+
+### DocumentChip — promoted F5 T07
+
+- **Path:** [`src/components/ui/document-chip.tsx`](src/components/ui/document-chip.tsx) (canonical F2 home)
+- **Strangler-fig shim:** `src/components/chat/composer/document-chip.tsx` re-exports `{ DocumentChip, type DocumentChipProps }` from `@/components/ui/document-chip`. Existing F3 / chat-composer imports continue to work; new consumers (F5 artifact view T15) import from the F2 path directly.
+- **Tag:** client (next-intl + lucide-react)
+- **Use when:** rendering a document attachment chip in the chat composer (F3) or the F5 artifact view (T15) doc rows.
+- **Don't use for:** image previews (use F2 `<AuthedImage>` + composer `<ComposerImagePreview>`); generic file cards (compose `<Card>` directly).
+
+### ConversationDocumentList — promoted F5 T07
+
+- **Path:** [`src/components/ui/conversation-document-list.tsx`](src/components/ui/conversation-document-list.tsx) (canonical F2 home)
+- **Strangler-fig shim:** `src/components/chat/composer/conversation-document-list.tsx` re-exports `{ ConversationDocumentList, type ConversationDocumentListProps }` from `@/components/ui/conversation-document-list`.
+- **Tag:** client
+- **Use when:** rendering the per-conversation document chip strip in the F3 composer or the F5 conversation-scoped document column (T15).
+
 ## What was deleted in F2
 
 The scaffold's `src/components/personas/persona-card.tsx` (30 LOC, scaffold version with the `bg-primary/10 text-primary` uniform-fill D-F1-5 violation) was removed at T32 close — orphaned after T27 swapped the list page to the F2 `<PersonaCard>` at `src/components/persona/persona-card.tsx` (singular path).

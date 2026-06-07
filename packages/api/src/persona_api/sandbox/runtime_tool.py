@@ -213,6 +213,33 @@ def make_pool_code_execution_tool(
             )
         return files
 
+    def _classify_for_sidecar(
+        ref: str,
+    ) -> tuple[str, str] | None:
+        """Classify a produced-file ref into (type, producing_spec) for the
+        F5 sidecar, or return None for refs that get no sidecar.
+
+        Mirrors the three-branch persist-target policy below:
+
+        * ``charts/`` → ("chart", "17") — Spec 17 matplotlib.
+        * ``intermediate/`` → None — not user-facing; no sidecar so the
+          F5 artifact list doesn't surface intermediate cache files.
+        * ``uploads/<filename>.<ext>``:
+            - document extensions (.docx/.pptx/.xlsx/.pdf) → ("doc", "16")
+            - data extensions (.parquet/.csv/.json) → ("data", "12")
+            - else → ("doc", "12") — safe fallback for general bare refs.
+        """
+        if ref.startswith("charts/"):
+            return ("chart", "17")
+        if ref.startswith("intermediate/"):
+            return None
+        suffix = ref.rsplit(".", 1)[-1].lower() if "." in ref else ""
+        if suffix in {"docx", "pptx", "xlsx", "pdf"}:
+            return ("doc", "16")
+        if suffix in {"parquet", "csv", "json"}:
+            return ("data", "12")
+        return ("doc", "12")
+
     async def _persist_produced_file(session_id: str, ref: str) -> None:
         """Copy a produced file from the sandbox session to the persona workspace.
 
@@ -258,6 +285,39 @@ def make_pool_code_execution_tool(
         else:
             target = persona_workspace / "uploads" / ref
         await pool.sandbox.copy_produced_file_to(session_id, ref, target)
+
+        # F5 T06 — D-F5-X-artifact-metadata-convention: write a sidecar so
+        # the F5 artifact-list endpoint can filter/sort produced files.
+        # ``intermediate/`` returns None — NO sidecar, preserving the
+        # D-F4-X-bare-ref-resolution invariant (those files aren't
+        # user-facing and shouldn't surface in the artifact view).
+        # Best-effort — failure logs but does not abort the persist.
+        classification = _classify_for_sidecar(ref)
+        if classification is not None:
+            artifact_type, producing_spec = classification
+            try:
+                from persona_api.services.artifact_metadata import (  # noqa: PLC0415
+                    WorkspaceArtifactMetadata,
+                    utcnow,
+                    write_artifact_sidecar,
+                )
+
+                write_artifact_sidecar(
+                    target,
+                    WorkspaceArtifactMetadata(
+                        source="generated",
+                        type=artifact_type,  # type: ignore[arg-type]
+                        producing_spec=producing_spec,  # type: ignore[arg-type]
+                        conversation_id=None,
+                        created_at=utcnow(),
+                        original_name=None,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — sidecar failure non-fatal
+                # No logger wired here; the persist succeeded, the sidecar
+                # is enrichment. Future telemetry can surface failures via
+                # audit log if needed.
+                pass
 
     return make_code_execution_tool(
         pool.sandbox,

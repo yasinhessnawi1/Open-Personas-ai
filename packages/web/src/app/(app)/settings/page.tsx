@@ -53,103 +53,187 @@ export default async function SettingsPage() {
     <PageBody>
       <PageHeader title={t("title")} />
 
-      <Stack gap={5}>
-        <Card className="gap-2 p-5" data-slot="settings-account">
-          <h2 className="type-caption font-mono text-muted-foreground uppercase">
-            {t("account")}
-          </h2>
-          <p className="type-body font-medium">{name}</p>
-          {email && name !== email ? (
-            <p className="type-ui text-muted-foreground">{email}</p>
-          ) : null}
-          <p className="type-caption text-muted-foreground">
-            {t("accountHint")}
-          </p>
-        </Card>
+      <div className="lg:grid lg:grid-cols-[14rem_1fr] lg:gap-6">
+        <nav
+          aria-label={t("sectionsNav")}
+          className="sticky top-20 hidden self-start lg:block"
+          data-slot="settings-anchor-nav"
+        >
+          <ul className="flex flex-col gap-1 border-l text-muted-foreground">
+            <li>
+              <a
+                href="#profile"
+                className="type-ui block border-l-2 border-transparent px-3 py-1 hover:border-primary hover:text-foreground"
+              >
+                {t("profileLabel")}
+              </a>
+            </li>
+            <li>
+              <a
+                href="#credits"
+                className="type-ui block border-l-2 border-transparent px-3 py-1 hover:border-primary hover:text-foreground"
+              >
+                {t("credits")}
+              </a>
+            </li>
+            <li>
+              <a
+                href="#preferences"
+                className="type-ui block border-l-2 border-transparent px-3 py-1 hover:border-primary hover:text-foreground"
+              >
+                {t("preferences")}
+              </a>
+            </li>
+            <li>
+              <a
+                href="#usage"
+                className="type-ui block border-l-2 border-transparent px-3 py-1 hover:border-primary hover:text-foreground"
+              >
+                {t("usage")}
+              </a>
+            </li>
+            <li>
+              <a
+                href="#about"
+                className="type-ui block border-l-2 border-transparent px-3 py-1 hover:border-primary hover:text-foreground"
+              >
+                {t("aboutLabel")}
+              </a>
+            </li>
+          </ul>
+        </nav>
 
-        {exhausted ? (
-          <ErrorState
-            status={402}
-            copy={{
-              title: t("creditsExhausted"),
-              description: t("creditsExhaustedHint"),
-            }}
-          />
-        ) : (
-          <Card className="gap-2 p-5" data-slot="settings-credits">
+        <Stack gap={5}>
+          <Card
+            id="profile"
+            className="gap-2 p-5 scroll-mt-20"
+            data-slot="settings-account"
+          >
             <h2 className="type-caption font-mono text-muted-foreground uppercase">
-              {t("credits")}
+              {t("account")}
             </h2>
-            <p
-              className="type-display tabular-nums"
-              data-slot="settings-credits-balance"
-            >
-              {credits.balance.toLocaleString()}
-            </p>
+            <p className="type-body font-medium">{name}</p>
+            {email && name !== email ? (
+              <p className="type-ui text-muted-foreground">{email}</p>
+            ) : null}
             <p className="type-caption text-muted-foreground">
-              {t("creditsHint")}
+              {t("accountHint")}
             </p>
           </Card>
-        )}
 
-        <PreferencesCard />
-
-        <Card className="gap-3 p-5" data-slot="settings-usage">
-          <h2 className="type-caption font-mono text-muted-foreground uppercase">
-            {t("usage")}
-          </h2>
-          {usage.length === 0 ? (
-            <p className="type-ui text-muted-foreground">{t("usageEmpty")}</p>
+          {exhausted ? (
+            <ErrorState
+              status={402}
+              copy={{
+                title: t("creditsExhausted"),
+                description: t("creditsExhaustedHint"),
+              }}
+            />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="type-ui w-full">
-                <thead>
-                  <tr className="type-caption border-b text-left text-muted-foreground uppercase">
-                    <th className="py-2 pr-3 font-medium">{t("colWhen")}</th>
-                    <th className="py-2 pr-3 font-medium">{t("colTier")}</th>
-                    <th className="py-2 pr-3 font-medium">{t("colModel")}</th>
-                    <th className="py-2 pr-3 text-right font-medium">
-                      {t("colTokens")}
-                    </th>
-                    <th className="py-2 text-right font-medium">
-                      {t("colCost")}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {usage.map((row, i) => (
-                    <tr
-                      // biome-ignore lint/suspicious/noArrayIndexKey: usage rows have no id
-                      key={i}
-                      className="border-b last:border-0"
-                    >
-                      <td className="py-2 pr-3 whitespace-nowrap text-muted-foreground">
-                        {new Date(row.created_at).toLocaleString()}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <span className="type-caption font-mono uppercase">
-                          {row.tier_used}
-                        </span>
-                      </td>
-                      <td className="type-caption py-2 pr-3 font-mono">
-                        {row.model_name}
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums">
-                        {(
-                          row.prompt_tokens + row.completion_tokens
-                        ).toLocaleString()}
-                      </td>
-                      <td className="py-2 text-right tabular-nums">
-                        ${(row.cost_cents / 100).toFixed(4)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Card
+              id="credits"
+              className="gap-2 p-5 scroll-mt-20"
+              data-slot="settings-credits"
+            >
+              <h2 className="type-caption font-mono text-muted-foreground uppercase">
+                {t("credits")}
+              </h2>
+              <p
+                className="type-display tabular-nums"
+                data-slot="settings-credits-balance"
+              >
+                {credits.balance.toLocaleString()}
+              </p>
+              <p className="type-caption text-muted-foreground">
+                {t("creditsHint")}
+              </p>
+            </Card>
           )}
-        </Card>
-      </Stack>
+
+          <div id="preferences" className="scroll-mt-20">
+            <PreferencesCard />
+          </div>
+
+          <Card
+            id="usage"
+            className="gap-3 p-5 scroll-mt-20"
+            data-slot="settings-usage"
+          >
+            <h2 className="type-caption font-mono text-muted-foreground uppercase">
+              {t("usage")}
+            </h2>
+            {usage.length === 0 ? (
+              <p className="type-ui text-muted-foreground">{t("usageEmpty")}</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="type-ui w-full">
+                  <thead>
+                    <tr className="type-caption border-b text-left text-muted-foreground uppercase">
+                      <th className="py-2 pr-3 font-medium">{t("colWhen")}</th>
+                      <th className="py-2 pr-3 font-medium">{t("colTier")}</th>
+                      <th className="py-2 pr-3 font-medium">{t("colModel")}</th>
+                      <th className="py-2 pr-3 text-right font-medium">
+                        {t("colTokens")}
+                      </th>
+                      <th className="py-2 text-right font-medium">
+                        {t("colCost")}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usage.map((row, i) => (
+                      <tr
+                        // biome-ignore lint/suspicious/noArrayIndexKey: usage rows have no id
+                        key={i}
+                        className="border-b last:border-0"
+                      >
+                        <td className="py-2 pr-3 whitespace-nowrap text-muted-foreground">
+                          {new Date(row.created_at).toLocaleString()}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span className="type-caption font-mono uppercase">
+                            {row.tier_used}
+                          </span>
+                        </td>
+                        <td className="type-caption py-2 pr-3 font-mono">
+                          {row.model_name}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums">
+                          {(
+                            row.prompt_tokens + row.completion_tokens
+                          ).toLocaleString()}
+                        </td>
+                        <td className="py-2 text-right tabular-nums">
+                          ${(row.cost_cents / 100).toFixed(4)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+
+          <Card
+            id="about"
+            className="gap-3 p-5 scroll-mt-20"
+            data-slot="settings-about"
+          >
+            <h2 className="type-caption font-mono text-muted-foreground uppercase">
+              {t("aboutLabel")}
+            </h2>
+            <dl className="type-body grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+              <dt className="text-muted-foreground">{t("aboutVersion")}</dt>
+              <dd className="font-mono">persona-web 0.13.0+f5</dd>
+              <dt className="text-muted-foreground">{t("aboutLicense")}</dt>
+              <dd>Apache 2.0 (persona-core)</dd>
+            </dl>
+            <p className="type-caption text-muted-foreground">
+              {t("aboutAttribution")}
+            </p>
+          </Card>
+        </Stack>
+      </div>
     </PageBody>
   );
 }

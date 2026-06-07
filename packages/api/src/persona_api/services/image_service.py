@@ -137,6 +137,8 @@ def upload(
     persona_id: str,
     file_bytes: bytes,
     declared_media_type: str,
+    conversation_id: str | None = None,
+    original_name: str | None = None,
 ) -> ImageRef:
     """Validate + store an uploaded image; return its :class:`ImageRef`.
 
@@ -261,6 +263,35 @@ def upload(
         height=height,
         workspace_path=relative,
     )
+
+    # F5 T04 — D-F5-X-artifact-metadata-convention: write a sidecar so the
+    # F5 artifact-list endpoint can filter/sort this upload. Best-effort
+    # (failures log but do not abort the upload) — sidecar absence falls back
+    # to metadata=null on the artifact-list view, not a broken upload.
+    try:
+        from persona_api.services.artifact_metadata import (
+            WorkspaceArtifactMetadata,
+            utcnow,
+            write_artifact_sidecar,
+        )
+
+        write_artifact_sidecar(
+            resolved,
+            WorkspaceArtifactMetadata(
+                source="upload",
+                type="image",
+                producing_spec="13",
+                conversation_id=conversation_id,
+                created_at=utcnow(),
+                original_name=original_name,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — sidecar failure non-fatal
+        _log.warning(
+            "F5 sidecar write failed (upload still succeeded)",
+            workspace_path=relative,
+            error=str(exc),
+        )
 
     return ImageRef(
         workspace_path=relative,

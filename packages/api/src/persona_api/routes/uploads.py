@@ -168,6 +168,8 @@ async def create_upload(
             persona_id=persona_id,
             file_bytes=file_bytes,
             declared_media_type=declared_media_type,
+            conversation_id=conversation_id,
+            filename=filename or None,
         )
 
     if _is_document_filename(filename) or declared_media_type == "application/pdf":
@@ -207,8 +209,16 @@ def _handle_image_upload(
     persona_id: str,
     file_bytes: bytes,
     declared_media_type: str,
+    conversation_id: str | None = None,
+    filename: str | None = None,
 ) -> dict[str, Any]:
-    """The Spec 13 image path. Behaviour unchanged from before T17."""
+    """The Spec 13 image path. Behaviour unchanged from before T17.
+
+    Spec F5 T04 — forwards ``conversation_id`` and ``filename`` so
+    ``image_service.upload`` can write the F5 sidecar
+    (``WorkspaceArtifactMetadata``) alongside the bytes for the
+    artifact-list endpoint (D-F5-X-artifact-metadata-convention).
+    """
     try:
         ref = image_service.upload(
             workspace_root=request.app.state.workspace_root,
@@ -216,6 +226,8 @@ def _handle_image_upload(
             persona_id=persona_id,
             file_bytes=file_bytes,
             declared_media_type=declared_media_type,
+            conversation_id=conversation_id,
+            original_name=filename,
         )
     except PersonaError as exc:
         raise _remap_image_error(exc) from exc

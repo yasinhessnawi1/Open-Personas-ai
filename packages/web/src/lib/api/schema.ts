@@ -518,10 +518,174 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/personas/{persona_id}/imagegen": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Post Imagegen
+     * @description Generate one or more images for a persona; persist to workspace; audit.
+     *
+     *     Returns 201 + an ImageRef-shape payload on success. The bytes land at
+     *     ``{workspace_root}/{user_id}/{persona_id}/uploads/{blake2b}.{ext}``
+     *     (D-13-4 layout reused per D-15-X-workspace-coordination) and are
+     *     fetched via the existing ``GET /v1/personas/:id/uploads/:ref`` route.
+     *
+     *     Args:
+     *         persona_id: Persona id from the path; pre-flight RLS-checked so
+     *             cross-tenant ids surface as 404.
+     *         body: Validated :class:`ImageGenRequest` (Pydantic 422 on shape
+     *             violations before we get here).
+     *         request: FastAPI request — used for ``app.state`` access to the
+     *             RLS engine, the workspace root, and the composed image backend.
+     *         user: Authenticated principal from the bearer token.
+     *
+     *     Returns:
+     *         ImageRef-shape JSON payload (mirrors the Spec 13 upload response
+     *         but as a list since ``count`` can be 2).
+     *
+     *     Raises:
+     *         ImageGenUnavailableError: The provider is not configured at all
+     *             (no ``PERSONA_IMAGEGEN_API_KEY`` at startup) → 503 via the
+     *             app exception handler.
+     *         HTTPException: 502 for upstream provider failures; 422 for
+     *             content rejection (provider moderation or hard-line filter);
+     *             403 for ``ToolNotAllowedError``; 404 for cross-tenant; 402 for
+     *             credits exhaustion; 429 for concurrency cap or rate limit.
+     */
+    post: operations["post_imagegen_v1_personas__persona_id__imagegen_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/personas/{persona_id}/artifacts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Artifacts
+     * @description List the persona's workspace artifacts (D-F5-1).
+     *
+     *     - Walks ``workspace_root/<owner_id>/<persona_id>/**`` for non-sidecar
+     *       files; reads ``.meta.json`` sidecars where present.
+     *     - Filters by source / type / conversation_id / q (all optional).
+     *     - Sorts by ``created_at`` DESC, paginates by ``offset``/``limit``.
+     *     - ``limit`` is hard-capped at 200 via Pydantic ``Query(le=200)`` —
+     *       requesting more returns ``422`` with a structured error (NOT silent
+     *       truncation), per D-F5-X-artifact-list-pagination.
+     *
+     *     Cross-tenant persona ids return 404 via the pre-flight RLS check.
+     */
+    get: operations["list_artifacts_v1_personas__persona_id__artifacts_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/personas/{persona_id}/artifacts/{ref}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete Artifact
+     * @description Delete a workspace artifact (bytes + sidecar) per D-F5-X-artifact-delete-shape.
+     *
+     *     Atomic invariant: bytes deleted BEFORE sidecar. A failure at the sidecar
+     *     step surfaces 500 with structured detail so the operator can investigate;
+     *     the bytes are already gone (ghost-sidecar state is recoverable).
+     *
+     *     Cross-tenant persona ids return 404 via the pre-flight RLS check.
+     */
+    delete: operations["delete_artifact_v1_personas__persona_id__artifacts__ref__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * ArtifactItem
+     * @description A single workspace artifact in the F5 list view.
+     *
+     *     The ``ref`` is the workspace-relative path the existing
+     *     ``GET /v1/personas/{id}/uploads/{ref}`` route already knows how to
+     *     serve — F5 reuses that route for downloads + inline rendering.
+     */
+    ArtifactItem: {
+      /** Ref */
+      ref: string;
+      /** Size Bytes */
+      size_bytes: number;
+      /** Media Type */
+      media_type: string;
+      metadata?: components["schemas"]["ArtifactMetadataView"] | null;
+    };
+    /**
+     * ArtifactListResponse
+     * @description Paginated artifact-list response for D-F5-1.
+     *
+     *     ``total`` is the post-filter count; ``items`` is the window of size
+     *     ``limit`` starting at ``offset``. The client computes ``hasMore`` from
+     *     ``offset + items.length < total``.
+     */
+    ArtifactListResponse: {
+      /** Total */
+      total: number;
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Items */
+      items: components["schemas"]["ArtifactItem"][];
+    };
+    /**
+     * ArtifactMetadataView
+     * @description Sidecar metadata surfaced through the artifact list endpoint.
+     *
+     *     Mirrors ``services.artifact_metadata.WorkspaceArtifactMetadata`` at the
+     *     API surface. Kept as a distinct response model (rather than re-exporting
+     *     the service shape) so the OpenAPI schema is self-contained and the
+     *     web client gets stable types.
+     */
+    ArtifactMetadataView: {
+      /** Source */
+      source: string;
+      /** Type */
+      type: string;
+      /** Producing Spec */
+      producing_spec: string;
+      /** Conversation Id */
+      conversation_id: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Original Name */
+      original_name: string | null;
+    };
     /**
      * AuthorPersonaRequest
      * @description LLM-assisted authoring from a natural-language description (§5.1, §6.3).
@@ -756,6 +920,49 @@ export interface components {
        * @enum {string}
        */
       media_type: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+    };
+    /**
+     * ImageGenRequest
+     * @description Body of ``POST /v1/personas/:id/imagegen``.
+     *
+     *     The closed Literal surface on ``size`` and ``quality`` ensures invalid
+     *     values land as 422 Pydantic validation errors before any service-
+     *     layer work happens; ``count`` is bounded by D-15-3 (``le=2``).
+     *
+     *     Attributes:
+     *         prompt: The user-supplied text prompt. Required, min length 1.
+     *             The visual_style merge runs at the service layer
+     *             (:func:`persona_api.imagegen.service.generate`) so the prompt
+     *             here is the raw user input — NOT yet merged.
+     *         size: One of the three closed presets per D-15-3. Defaults to
+     *             ``"1024x1024"``. The OpenAI backend rounds non-square presets
+     *             per D-15-X-size-rounding; the audit captures the REQUESTED
+     *             value (this field's literal), not the rounded one.
+     *         count: Number of images to generate. ``Field(ge=1, le=2)`` enforces
+     *             the D-15-3 cap. Defaults to 1.
+     *         quality: One of the two closed presets per D-15-3. Defaults to
+     *             ``"standard"``.
+     */
+    ImageGenRequest: {
+      /** Prompt */
+      prompt: string;
+      /**
+       * Size
+       * @default 1024x1024
+       * @enum {string}
+       */
+      size: "1024x1024" | "1024x1792" | "1792x1024";
+      /**
+       * Count
+       * @default 1
+       */
+      count: number;
+      /**
+       * Quality
+       * @default standard
+       * @enum {string}
+       */
+      quality: "standard" | "high";
     };
     /**
      * ImageRef
@@ -1841,6 +2048,111 @@ export interface operations {
         content: {
           "application/json": unknown;
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  post_imagegen_v1_personas__persona_id__imagegen_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        persona_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ImageGenRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_artifacts_v1_personas__persona_id__artifacts_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        offset?: number;
+        source?: ("upload" | "generated") | null;
+        type?: ("image" | "chart" | "doc" | "data") | null;
+        conversation_id?: string | null;
+        q?: string | null;
+      };
+      header?: never;
+      path: {
+        persona_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_artifact_v1_personas__persona_id__artifacts__ref__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        persona_id: string;
+        ref: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
