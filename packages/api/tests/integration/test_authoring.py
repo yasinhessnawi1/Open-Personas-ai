@@ -73,6 +73,17 @@ class _StubRegistry:
     def get(self, tier_name: str) -> _ScriptedBackend:  # noqa: ARG002
         return self._backend
 
+    @property
+    def configured_tier_names(self) -> tuple[str, ...]:
+        # Mirrors the real TierRegistry surface so the persona-detail
+        # capabilities hydrator (PersonaCapabilities) does not AttributeError.
+        return ("frontier", "mid", "small")
+
+    def supports_vision_for(self, tier_name: str) -> bool:  # noqa: ARG002
+        # The scripted backend is text-only; mirror that so image-bearing
+        # turns would route correctly if they reached this path.
+        return False
+
 
 @pytest.fixture
 def client(
