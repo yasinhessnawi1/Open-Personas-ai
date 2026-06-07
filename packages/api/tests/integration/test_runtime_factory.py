@@ -101,6 +101,19 @@ class _ScriptedRegistry:
     def supports_vision_for(self, _tier_name: str) -> bool:
         return self._b.supports_vision
 
+    def metadata_for(self, _tier_name: str) -> None:
+        # Spec 18 routing.layer1.apply_constraint_filter consults this
+        # before scoring. Returning ``None`` opts every tier out of
+        # Layer 2 scoring (the heuristic floor still serves them via
+        # ``get``); the scripted backend has no real metadata to expose.
+        return None
+
+    def model_name_for(self, _tier_name: str) -> str:
+        # Spec 18 (T05) read-only model lookup used by the routers to
+        # populate RoutingDecision.model without forcing eager backend
+        # construction; the scripted backend reports a single model.
+        return "scripted"
+
     async def aclose(self) -> None:
         pass
 

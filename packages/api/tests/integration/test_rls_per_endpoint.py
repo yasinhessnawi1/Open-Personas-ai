@@ -92,6 +92,11 @@ def app_client(
         app.state.verify_token = _verify
         app.state.embedder = embedder
         app.state.build_conversation_loop = _build
+        # Drop the lifespan-installed TierRegistry so the persona-detail
+        # capabilities surface doesn't lazily instantiate a real chat backend
+        # (AuthenticationError("missing API key") on CI without ANTHROPIC_API_KEY).
+        if hasattr(app.state, "tier_registry"):
+            app.state.tier_registry = None
         su = make_rls_engine(os.environ["DATABASE_URL"])
         with su.begin() as conn:
             for u in ("user_A", "user_B"):
