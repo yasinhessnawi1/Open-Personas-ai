@@ -56,6 +56,39 @@
     0 10px 15px -3px rgb(0 0 0 / 0.12), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /*
+   * Glass tokens (Spec F5 T08; D-F5-X-glass-token-f1-amendment;
+   * 12th additive-precedent chain entry). Additive-only per D-F1-7 — no
+   * existing token renamed or revalued. Translates iOS 26 Liquid Glass to
+   * web via backdrop-filter + saturation boost + a single 1px top-edge
+   * reflection (anything more crosses the 2020-era Glassmorphism line).
+   * Three glass surfaces max per viewport; consumed via .glass-card /
+   * .glass-chip / .glass-overlay utilities in @layer components below.
+   * Light values default in :root and @theme inline; dark variants land
+   * in the dark-mode block below.
+   */
+  --glass-bg-elevated: oklch(1 0 0 / 0.62);
+  --glass-bg-subtle: oklch(1 0 0 / 0.42);
+  --glass-bg-overlay: oklch(0.985 0.003 95 / 0.78);
+  --glass-border-subtle: oklch(0.55 0.008 95 / 0.18);
+  --glass-border-strong: oklch(0.45 0.01 95 / 0.28);
+  --glass-shadow-soft:
+    0 1px 2px oklch(0 0 0 / 0.04), 0 4px 12px oklch(0.3 0.012 270 / 0.06), 0
+    12px 32px oklch(0.3 0.012 270 / 0.04);
+  --glass-shadow-lifted:
+    0 2px 4px oklch(0 0 0 / 0.05), 0 8px 24px oklch(0.3 0.012 270 / 0.1), 0 24px
+    56px oklch(0.3 0.012 270 / 0.06);
+  --glass-blur-light: 6px;
+  --glass-blur-medium: 12px;
+  --glass-blur-strong: 20px;
+  --glass-saturation-boost: 160%;
+  --glass-reflection-top: linear-gradient(
+    180deg,
+    oklch(1 0 0 / 0.45) 0%,
+    oklch(1 0 0 / 0.08) 1px,
+    transparent 2px
+  );
+
+  /*
    * Type scale tokens (Spec F1 T02 scaffold; T04 wires utilities + chooses
    * Fraunces / Geist / Geist Mono roles). Six semantic roles per spec §7.
    * The 0.65rem caption resolves the 5x text-[0.65rem] magic-number
@@ -220,6 +253,29 @@
   --sidebar-accent-foreground: oklch(0.94 0.008 75);
   --sidebar-border: oklch(0.92 0.015 75 / 8%);
   --sidebar-ring: oklch(0.66 0.19 33);
+
+  /*
+   * F5 T08 — glass token dark variants (D-F5-X-glass-token-f1-amendment).
+   * Blur / saturation / reflection-top track ink-toned values; shadow
+   * collapses to true black (tinted shadow reads muddy in dark mode).
+   */
+  --glass-bg-elevated: oklch(0.235 0.014 270 / 0.55);
+  --glass-bg-subtle: oklch(0.215 0.012 270 / 0.4);
+  --glass-bg-overlay: oklch(0.15 0.01 270 / 0.82);
+  --glass-border-subtle: oklch(0.95 0.005 270 / 0.12);
+  --glass-border-strong: oklch(0.92 0.006 270 / 0.22);
+  --glass-shadow-soft:
+    0 1px 2px oklch(0 0 0 / 0.3), 0 4px 12px oklch(0 0 0 / 0.2), 0 12px 32px
+    oklch(0 0 0 / 0.12);
+  --glass-shadow-lifted:
+    0 2px 4px oklch(0 0 0 / 0.35), 0 8px 24px oklch(0 0 0 / 0.28), 0 24px 56px
+    oklch(0 0 0 / 0.18);
+  --glass-reflection-top: linear-gradient(
+    180deg,
+    oklch(0.98 0.005 270 / 0.18) 0%,
+    oklch(0.98 0.005 270 / 0.04) 1px,
+    transparent 2px
+  );
 }
 
 @layer base {
@@ -325,5 +381,118 @@
     font-family: var(--font-mono);
     font-size: var(--text-code-size);
     line-height: var(--text-code-line-height);
+  }
+
+  /*
+   * F5 T08 — Glass utilities (D-F5-X-glass-token-f1-amendment). Translate
+   * iOS 26 Liquid Glass to web via backdrop-filter + saturation boost.
+   * .glass-card  — persona library cards + artifact view items
+   * .glass-chip  — artifact + conversation filter chip strip
+   * .glass-overlay — image lightbox + modal surfaces
+   * Reduced-motion handler lives in the @media block below (T15 path).
+   */
+  .glass-card {
+    position: relative;
+    background: var(--glass-bg-elevated);
+    border: 1px solid var(--glass-border-subtle);
+    border-radius: 0.75rem;
+    backdrop-filter: blur(var(--glass-blur-medium))
+      saturate(var(--glass-saturation-boost));
+    -webkit-backdrop-filter: blur(var(--glass-blur-medium))
+      saturate(var(--glass-saturation-boost));
+    box-shadow: var(--glass-shadow-soft);
+    transition:
+      background var(--motion-duration-normal) var(--motion-ease-standard),
+      border-color var(--motion-duration-normal) var(--motion-ease-standard),
+      box-shadow var(--motion-duration-normal) var(--motion-ease-emphasized),
+      transform var(--motion-duration-normal) var(--motion-ease-emphasized);
+    will-change: transform, box-shadow;
+  }
+  .glass-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--glass-reflection-top);
+    pointer-events: none;
+    opacity: 0.85;
+  }
+  .glass-card:hover {
+    border-color: var(--glass-border-strong);
+    box-shadow: var(--glass-shadow-lifted);
+    transform: translateY(-1px);
+  }
+  .glass-card:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .glass-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 9999px;
+    background: transparent;
+    border: 1px solid var(--glass-border-subtle);
+    backdrop-filter: blur(var(--glass-blur-light))
+      saturate(var(--glass-saturation-boost));
+    -webkit-backdrop-filter: blur(var(--glass-blur-light))
+      saturate(var(--glass-saturation-boost));
+    color: var(--muted-foreground);
+    transition:
+      background var(--motion-duration-fast) var(--motion-ease-standard),
+      border-color var(--motion-duration-fast) var(--motion-ease-standard),
+      color var(--motion-duration-fast) var(--motion-ease-standard);
+  }
+  .glass-chip:hover {
+    background: var(--glass-bg-subtle);
+    color: var(--foreground);
+  }
+  .glass-chip[data-state="active"] {
+    background: var(--glass-bg-elevated);
+    border-color: transparent;
+    border-bottom: 2px solid var(--persona-identity, var(--primary));
+    color: var(--foreground);
+  }
+
+  .glass-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--glass-bg-overlay);
+    backdrop-filter: blur(var(--glass-blur-strong))
+      saturate(var(--glass-saturation-boost));
+    -webkit-backdrop-filter: blur(var(--glass-blur-strong))
+      saturate(var(--glass-saturation-boost));
+    z-index: 50;
+  }
+
+  /* @supports fallback for browsers without backdrop-filter. */
+  @supports not (
+      (backdrop-filter: blur(1px)) or
+      (-webkit-backdrop-filter: blur(1px))
+    ) {
+    .glass-card {
+      background: var(--card);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .glass-card::before {
+      display: none;
+    }
+    .glass-chip {
+      background: var(--muted);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .glass-chip[data-state="active"] {
+      background: var(--card);
+    }
+    .glass-overlay {
+      background: var(--background);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      opacity: 0.95;
+    }
   }
 }

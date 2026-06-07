@@ -44,6 +44,7 @@ from persona_api.middleware.rate_limit import (
 )
 from persona_api.middleware.rls_context import make_rls_engine
 from persona_api.routes import (
+    artifacts,
     conversations,
     documents,
     health,
@@ -329,3 +330,4 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(documents.router)
     app.include_router(uploads.router)
     app.include_router(imagegen.router)
+    app.include_router(artifacts.router)

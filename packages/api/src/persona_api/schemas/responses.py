@@ -13,6 +13,9 @@ from datetime import datetime  # noqa: TC003 — Pydantic needs it at runtime
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
+    "ArtifactItem",
+    "ArtifactListResponse",
+    "ArtifactMetadataView",
     "AuthoringDraft",
     "ChunkEvent",
     "ClarifyingQuestion",
@@ -252,3 +255,51 @@ class ToolSummary(_Output):
 
     name: str
     description: str
+
+
+# -- artifacts (Spec F5 D-F5-1) ---------------------------------------------
+
+
+class ArtifactMetadataView(_Output):
+    """Sidecar metadata surfaced through the artifact list endpoint.
+
+    Mirrors ``services.artifact_metadata.WorkspaceArtifactMetadata`` at the
+    API surface. Kept as a distinct response model (rather than re-exporting
+    the service shape) so the OpenAPI schema is self-contained and the
+    web client gets stable types.
+    """
+
+    source: str
+    type: str
+    producing_spec: str
+    conversation_id: str | None
+    created_at: datetime
+    original_name: str | None
+
+
+class ArtifactItem(_Output):
+    """A single workspace artifact in the F5 list view.
+
+    The ``ref`` is the workspace-relative path the existing
+    ``GET /v1/personas/{id}/uploads/{ref}`` route already knows how to
+    serve — F5 reuses that route for downloads + inline rendering.
+    """
+
+    ref: str
+    size_bytes: int
+    media_type: str
+    metadata: ArtifactMetadataView | None = None
+
+
+class ArtifactListResponse(_Output):
+    """Paginated artifact-list response for D-F5-1.
+
+    ``total`` is the post-filter count; ``items`` is the window of size
+    ``limit`` starting at ``offset``. The client computes ``hasMore`` from
+    ``offset + items.length < total``.
+    """
+
+    total: int
+    limit: int
+    offset: int
+    items: list[ArtifactItem]

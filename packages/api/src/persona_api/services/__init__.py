@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from persona_api.services import (
+    artifact_metadata,
     audit_service,
     authoring_service,
     catalog_service,
@@ -14,6 +15,7 @@ from persona_api.services import (
 )
 
 __all__ = [
+    "artifact_metadata",
     "audit_service",
     "authoring_service",
     "catalog_service",

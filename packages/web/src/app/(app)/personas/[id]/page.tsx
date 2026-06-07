@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { Grid, PageBody, Section, Stack } from "@/components/layout";
+import { PersonaDetailManageMenu } from "@/components/persona/persona-detail-manage-menu";
 import { PersonaIdentityHeader } from "@/components/persona/persona-identity-header";
 import { StartRunForm } from "@/components/personas/start-run-form";
 import { Badge } from "@/components/ui/badge";
@@ -100,6 +101,7 @@ export default async function PersonaDetailPage({
             <Pencil className="size-4" aria-hidden="true" />
             {t("edit")}
           </Link>
+          <PersonaDetailManageMenu personaId={id} personaName={p.name} />
         </div>
       </header>
 

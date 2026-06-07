@@ -15,6 +15,9 @@ from persona_api.schemas.requests import (
     UpdatePersonaRequest,
 )
 from persona_api.schemas.responses import (
+    ArtifactItem,
+    ArtifactListResponse,
+    ArtifactMetadataView,
     AuthoringDraft,
     ChunkEvent,
     ClarifyingQuestion,
@@ -34,6 +37,9 @@ from persona_api.schemas.responses import (
 )
 
 __all__ = [
+    "ArtifactItem",
+    "ArtifactListResponse",
+    "ArtifactMetadataView",
     "AuthorPersonaRequest",
     "AuthoringDraft",
     "ChannelContext",

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Grid, PageBody, PageHeader } from "@/components/layout";
 import { EmptyState } from "@/components/patterns/empty-state";
-import { PersonaCard } from "@/components/persona/persona-card";
+import { PersonaLibraryCard } from "@/components/persona/persona-library-card";
 import { buttonVariants } from "@/components/ui/button";
 import { unwrap } from "@/lib/api";
 import { serverApi } from "@/lib/api/server";
@@ -70,7 +70,7 @@ export default async function PersonasPage() {
       ) : (
         <Grid cols={{ base: 1, sm: 2, lg: 3 }} gap={4}>
           {personas.map((p) => (
-            <PersonaCard key={p.id} persona={p} href={`/personas/${p.id}`} />
+            <PersonaLibraryCard key={p.id} persona={p} />
           ))}
         </Grid>
       )}

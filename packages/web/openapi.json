@@ -1081,10 +1081,352 @@
           }
         }
       }
+    },
+    "/v1/personas/{persona_id}/imagegen": {
+      "post": {
+        "tags": ["imagegen"],
+        "summary": "Post Imagegen",
+        "description": "Generate one or more images for a persona; persist to workspace; audit.\n\nReturns 201 + an ImageRef-shape payload on success. The bytes land at\n``{workspace_root}/{user_id}/{persona_id}/uploads/{blake2b}.{ext}``\n(D-13-4 layout reused per D-15-X-workspace-coordination) and are\nfetched via the existing ``GET /v1/personas/:id/uploads/:ref`` route.\n\nArgs:\n    persona_id: Persona id from the path; pre-flight RLS-checked so\n        cross-tenant ids surface as 404.\n    body: Validated :class:`ImageGenRequest` (Pydantic 422 on shape\n        violations before we get here).\n    request: FastAPI request \u2014 used for ``app.state`` access to the\n        RLS engine, the workspace root, and the composed image backend.\n    user: Authenticated principal from the bearer token.\n\nReturns:\n    ImageRef-shape JSON payload (mirrors the Spec 13 upload response\n    but as a list since ``count`` can be 2).\n\nRaises:\n    ImageGenUnavailableError: The provider is not configured at all\n        (no ``PERSONA_IMAGEGEN_API_KEY`` at startup) \u2192 503 via the\n        app exception handler.\n    HTTPException: 502 for upstream provider failures; 422 for\n        content rejection (provider moderation or hard-line filter);\n        403 for ``ToolNotAllowedError``; 404 for cross-tenant; 402 for\n        credits exhaustion; 429 for concurrency cap or rate limit.",
+        "operationId": "post_imagegen_v1_personas__persona_id__imagegen_post",
+        "parameters": [
+          {
+            "name": "persona_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Persona Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageGenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Post Imagegen V1 Personas  Persona Id  Imagegen Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/personas/{persona_id}/artifacts": {
+      "get": {
+        "tags": ["artifacts"],
+        "summary": "List Artifacts",
+        "description": "List the persona's workspace artifacts (D-F5-1).\n\n- Walks ``workspace_root/<owner_id>/<persona_id>/**`` for non-sidecar\n  files; reads ``.meta.json`` sidecars where present.\n- Filters by source / type / conversation_id / q (all optional).\n- Sorts by ``created_at`` DESC, paginates by ``offset``/``limit``.\n- ``limit`` is hard-capped at 200 via Pydantic ``Query(le=200)`` \u2014\n  requesting more returns ``422`` with a structured error (NOT silent\n  truncation), per D-F5-X-artifact-list-pagination.\n\nCross-tenant persona ids return 404 via the pre-flight RLS check.",
+        "operationId": "list_artifacts_v1_personas__persona_id__artifacts_get",
+        "parameters": [
+          {
+            "name": "persona_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Persona Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": ["upload", "generated"],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": ["image", "chart", "doc", "data"],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/personas/{persona_id}/artifacts/{ref}": {
+      "delete": {
+        "tags": ["artifacts"],
+        "summary": "Delete Artifact",
+        "description": "Delete a workspace artifact (bytes + sidecar) per D-F5-X-artifact-delete-shape.\n\nAtomic invariant: bytes deleted BEFORE sidecar. A failure at the sidecar\nstep surfaces 500 with structured detail so the operator can investigate;\nthe bytes are already gone (ghost-sidecar state is recoverable).\n\nCross-tenant persona ids return 404 via the pre-flight RLS check.",
+        "operationId": "delete_artifact_v1_personas__persona_id__artifacts__ref__delete",
+        "parameters": [
+          {
+            "name": "persona_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Persona Id"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ArtifactItem": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "title": "Ref"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactMetadataView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["ref", "size_bytes", "media_type"],
+        "title": "ArtifactItem",
+        "description": "A single workspace artifact in the F5 list view.\n\nThe ``ref`` is the workspace-relative path the existing\n``GET /v1/personas/{id}/uploads/{ref}`` route already knows how to\nserve \u2014 F5 reuses that route for downloads + inline rendering."
+      },
+      "ArtifactListResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["total", "limit", "offset", "items"],
+        "title": "ArtifactListResponse",
+        "description": "Paginated artifact-list response for D-F5-1.\n\n``total`` is the post-filter count; ``items`` is the window of size\n``limit`` starting at ``offset``. The client computes ``hasMore`` from\n``offset + items.length < total``."
+      },
+      "ArtifactMetadataView": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "producing_spec": {
+            "type": "string",
+            "title": "Producing Spec"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "original_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source",
+          "type",
+          "producing_spec",
+          "conversation_id",
+          "created_at",
+          "original_name"
+        ],
+        "title": "ArtifactMetadataView",
+        "description": "Sidecar metadata surfaced through the artifact list endpoint.\n\nMirrors ``services.artifact_metadata.WorkspaceArtifactMetadata`` at the\nAPI surface. Kept as a distinct response model (rather than re-exporting\nthe service shape) so the OpenAPI schema is self-contained and the\nweb client gets stable types."
+      },
       "AuthorPersonaRequest": {
         "properties": {
           "description": {
@@ -1476,6 +1818,39 @@
         "required": ["workspace_path", "media_type"],
         "title": "ImageContent",
         "description": "An image *reference* block within a multimodal message ``content`` list.\n\nPer Spec 13 D-13-X-now option (c), the message store carries only the\nworkspace reference \u2014 image bytes live exactly once under the persona's\nSpec 03 workspace and are resolved at send time by the backend\nserialisers (Spec 13 T05/T06). This is the structural guard behind\nDominant Concern #2: the ``messages`` table size grows with reference\ncount, not with image bytes. See\n``docs/specs/phase2/spec_13/decisions.md`` (D-13-X-now) and the T13\nstore-by-reference regression test.\n\nAttributes:\n    type: Discriminator tag \u2014 always the literal ``\"image\"`` so the\n        :data:`MessageContent` tagged union can resolve this block by\n        its ``type`` field on deserialisation.\n    workspace_path: The reference into the persona workspace (Spec 03).\n        Resolved to bytes only at backend-send time; the message store\n        never holds the bytes themselves.\n    media_type: One of the four supported image MIME types per\n        **D-13-3**: ``image/png``, ``image/jpeg``, ``image/webp``,\n        ``image/gif``. Any other value is rejected at validation time."
+      },
+      "ImageGenRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Prompt"
+          },
+          "size": {
+            "type": "string",
+            "enum": ["1024x1024", "1024x1792", "1792x1024"],
+            "title": "Size",
+            "default": "1024x1024"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 1
+          },
+          "quality": {
+            "type": "string",
+            "enum": ["standard", "high"],
+            "title": "Quality",
+            "default": "standard"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["prompt"],
+        "title": "ImageGenRequest",
+        "description": "Body of ``POST /v1/personas/:id/imagegen``.\n\nThe closed Literal surface on ``size`` and ``quality`` ensures invalid\nvalues land as 422 Pydantic validation errors before any service-\nlayer work happens; ``count`` is bounded by D-15-3 (``le=2``).\n\nAttributes:\n    prompt: The user-supplied text prompt. Required, min length 1.\n        The visual_style merge runs at the service layer\n        (:func:`persona_api.imagegen.service.generate`) so the prompt\n        here is the raw user input \u2014 NOT yet merged.\n    size: One of the three closed presets per D-15-3. Defaults to\n        ``\"1024x1024\"``. The OpenAI backend rounds non-square presets\n        per D-15-X-size-rounding; the audit captures the REQUESTED\n        value (this field's literal), not the rounded one.\n    count: Number of images to generate. ``Field(ge=1, le=2)`` enforces\n        the D-15-3 cap. Defaults to 1.\n    quality: One of the two closed presets per D-15-3. Defaults to\n        ``\"standard\"``."
       },
       "ImageRef": {
         "properties": {

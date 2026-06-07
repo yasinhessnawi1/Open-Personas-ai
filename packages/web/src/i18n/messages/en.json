@@ -72,6 +72,12 @@
     "languageHint": "English ships now; the pseudo-locale verifies full i18n coverage.",
     "langEnglish": "English",
     "langPseudo": "Pseudo",
+    "sectionsNav": "Settings sections",
+    "profileLabel": "Profile",
+    "aboutLabel": "About",
+    "aboutVersion": "Version",
+    "aboutLicense": "License",
+    "aboutAttribution": "Open Persona is built on the persona-core library (Apache 2.0). See docs and source for more.",
     "usage": "Usage",
     "usageEmpty": "No usage yet — start a conversation or a run.",
     "colWhen": "When",
@@ -85,7 +91,19 @@
     "subtitle": "Every chat you've had with your personas.",
     "empty": "No conversations yet",
     "emptyHint": "Open a persona and start a chat.",
-    "untitled": "Untitled conversation"
+    "untitled": "Untitled conversation",
+    "unknownPersona": "Unknown persona",
+    "noMatches": "No conversations match the current filters.",
+    "delete": "Delete",
+    "rowMenuLabel": "Actions for {title}",
+    "deleteConfirm": "Permanently delete {title}? The conversation and its messages will be removed.",
+    "filterByPersona": "Filter by persona",
+    "allPersonas": "All personas",
+    "searchPlaceholder": "Search titles",
+    "loadOlder": "Load older",
+    "loading": "Loading…",
+    "endOfList": "End of conversations.",
+    "shownOf": "Showing {shown} of {total}"
   },
   "personas": {
     "title": "Personas",
@@ -104,7 +122,47 @@
     "skills": "Skills",
     "none": "None declared.",
     "backToList": "All personas",
-    "runTaskTitle": "Give {name} a task"
+    "runTaskTitle": "Give {name} a task",
+    "library": {
+      "menuLabel": "Actions for {name}",
+      "view": "View",
+      "edit": "Edit",
+      "duplicate": "Duplicate as template",
+      "delete": "Delete",
+      "duplicateConfirm": "Duplicate {name} as a fresh template? Memory, conversations, and identity colour all start over.",
+      "deleteConfirm": "Permanently delete {name}? This removes the persona definition, memory, and all conversations."
+    },
+    "detail": {
+      "manage": "Manage",
+      "manageLabel": "Manage {name}",
+      "editViaAuthoring": "Edit via authoring",
+      "files": "Files"
+    }
+  },
+  "artifacts": {
+    "titleFor": "{name}'s files",
+    "subtitle": "Everything this persona has been given or has produced.",
+    "empty": "No artifacts yet",
+    "emptyHint": "Files you upload and outputs your personas generate will appear here.",
+    "noMatches": "No artifacts match the current filters.",
+    "countOf": "Showing {shown} of {total}",
+    "download": "Download",
+    "deleteLabel": "Delete {ref}",
+    "deleteConfirm": "Permanently delete {ref}?",
+    "sourceLabel": "Source",
+    "typeLabel": "Type",
+    "source": {
+      "all": "All sources",
+      "upload": "Uploaded",
+      "generated": "Generated"
+    },
+    "type": {
+      "all": "All types",
+      "image": "Images",
+      "chart": "Charts",
+      "doc": "Documents",
+      "data": "Data"
+    }
   },
   "runs": {
     "backToPersona": "Back to persona",

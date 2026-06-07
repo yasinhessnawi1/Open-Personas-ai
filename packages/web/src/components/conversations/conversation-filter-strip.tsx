@@ -1,0 +1,115 @@
+"use client";
+
+import { Search, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useEffect, useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import type { ConversationListPersona } from "./conversation-list";
+
+export interface ConversationFilterStripProps {
+  personas: readonly ConversationListPersona[];
+}
+
+/**
+ * Spec F5 T13 — persona-filter chip strip + title search input.
+ *
+ * URL search params are the single source of truth for filter state per
+ * D-F5-X-conversation-history-pagination + frontend-patterns audit:
+ *   ?persona_id=<id> — persona-filter chip
+ *   ?q=<substr>      — title substring search
+ *
+ * Glass-chip aesthetic per aesthetic-direction.md §3.2; identity-coloured
+ * border-bottom on active state per D-F1-5.
+ */
+export function ConversationFilterStrip({
+  personas,
+}: ConversationFilterStripProps) {
+  const t = useTranslations("conversations");
+  const router = useRouter();
+  const search = useSearchParams();
+  const activePersona = search.get("persona_id");
+
+  // Debounced search input — keep typing snappy, push URL on settle.
+  const initialQ = search.get("q") ?? "";
+  const [q, setQ] = useState(initialQ);
+
+  useEffect(() => {
+    setQ(initialQ);
+  }, [initialQ]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const next = new URLSearchParams(search.toString());
+      if (q.trim()) next.set("q", q.trim());
+      else next.delete("q");
+      const href = next.toString();
+      router.replace(href ? `?${href}` : "?", { scroll: false });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q, search, router]);
+
+  function setPersona(id: string | null) {
+    const next = new URLSearchParams(search.toString());
+    if (id) next.set("persona_id", id);
+    else next.delete("persona_id");
+    const href = next.toString();
+    router.replace(href ? `?${href}` : "?", { scroll: false });
+  }
+
+  const chips = useMemo(
+    () => [
+      { id: null, label: t("allPersonas") } as const,
+      ...personas.map((p) => ({ id: p.id, label: p.name })),
+    ],
+    [personas, t],
+  );
+
+  return (
+    <div
+      className="mb-4 flex flex-wrap items-center gap-3"
+      data-slot="conversation-filter-strip"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {chips.map((c) => {
+          const active = (c.id ?? null) === activePersona;
+          return (
+            <button
+              key={c.id ?? "__all__"}
+              type="button"
+              onClick={() => setPersona(c.id)}
+              data-state={active ? "active" : "inactive"}
+              className={cn("glass-chip", active && "type-ui")}
+            >
+              {c.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="ml-auto flex min-w-0 max-w-xs flex-1 items-center gap-2">
+        <Search
+          className="size-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t("searchPlaceholder")}
+          aria-label={t("searchPlaceholder")}
+          data-slot="conversation-search"
+        />
+        {q ? (
+          <button
+            type="button"
+            onClick={() => setQ("")}
+            aria-label={t("delete")}
+            className="rounded p-1 text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}

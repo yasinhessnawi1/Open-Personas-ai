@@ -302,6 +302,7 @@ async def generate(
             sandbox_root=sandbox_root,
             image_bytes=img.image_bytes,
             media_type=img.media_type,
+            conversation_id=None,  # Spec 15 generate doesn't thread conv_id at v0.1
         )
         stored_images.append(
             img.model_copy(
@@ -330,6 +331,7 @@ def _persist_bytes(
     sandbox_root: Path,
     image_bytes: bytes,
     media_type: ImageMediaType,
+    conversation_id: str | None = None,
 ) -> str:
     """Write image bytes to the persona workspace; return the workspace-relative path.
 
@@ -371,5 +373,34 @@ def _persist_bytes(
         os.write(fd, image_bytes)
     finally:
         os.close(fd)
+
+    # F5 T05 — D-F5-X-artifact-metadata-convention: write the sidecar so the
+    # F5 artifact-list endpoint can filter generated images. Best-effort —
+    # failure logs but does not abort the generation (the bytes are the
+    # primary deliverable; metadata is enrichment).
+    try:
+        from persona_api.services.artifact_metadata import (
+            WorkspaceArtifactMetadata,
+            utcnow,
+            write_artifact_sidecar,
+        )
+
+        write_artifact_sidecar(
+            resolved,
+            WorkspaceArtifactMetadata(
+                source="generated",
+                type="image",
+                producing_spec="15",
+                conversation_id=conversation_id,
+                created_at=utcnow(),
+                original_name=None,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — sidecar failure non-fatal
+        _LOG.warning(
+            "F5 sidecar write failed (imagegen still succeeded)",
+            workspace_path=relative,
+            error=str(exc),
+        )
 
     return relative

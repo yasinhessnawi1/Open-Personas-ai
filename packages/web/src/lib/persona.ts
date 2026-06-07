@@ -92,3 +92,35 @@ export function personaInitials(name: string): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
+
+/**
+ * Replace ``identity.name`` in a persona YAML string with ``newName``.
+ *
+ * Used by the F5 T11 "Duplicate as template" flow (D-F5-4 + D-F5-X-
+ * persona-duplicate-flow) — fetches the original persona's full YAML,
+ * mutates the name inside the ``identity:`` block, and POSTs the
+ * modified YAML so the server creates a fresh persona row with
+ * server-generated ``persona_id`` + fresh memory + no conversations.
+ *
+ * Uses js-yaml round-trip so quoting/indentation stay valid.
+ *
+ * **Security note:** js-yaml v4's ``load()`` uses the default JSON-safe
+ * schema (the unsafe-loader equivalent of Python's ``yaml.load`` doesn't
+ * exist in the js-yaml API). The parsed value is treated as opaque +
+ * Record-typed; we only set string properties on it.
+ */
+export function renameInIdentity(yamlSrc: string, newName: string): string {
+  const parsed = yaml.load(yamlSrc);
+  if (parsed && typeof parsed === "object") {
+    const top = parsed as Record<string, unknown>;
+    if (top.identity && typeof top.identity === "object") {
+      (top.identity as Record<string, unknown>).name = newName;
+    } else {
+      // Older fixture shape: no nested identity. Set top-level name as fallback.
+      top.name = newName;
+    }
+    // Drop server-only fields if present (persona_id resets at duplicate).
+    delete top.persona_id;
+  }
+  return yaml.dump(parsed);
+}
