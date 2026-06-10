@@ -39,6 +39,7 @@ from persona.backends.errors import (
 )
 from persona.backends.ollama import OllamaBackend
 from persona.backends.openai_compat import (
+    _NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY,
     _VISION_CAPABILITY,
     OpenAICompatibleBackend,
     _vision_supported,
@@ -67,12 +68,15 @@ class TestVisionCapabilityMatrix:
         cap = _VISION_CAPABILITY[provider]
         assert cap == frozenset()
 
-    def test_matrix_keys_are_the_five_openai_compatible_providers(self) -> None:
+    def test_matrix_keys_are_the_six_openai_compatible_providers(self) -> None:
+        # Spec 20 D-20-1: nvidia row added as default vision tier (NVIDIA Open
+        # Model License — avoids Llama-3.2-Vision EU carve-out per R-20-5).
         assert set(_VISION_CAPABILITY) == {
             "anthropic",
             "openai",
             "deepseek",
             "groq",
+            "nvidia",
             "together",
         }
 
@@ -106,6 +110,89 @@ class TestVisionSupportedHelper:
         # Mirrors `_native_tools_supported` semantics — unknown providers
         # return False rather than raising.
         assert _vision_supported("mystery-provider", "any-model") is False
+
+
+# -----------------------------------------------------------------------------
+# Spec 20 D-20-1 — NVIDIA vision tier (VILA / Cosmos)
+# -----------------------------------------------------------------------------
+
+
+class TestNvidiaVisionCapability:
+    """NVIDIA-owned VLMs become the default vision tier per D-20-1.
+
+    NVIDIA Open Model License (no EU carve-out, no anti-distillation,
+    commercially-usable outputs) is preferred over Llama-3.2-Vision (Llama 3.2
+    Community License §1(a) excludes EU-domiciled developers per R-20-5).
+
+    Model IDs verified against build.nvidia.com catalog at T13 implementation
+    time. The companion ``_NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY`` constant
+    tracks the subset that operators must re-verify on each deploy per D-13-3
+    "verify-at-deploy" precedent.
+    """
+
+    def test_nvidia_row_is_a_frozenset(self) -> None:
+        cap = _VISION_CAPABILITY["nvidia"]
+        assert isinstance(cap, frozenset)
+        assert cap != frozenset()  # populated by T09 + T13
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            # T09 — Nemotron omni-modal (text/image/video/speech in).
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            # T13 — VILA family (build.nvidia.com/nvidia/vila).
+            "nvidia/vila",
+            # T13 — Cosmos Nemotron VLM (VILA's successor per NVIDIA Jan 2025).
+            "nvidia/cosmos-nemotron-34b",
+            # T13 — Cosmos Reason vision-reasoning VLMs.
+            "nvidia/cosmos-reason1-7b",
+            "nvidia/cosmos-reason2-8b",
+        ],
+    )
+    def test_nvidia_known_positive_models(self, model: str) -> None:
+        assert _vision_supported("nvidia", model) is True
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            # T09 launch set — chat-only Nemotrons, NOT in vision matrix.
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "nvidia/nemotron-3-super-120b-a12b",
+            # Generic unknown.
+            "nvidia/unknown-vision-model",
+            # Llama-3.2-Vision explicitly excluded per R-20-5 EU carve-out.
+            "meta/llama-3.2-90b-vision-instruct",
+        ],
+    )
+    def test_nvidia_known_negative_models(self, model: str) -> None:
+        assert _vision_supported("nvidia", model) is False
+
+
+class TestNvidiaVisionVerifyAtDeploy:
+    """The verify-at-deploy companion constant (D-13-3 precedent).
+
+    Operator runbook check: this frozenset enumerates the subset of NVIDIA
+    vision model IDs that were sourced from a catalog scan rather than a
+    locked machine-readable schema. Operators MUST re-verify on each deploy.
+    """
+
+    def test_is_a_frozenset_of_strings(self) -> None:
+        assert isinstance(_NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY, frozenset)
+        for entry in _NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY:
+            assert isinstance(entry, str)
+
+    def test_is_non_empty(self) -> None:
+        # Operator runbook MUST have at least one ID to re-verify on deploy;
+        # an empty set would silently bypass the deploy-time gate.
+        assert len(_NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY) > 0
+
+    def test_subset_of_nvidia_vision_matrix(self) -> None:
+        # Every verify-at-deploy ID MUST also be present in the live
+        # capability matrix — otherwise the operator gate references stale
+        # IDs and provides no protection.
+        cap = _VISION_CAPABILITY["nvidia"]
+        assert isinstance(cap, frozenset)
+        assert cap >= _NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY
 
 
 # -----------------------------------------------------------------------------

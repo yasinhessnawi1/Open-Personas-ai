@@ -85,6 +85,23 @@ _LATENCY_NORMALISATION_MS = 5000.0
 _ESTIMATED_OUTPUT_TOKENS_DEFAULT = 500
 """Conservative output-token estimate for cost calculation (per D-18-5 §3.1)."""
 
+_REASONING_BOOST_THRESHOLD = 0.5
+"""``quality_proxy`` above which the reasoning-capable boost fires (Spec 20 T14).
+
+D-18-5 + D-20-1 — hard turns (high quality_proxy ⇒ first-turn / identity-sensitive
+/ strong-tools / vision combinations) up-weight reasoning-capable tiers
+(e.g., NVIDIA Nemotron reasoning family). Below the threshold, the boost is
+neutral so routine turns don't unnecessarily route to slower reasoning models.
+"""
+
+_REASONING_BOOST_AMOUNT = 0.10
+"""Additive boost applied to ``quality_fit`` when reasoning-capable + hard turn.
+
+Small (10%) — tuned to nudge ties toward reasoning models without overwhelming
+cost / latency signals. v0.1 hard-coded; same env-var tuning path as
+:data:`PROFILE_WEIGHTS` if telemetry warrants it.
+"""
+
 
 def quality_proxy(context: RoutingContext) -> float:
     """D-18-5 six-signal weighted sum — output ``[0.0, 1.0]``.
@@ -157,6 +174,14 @@ def score_tier(
     q_target = quality_proxy(context)
     q_tier = _TIER_QUALITY_ESTIMATES.get(tier, 0.5)
     quality_fit = 1.0 - abs(q_target - q_tier)
+
+    # D-18-5 + Spec 20 T14 — reasoning-capable boost on hard turns.
+    # The reasoning_capable flag on TierMetadata (default False) flips True for
+    # dedicated reasoning models (NVIDIA Nemotron family per D-20-1; Anthropic
+    # extended-thinking; DeepSeek-R1). Up-weight quality_fit on hard turns so
+    # the scorer prefers these models when the turn actually needs reasoning.
+    if md.reasoning_capable and q_target >= _REASONING_BOOST_THRESHOLD:
+        quality_fit += _REASONING_BOOST_AMOUNT
 
     cost_per_turn = (
         md.cost_input_per_1k_tokens * context.estimated_input_tokens / 1000.0

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from persona.backends.config import DEFAULT_BASE_URLS, BackendConfig
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 
 class TestDefaults:
@@ -144,7 +144,7 @@ class TestFromEnv:
 class TestDefaultBaseUrls:
     @pytest.mark.parametrize(
         "provider",
-        ["anthropic", "openai", "deepseek", "groq", "together", "ollama"],
+        ["anthropic", "openai", "deepseek", "groq", "together", "nvidia", "ollama"],
     )
     def test_known_provider_has_base_url(self, provider: str) -> None:
         assert provider in DEFAULT_BASE_URLS
@@ -153,3 +153,69 @@ class TestDefaultBaseUrls:
     def test_local_not_in_base_urls(self) -> None:
         # 'local' is the HF backend; no HTTP endpoint.
         assert "local" not in DEFAULT_BASE_URLS
+
+
+# -----------------------------------------------------------------------------
+# Spec 20 — NVIDIA provider wiring
+# -----------------------------------------------------------------------------
+
+
+class TestNvidiaProvider:
+    """Spec 20 T09 — NVIDIA chat-basic provider wiring.
+
+    Verifies that NVIDIA is a first-class :data:`Provider` member with a
+    registered default base URL pointing at the NIM hosted catalog. The
+    trailing ``/v1/`` mirrors the OpenAI-compat convention (the openai
+    SDK does NOT append /v1/ like the anthropic SDK does).
+    """
+
+    def test_nvidia_provider_constructs(self) -> None:
+        config = BackendConfig(
+            provider="nvidia",
+            model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            api_key=SecretStr("test"),
+        )
+        assert config.provider == "nvidia"
+        assert config.model == "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+
+    def test_nvidia_base_url_registered(self) -> None:
+        assert DEFAULT_BASE_URLS["nvidia"] == "https://integrate.api.nvidia.com/v1/"
+
+    def test_nvidia_base_url_has_trailing_v1(self) -> None:
+        # The openai SDK (used for nvidia dispatch) does NOT append /v1/
+        # like the anthropic SDK does — so the registered base URL must
+        # carry the explicit /v1/ suffix. See the comment block in
+        # persona.backends.config.DEFAULT_BASE_URLS.
+        assert DEFAULT_BASE_URLS["nvidia"].endswith("/v1/")
+
+    def test_nvidia_provider_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PERSONA_PROVIDER", "nvidia")
+        monkeypatch.setenv("PERSONA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5")
+        monkeypatch.setenv("PERSONA_API_KEY", "nvapi-test")
+        config = BackendConfig()
+        assert config.provider == "nvidia"
+        assert config.api_key is not None
+        assert config.api_key.get_secret_value() == "nvapi-test"
+
+
+# -----------------------------------------------------------------------------
+# Spec 20 T12 — D-20-3 extra_body opaque pass-through
+# -----------------------------------------------------------------------------
+
+
+class TestExtraBody:
+    def test_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("PERSONA_EXTRA_BODY", raising=False)
+        config = BackendConfig()
+        assert config.extra_body is None
+
+    def test_accepts_dict(self) -> None:
+        config = BackendConfig(
+            api_key=SecretStr("k"),
+            extra_body={"chat_template_kwargs": {"thinking": True}},
+        )
+        assert config.extra_body == {"chat_template_kwargs": {"thinking": True}}
+
+    def test_rejects_non_dict(self) -> None:
+        with pytest.raises(ValidationError):
+            BackendConfig(api_key=SecretStr("k"), extra_body="not-a-dict")  # type: ignore[arg-type]

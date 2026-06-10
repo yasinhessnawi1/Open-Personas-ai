@@ -12,7 +12,7 @@ uses the default ``PERSONA_`` prefix.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,6 +25,7 @@ Provider = Literal[
     "deepseek",
     "groq",
     "together",
+    "nvidia",
     "ollama",
     "local",
 ]
@@ -42,6 +43,7 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     "deepseek": "https://api.deepseek.com/v1/",
     "groq": "https://api.groq.com/openai/v1/",
     "together": "https://api.together.xyz/v1/",
+    "nvidia": "https://integrate.api.nvidia.com/v1/",
     "ollama": "http://localhost:11434",
 }
 
@@ -68,6 +70,15 @@ class BackendConfig(BaseSettings):
         local_quantization: Quantisation mode for local models.
         local_device: Torch device for local models (``auto`` lets
             transformers pick).
+        extra_body: Optional opaque dict passed through verbatim to the
+            vendor SDK's ``extra_body`` parameter (D-20-3). Used to opt into
+            provider-specific features that have no first-class Persona
+            knob — e.g., NVIDIA Nemotron reasoning toggles
+            (``{"chat_template_kwargs": {"thinking": True}}``), Anthropic
+            extended thinking config, or DeepSeek-R1 reasoning effort.
+            Persona does NOT validate dict contents; the provider rejects
+            malformed shapes with a 400. BackendConfig-level for v0.1
+            (per-call shape is v0.2).
     """
 
     model_config = SettingsConfigDict(
@@ -86,6 +97,9 @@ class BackendConfig(BaseSettings):
     local_model_id: str | None = None
     local_quantization: Literal["4bit", "8bit", "none"] = "4bit"
     local_device: str = "auto"
+
+    # D-20-3: opaque pass-through to the vendor SDK's ``extra_body``.
+    extra_body: dict[str, Any] | None = Field(default=None)
 
     @classmethod
     def from_env(cls, prefix: str = "PERSONA_") -> BackendConfig:

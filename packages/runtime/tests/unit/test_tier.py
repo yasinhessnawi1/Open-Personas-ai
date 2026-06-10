@@ -169,12 +169,21 @@ class TestFromEnv:
     def test_builds_per_tier_when_provider_env_present(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Spec 20 D-20-17 case (b) — all three triplet vars REQUIRED for the
+        # backward-compat per-tier path. Partial-triplet (1-2 of 3) now raises
+        # ``IncompleteTierConfigError``; covered in
+        # ``test_tier_registry_multimodel.py::TestPartialTriplet``.
         monkeypatch.setenv("PERSONA_FRONTIER_PROVIDER", "anthropic")
         monkeypatch.setenv("PERSONA_FRONTIER_MODEL", "claude-sonnet-4-6")
+        monkeypatch.setenv("PERSONA_FRONTIER_API_KEY", "sk-ant-test")
         monkeypatch.setenv("PERSONA_MID_PROVIDER", "deepseek")
         monkeypatch.setenv("PERSONA_MID_MODEL", "deepseek-chat")
+        monkeypatch.setenv("PERSONA_MID_API_KEY", "sk-deepseek-test")
         # small intentionally absent
         monkeypatch.delenv("PERSONA_SMALL_PROVIDER", raising=False)
+        monkeypatch.delenv("PERSONA_SMALL_MODEL", raising=False)
+        monkeypatch.delenv("PERSONA_SMALL_API_KEY", raising=False)
+        monkeypatch.delenv("PERSONA_SMALL_MODELS", raising=False)
 
         reg = tier_registry_from_env()
         # frontier + mid configured; small unconfigured -> falls back (mid).
@@ -184,7 +193,8 @@ class TestFromEnv:
 
     def test_single_backend_fallback_when_no_tiers(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for prefix in ("FRONTIER", "MID", "SMALL"):
-            monkeypatch.delenv(f"PERSONA_{prefix}_PROVIDER", raising=False)
+            for suffix in ("PROVIDER", "MODEL", "API_KEY", "MODELS"):
+                monkeypatch.delenv(f"PERSONA_{prefix}_{suffix}", raising=False)
         monkeypatch.setenv("PERSONA_PROVIDER", "groq")
         monkeypatch.setenv("PERSONA_MODEL", "llama-3.1-8b-instant")
 

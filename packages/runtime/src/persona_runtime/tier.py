@@ -34,6 +34,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from persona.backends import BackendConfig, load_backend
+from persona.backends.credentials import (
+    ProviderCredentialResolver,
+    TierResolution,
+    resolve_tier_config,
+)
+from persona.backends.errors import (
+    ProviderCredentialMissingError,
+)
+from persona.backends.errors import (
+    TierNotConfiguredError as ModelsListTierNotConfiguredError,
+)
+from persona.backends.multi_model import MultiModelChatBackend
 from persona.logging import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -107,6 +119,12 @@ class TierMetadata(BaseModel):
     throughput_tokens_per_sec: float = Field(ge=0.0)
     context_window: int = Field(gt=0)
     tool_strength: Literal["weak", "medium", "strong"]
+    # Spec 20 T14 additive — D-18-5 quality-proxy boost on hard turns.
+    reasoning_capable: bool = False
+    # Spec 20 T14 additive — D-13-3 verify-at-deploy precedent. False signals
+    # operator that cost values are best-estimate (e.g., NVIDIA hosted catalog
+    # — no public $/Mtok per R-20-4). Scorer skips cost weighting when False.
+    cost_verified_at_deploy: bool = True
 
 
 @dataclass(frozen=True)
@@ -126,11 +144,20 @@ class TierConfig:
         metadata: Optional :class:`TierMetadata` for the Spec 18 router. When
             ``None``, the tier is invisible to :class:`UnifiedRouter`'s Layer 2
             scorer (the heuristic floor still serves the tier — fallback path).
+        preconstructed_backend: Optional pre-built backend instance. Spec 20
+            T17 (D-20-17): when the tier is configured via
+            ``PERSONA_<TIER>_MODELS`` the :class:`MultiModelChatBackend`
+            wrapper is constructed up-front at registry-build time (the
+            wrapper holds N concrete backends), so :meth:`TierRegistry.get`
+            returns this instance directly and skips :func:`load_backend`.
+            ``None`` (the default) means the legacy lazy path
+            via ``backend_config`` applies.
     """
 
     name: str
     backend_config: BackendConfig
     metadata: TierMetadata | None = field(default=None)
+    preconstructed_backend: ChatBackend | None = field(default=None)
 
 
 class TierRegistry:
@@ -146,6 +173,13 @@ class TierRegistry:
     def __init__(self, tiers: dict[str, TierConfig]) -> None:
         self._tiers = dict(tiers)
         self._cache: dict[str, ChatBackend] = {}
+        # Spec 20 T17 (D-20-17): tiers configured via MODELS-list arrive with a
+        # preconstructed wrapper (or bare-single backend post credential
+        # resolution). Seed the cache so `.get()` returns the same instance
+        # without ever calling :func:`load_backend` for that tier.
+        for tier_name, tier_config in self._tiers.items():
+            if tier_config.preconstructed_backend is not None:
+                self._cache[tier_name] = tier_config.preconstructed_backend
 
     @property
     def configured_tier_names(self) -> tuple[str, ...]:
@@ -337,6 +371,9 @@ def tier_metadata_from_env(*, prefix: str) -> TierMetadata | None:
     )
     if not all(key in os.environ for key in required_keys):
         return None
+    # Spec 20 T14 additive — both default-safe.
+    reasoning_capable_raw = os.environ.get(f"{prefix}REASONING_CAPABLE", "false").lower()
+    cost_verified_raw = os.environ.get(f"{prefix}COST_VERIFIED_AT_DEPLOY", "true").lower()
     try:
         return TierMetadata(
             cost_input_per_1k_tokens=float(os.environ[required_keys[0]]),
@@ -345,6 +382,8 @@ def tier_metadata_from_env(*, prefix: str) -> TierMetadata | None:
             throughput_tokens_per_sec=float(os.environ[required_keys[3]]),
             context_window=int(os.environ[required_keys[4]]),
             tool_strength=os.environ[required_keys[5]],  # type: ignore[arg-type]
+            reasoning_capable=reasoning_capable_raw in {"true", "1", "yes", "on"},
+            cost_verified_at_deploy=cost_verified_raw in {"true", "1", "yes", "on"},
         )
     except (ValueError, TypeError) as exc:
         _logger.warning(
@@ -356,21 +395,40 @@ def tier_metadata_from_env(*, prefix: str) -> TierMetadata | None:
 
 
 def tier_registry_from_env(*, default_prefix: str = "PERSONA_") -> TierRegistry:
-    """Build a :class:`TierRegistry` from the environment (D-05-3).
+    """Build a :class:`TierRegistry` from the environment (D-05-3 + D-20-17).
 
-    For each tier, a ``TierConfig`` is added only if that tier's env block is
-    present — detected by the ``<PREFIX>PROVIDER`` env var being set (a tier
-    with no provider env var is treated as unconfigured, since
-    :meth:`BackendConfig.from_env` would otherwise silently return field
-    defaults). When no tier blocks are present, a single backend built from
+    Per-tier precedence (Spec 20 D-20-17 four cases):
+
+    * **(a) MODELS-only set** — ``PERSONA_<TIER>_MODELS`` parses to N slots;
+      build a :class:`MultiModelChatBackend` wrapper around the N resolved
+      backends (or return the bare backend when N==1 after credential
+      resolution). No log.
+    * **(b) Triplet-only set** — ``PERSONA_<TIER>_PROVIDER`` +
+      ``..._MODEL`` + ``..._API_KEY`` all set; build a single backend via
+      :func:`load_backend` (backward-compat fast path). No log.
+    * **(c) Both set** — MODELS wins; :func:`resolve_tier_config` emits an
+      INFO log naming the ignored triplet vars.
+    * **(d) Malformed MODELS** — :class:`MalformedTierModelsError` propagates
+      from the parser.
+
+    Plus the partial-triplet branch (1-2 of 3 + no MODELS) →
+    :class:`IncompleteTierConfigError` propagates.
+
+    Per-slot credential resolution disposition (Spec 20 D-20-15):
+
+    * ≥1 provider resolves → build wrapper with the resolved slots, WARN per
+      skipped slot, log the missing env var.
+    * ALL slots fail → raise
+      :class:`persona.backends.errors.TierNotConfiguredError` with
+      ``missing_providers`` + ``configured_models`` + ``consulted_env_vars``
+      context for operator diagnosis.
+
+    When no tier blocks are present at all, a single backend built from
     ``default_prefix`` (the spec-02 ``PERSONA_*`` defaults) is registered for
-    all three tier names.
+    every tier name (Spec 05 single-backend fallback, unchanged).
 
-    Spec 18 (T04): per-tier :class:`TierMetadata` is populated additively via
-    :func:`tier_metadata_from_env` when the tier's six metadata env vars are
-    all present. Absent / partial metadata is silently accepted (returns
-    ``None``); the :class:`UnifiedRouter` excludes the tier from Layer 2
-    scoring while :class:`HeuristicRouter` continues to serve it.
+    Spec 18 (T04): per-tier :class:`TierMetadata` continues to populate
+    additively via :func:`tier_metadata_from_env`.
 
     Args:
         default_prefix: Env prefix for the single-backend fallback.
@@ -379,8 +437,30 @@ def tier_registry_from_env(*, default_prefix: str = "PERSONA_") -> TierRegistry:
         A registry with whatever tiers the environment configured.
     """
     tiers: dict[str, TierConfig] = {}
+    env_snapshot: dict[str, str] = dict(os.environ)
+    resolver = ProviderCredentialResolver(env=env_snapshot)
     for tier_name, prefix in _TIER_ENV_PREFIXES.items():
-        if f"{prefix}PROVIDER" in os.environ:
+        resolution = resolve_tier_config(tier_name, env=env_snapshot)
+        if resolution.models is not None:
+            tiers[tier_name] = _tier_config_from_models_list(
+                tier_name=tier_name,
+                prefix=prefix,
+                resolution=resolution,
+                resolver=resolver,
+            )
+        elif resolution.triplet is not None:
+            tiers[tier_name] = TierConfig(
+                name=tier_name,
+                backend_config=BackendConfig.from_env(prefix=prefix),
+                metadata=tier_metadata_from_env(prefix=prefix),
+            )
+        elif f"{prefix}PROVIDER" in env_snapshot:
+            # Defensive: triplet partial cases have already raised inside
+            # :func:`resolve_tier_config`; reaching here means the legacy
+            # detection sees PROVIDER set but the new resolver classified the
+            # tier as unconfigured (e.g., PROVIDER=anthropic but no triplet
+            # MODEL or API_KEY). Preserve the pre-Spec-20 behaviour for
+            # operators who only set PROVIDER + rely on per-tier env defaults.
             tiers[tier_name] = TierConfig(
                 name=tier_name,
                 backend_config=BackendConfig.from_env(prefix=prefix),
@@ -403,3 +483,107 @@ def tier_registry_from_env(*, default_prefix: str = "PERSONA_") -> TierRegistry:
         )
 
     return TierRegistry(tiers)
+
+
+def _tier_config_from_models_list(
+    *,
+    tier_name: str,
+    prefix: str,
+    resolution: TierResolution,
+    resolver: ProviderCredentialResolver,
+) -> TierConfig:
+    """Build a :class:`TierConfig` for a MODELS-list tier (D-20-15 + D-20-17).
+
+    Resolves each ``(provider, model)`` slot through the resolver; WARNs and
+    skips slots whose credentials are missing; raises
+    :class:`ModelsListTierNotConfiguredError` when every slot fails (D-20-15
+    ALL-fail branch).
+
+    When the resolved chain length is 1 the wrapper is bypassed: the bare
+    single backend is registered directly so callers pay zero wrapper
+    overhead on the degenerate path.
+
+    Args:
+        tier_name: Tier name (lower-case).
+        prefix: Tier env-var prefix (e.g. ``"PERSONA_FRONTIER_"``).
+        resolution: :class:`TierResolution` from
+            :func:`resolve_tier_config` with ``models`` populated.
+        resolver: Shared :class:`ProviderCredentialResolver` over the same
+            env snapshot.
+
+    Returns:
+        A :class:`TierConfig` with ``preconstructed_backend`` populated.
+
+    Raises:
+        ModelsListTierNotConfiguredError: Every slot's credentials missing.
+    """
+    assert resolution.models is not None  # narrow for type-checker
+    resolved_backends: list[ChatBackend] = []
+    skipped: list[tuple[str, str]] = []  # (provider, env_var)
+    for position, (provider, model) in enumerate(resolution.models):
+        try:
+            creds = resolver.resolve(provider)
+        except ProviderCredentialMissingError as exc:
+            env_var = exc.context.get("env_var", "")
+            _logger.warning(
+                "provider credential missing; skipping backend slot "
+                "tier={tier} provider={provider} env_var={env_var} "
+                "position={position}/{total}",
+                tier=tier_name,
+                provider=provider,
+                env_var=env_var,
+                position=position,
+                total=len(resolution.models),
+            )
+            skipped.append((provider, env_var))
+            continue
+        slot_config = BackendConfig(
+            provider=provider,
+            model=model,
+            api_key=creds.api_key,
+            base_url=creds.base_url or None,
+        )
+        resolved_backends.append(load_backend(slot_config))
+
+    if not resolved_backends:
+        # D-20-15 ALL-fail branch: every provider in the MODELS list lacked
+        # a credential. Fail loud at construction with operator-actionable
+        # context.
+        raise ModelsListTierNotConfiguredError(
+            f"tier {tier_name!r} has no resolvable backends",
+            context={
+                "tier": tier_name,
+                "configured_models": ",".join(f"{p}/{m}" for p, m in resolution.models),
+                "missing_providers": ",".join(p for p, _ in skipped),
+                "consulted_env_vars": ",".join(v for _, v in skipped if v),
+            },
+        )
+
+    # Primary slot's (provider, model) — used for `model_name_for()` so the
+    # router can populate `RoutingDecision.model` without instantiating.
+    primary_provider, primary_model = resolution.models[0]
+    primary_config = BackendConfig(
+        provider=primary_provider,
+        model=primary_model,
+    )
+
+    if len(resolved_backends) == 1:
+        # Degenerate: skip the wrapper entirely (D-20-17 case (a) length-1
+        # bare-single fast path).
+        return TierConfig(
+            name=tier_name,
+            backend_config=primary_config,
+            metadata=tier_metadata_from_env(prefix=prefix),
+            preconstructed_backend=resolved_backends[0],
+        )
+
+    wrapper = MultiModelChatBackend(
+        backends=resolved_backends,
+        tier_name=tier_name,
+    )
+    return TierConfig(
+        name=tier_name,
+        backend_config=primary_config,
+        metadata=tier_metadata_from_env(prefix=prefix),
+        preconstructed_backend=wrapper,
+    )

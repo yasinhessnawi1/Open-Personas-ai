@@ -13,13 +13,27 @@ from __future__ import annotations
 
 from persona.backends._factory import load_backend
 from persona.backends.config import BackendConfig, Provider
+from persona.backends.credentials import (
+    ProviderCredentialResolver,
+    ProviderCredentials,
+    TierResolution,
+    parse_models_list,
+    resolve_tier_config,
+)
 from persona.backends.errors import (
+    AllModelsFailedError,
     AuthenticationError,
     BackendTimeoutError,
+    IncompleteTierConfigError,
+    LocalProviderInModelsListError,
+    MalformedTierModelsError,
     ModelNotFoundError,
+    ProviderCredentialMissingError,
     ProviderError,
     RateLimitError,
+    TierNotConfiguredError,
 )
+from persona.backends.multi_model import AttemptRecord, MultiModelChatBackend
 from persona.backends.ollama import OllamaBackend
 from persona.backends.openai_compat import OpenAICompatibleBackend
 from persona.backends.protocol import ChatBackend
@@ -33,21 +47,34 @@ from persona.backends.types import (
 )
 
 __all__ = [
+    "AllModelsFailedError",
+    "AttemptRecord",
     "AuthenticationError",
     "BackendConfig",
     "BackendTimeoutError",
     "ChatBackend",
     "ChatResponse",
+    "IncompleteTierConfigError",
+    "LocalProviderInModelsListError",
+    "MalformedTierModelsError",
     "ModelNotFoundError",
+    "MultiModelChatBackend",
     "OllamaBackend",
     "OpenAICompatibleBackend",
     "Provider",
+    "ProviderCredentialMissingError",
+    "ProviderCredentialResolver",
+    "ProviderCredentials",
     "ProviderError",
     "RateLimitError",
     "StreamChunk",
+    "TierNotConfiguredError",
+    "TierResolution",
     "TokenUsage",
     "ToolCallDelta",
     "ToolSpec",
     "load_backend",
+    "parse_models_list",
+    "resolve_tier_config",
     "tool_spec_from_tool",
 ]

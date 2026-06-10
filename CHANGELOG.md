@@ -11,7 +11,84 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
-(empty — future post-v0.V2.0 work lands here)
+### Spec 20 — NVIDIA Provider Integration + Cross-Provider Multi-Model-Per-Tier Fallback (Phase 6 complete 2026-06-10)
+
+> **Two coupled deliverables, one spec:** (1) NVIDIA as a first-class Persona provider across chat (Nemotron family) / reasoning (`enable_thinking` + `delta.reasoning_content`) / vision (NVIDIA VILA + Cosmos VLMs) / image-gen (FLUX.2-klein-4b via OpenAI-compat + SDXL via legacy GenAI) — all behind one `OpenAICompatibleBackend` adapter at `https://integrate.api.nvidia.com/v1/`. (2) Cross-provider multi-model-per-tier fallback (`PERSONA_<TIER>_MODELS=<provider>/<model>,<provider>/<model>,...`) across all text tiers AND image generation via `MultiModelChatBackend` + `MultiModelImageBackend` wrappers + per-provider `ProviderCredentialResolver`. **Co-shipped because NVIDIA's free-tier 40 RPM cap makes cross-provider fallback a v0.1 production-resilience prerequisite, not a v0.2 nicety.** 25 production-merit decisions locked at Phase 4 (12 LOCK + 5 emergent micros + 7 research-confirmed defaults + 1 closeout-editorial-only) per [`docs/specs/phase2/spec_20/decisions.md`](docs/specs/phase2/spec_20/decisions.md). **Test growth:** baseline 2643 → 2972 default + 44 conditional (40 integration + 4 external 🟦 operator-pass per CSA-3) = +329 default tests. **9 additive-precedent chain entries** claimed (T09-T17; anticipated chain ~23-31; R-19-1 canonicalizes at next audit per [`closeout.md §7`](docs/specs/phase2/spec_20/closeout.md)).
+>
+> **Headline gates:** 2972 default pytest passed / 3 skipped / 406 deselected; mypy --strict on persona-core (111 files) + persona-runtime (26 files) clean; standard mypy on persona-api (56 files) clean; `ruff check + ruff format --check` clean across all touched files.
+
+#### Added — Spec 02 (chat backends; boundary types)
+
+- **NVIDIA Provider Literal entry** at [`packages/core/src/persona/backends/config.py:22-30`](packages/core/src/persona/backends/config.py) — `Provider` Literal extended to 8 entries (anthropic / openai / deepseek / groq / together / ollama / local / **nvidia**).
+- **NVIDIA DEFAULT_BASE_URLS entry** at `config.py:36-46` — `"nvidia": "https://integrate.api.nvidia.com/v1/"` (now 7 entries; `local` intentionally omitted per 7-vs-6 asymmetry; in-process HF, not network-resolvable).
+- **OpenAICompatibleBackend allow-set extension** at `openai_compat.py:162-168` per D-20-X-nvidia-allow-set-extend atomic-four-touch invariant (Provider Literal + DEFAULT_BASE_URLS + capability matrices + allow-set MUST land together).
+- **NVIDIA capability matrix rows** at `openai_compat.py:72` (`_NATIVE_TOOLS_CAPABILITY`) + `:106` (`_VISION_CAPABILITY`) — Nemotron 49b-v1.5 / 120b-a12b / Nano-Omni-30b chat + tool capability; Nemotron Nano-Omni-30b + VILA + Cosmos Nemotron 34b + Cosmos Reason 1-7b/2-8b vision capability (NVIDIA Open Model License — no EU carve-out per R-20-5).
+- **StreamChunk.reasoning: str | list[ReasoningBlock] | None** boundary additive at `types.py:135` per T01 verdict (b) + R-20-2 multi-provider soak. NVIDIA / OpenAI Chat Completions / DeepSeek-R1 fit `str` arm; Anthropic emits LIST of typed content blocks (`ThinkingBlock.signature` cryptographic HMAC MUST round-trip; `RedactedThinkingBlock.data` opaque encrypted blob; `display="omitted"` signature-only blocks) requiring richer type. New `ReasoningBlock` frozen Pydantic class with `kind ∈ {thinking, redacted_thinking, summary, text}` + per-provider field semantics; helper `reasoning_as_text(r) -> str | None` collapses list arm for str-only consumers (prompt builder, audit logger, UI rendering).
+- **BackendConfig.extra_body: dict[str, Any] | None** passthrough at `config.py:78-88` per D-20-3 — vendor-specific request-body extensions (e.g., NVIDIA `{"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": N}`); Persona's backend layer does NOT validate dict contents.
+- **OpenAI-compat stream-loop dual-probe** in `openai_compat.py` per D-20-X-nemotron-field-name-dual-probe — probes both `getattr(delta, "reasoning_content", None)` AND `getattr(delta, "reasoning", None)` (NVIDIA Nemotron canonical vs Nano-Omni VLM alias); both arrive via Pydantic extras on openai-py ChoiceDelta (NOT statically typed). T20 + T22 verify live behavior.
+- **MultiModelChatBackend wrapper** at new `backends/multi_model.py` (477 src) implementing ChatBackend Protocol verbatim + D-20-9 three-bucket classifier (RETRY-THEN-FALLBACK / FALLBACK-NO-RETRY / SURFACE) + D-20-10 N=1 same-model retry with 200ms ±50% jitter + D-20-12 SKIP-AND-FALLBACK on cross-provider AuthenticationError with structured WARNING + D-20-15 runtime ProviderCredentialMissingError handling + two-phase streaming first-chunk fallback boundary (pre-first-chunk errors → classifier; post-first-chunk errors → raise verbatim preserving partial output).
+- **ProviderCredentialResolver** at new `backends/credentials.py` (391 src) — single source of truth for resolving `<provider>` reference to `(api_key, base_url)` tuple via `PERSONA_<PROVIDER>_API_KEY` + `PERSONA_<PROVIDER>_BASE_URL` env vars. D-20-13 SLASH `<provider>/<model>` format; D-20-17 four-case precedence (a/b/c/d); D-20-18 EXPLICIT REJECT for `local` and `ollama` (HTTP-transport-shaped MODELS list can't compose in-process HF backend).
+- **6 new error classes** at `backends/errors.py` — `AllModelsFailedError(PersonaError)` + `ProviderCredentialMissingError(PersonaError)` + `LocalProviderInModelsListError(PersonaError)` + `MalformedTierModelsError(PersonaError)` + `IncompleteTierConfigError(PersonaError)` + `TierNotConfiguredError(PersonaError)` — all root at `PersonaError` directly per D-20-16 settled partition (NOT under `ProviderError`). T18 cemented via 36 parametrized contract tests.
+- **D-20-X-tier-name-backends-property-readers** Protocol-shaped accessor pattern — wrapper classes expose read-only `tier_name` + `backends` + `last_attempts` `@property` accessors. Reusable for future wrapper specs.
+
+#### Added — Spec 05 (TierRegistry + ConversationLoop)
+
+- **TierConfig.preconstructed_backend** cache field per option-(a) TierConfig injection at T17 — TierRegistry pre-seeds `_cache` for tiers carrying a pre-built MultiModel wrapper; `.get()` bypasses `load_backend` when present.
+- **`tier_registry_from_env` D-20-17 four-case precedence** at `tier.py:358-405` — MODELS-only / triplet-only / both → MODELS wins + INFO log naming ignored triplet vars / malformed → fail-loud at construction (MalformedTierModelsError + IncompleteTierConfigError + TierNotConfiguredError). Backward-compat single-model triplet path preserved unchanged (acceptance 5d byte-for-byte).
+- **TurnLog 5+1 fallback fields** at `runtime/logging.py:47` per T19 — `tier_model_chosen: str | None` + `tier_provider_used: str | None` + `tier_fallback_count: int` + `tier_fallback_reasons: list[str]` (class-names-only per D-15-X-hard-line-filter privacy mirror) + `tier_fallback_providers: list[str]` + derived `fallback_engaged: bool`. `model_validator` enforces length-match + bool-derived consistency invariants.
+- **`_compute_fallback_fields` helper** at `runtime/loop.py:670+` reads MultiModelChatBackend.last_attempts and populates TurnLog at write-back. Single-backend (bare) callers safely return zero-fallback shape via `getattr(backend, "last_attempts", None) or []`.
+- **TurnLog reasoning capture** at `logging.py` — `reasoning_total_tokens: int | None` + `reasoning_text_hash: str | None` (sha256, content-hash-only per D-15-X-hard-line-filter mirror) per D-20-5. Raw reasoning text NEVER persisted at v0.1.
+- **D-20-X-deepseek-reasoning-strip-invariant** at conversation-history serializer — strips `reasoning_content` from prior assistant turns when active provider is DeepSeek (HTTP 400 otherwise).
+
+#### Added — Spec 13 (vision capability matrix)
+
+- **NVIDIA vision rows** at `openai_compat.py:106 _VISION_CAPABILITY` — `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` (T09 omni-modal entry) + `nvidia/vila` + `nvidia/cosmos-nemotron-34b` + `nvidia/cosmos-reason1-7b` + `nvidia/cosmos-reason2-8b` (T13 NVIDIA-owned VLMs preferred over Llama-3.2-Vision per R-20-5 EU carve-out for Norway/EEA context).
+- **`_NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY`** Final companion constant per D-13-3 verify-at-deploy precedent. T25 MAINTENANCE.md Cluster B row tracks operator re-verification cadence per NVIDIA Jan-2025 VILA → Cosmos Nemotron rebranding drift signal.
+- Spec 13 image-as-ref-or-base64 contract UNCHANGED — NVIDIA VLMs slot in via existing OpenAI-compat serializer.
+
+#### Added — Spec 15 (image generation + safety)
+
+- **ImageProvider Literal +"nvidia"** at `imagegen/config.py:29` (now 3 entries: openai / fal / nvidia).
+- **NvidiaImageBackend** at new `imagegen/nvidia_image.py` (562 src; D-20-X-t10-loc-overshoot-accepted per soft-ceiling judgment-call — dual-branch surface + NVCF poll loop + license-block guards genuinely additive) per D-20-4 HYBRID dual-branch design: Branch B (OpenAI-compat preferred path) for `qwen-image` / `qwen-image-2512` / `flux.2-klein-4b`; Branch A (legacy GenAI custom body + NVCF async poll on HTTP 202) for `stabilityai/stable-diffusion-xl`.
+- **D-20-X-flux-1-dev-license-block** guard — NvidiaImageBackend construction with `nvidia/black-forest-labs/flux.1-dev` OR `nvidia/black-forest-labs/flux.1-kontext-dev` raises `ImageProviderError(reason="non_commercial_license", hint="use nvidia/flux.2-klein-4b instead...")` per FLUX.1 [dev] Non-Commercial License (R-20-5 license-stack).
+- **MultiModelImageBackend wrapper** at new `imagegen/multi_model_image.py` (491 src) mirroring MultiModelChatBackend shape + D-20-9 ContentRejectedError SURFACE invariant (CRITICAL Spec 15 invariant — `ContentRejectedError` NEVER falls back to secondary; would launder content-policy violations across vendors) + D-20-14 atomic generate (DISCARD+RESTART; NVIDIA NIM is one-shot HTTP POST with no partial state recoverable).
+- **D-20-X-multi-model-image-edit-not-implemented** Protocol compliance shim — `MultiModelImageBackend.edit()` raises `NotImplementedError` per D-15-X-edit-protocol-reservation (no v1 backend overrides edit; nothing to fall back across).
+- **`load_image_backend_from_env`** factory + `_parse_image_models_list` at `imagegen/_factory.py` — narrows T11's ProviderCredentialResolver parser to `_IMAGE_PROVIDERS={openai, fal, nvidia}` since `fal` isn't in chat-side Provider Literal but IS in ImageProvider Literal.
+
+#### Added — Spec 18 (router metadata)
+
+- **NVIDIA TierMetadata entries** at new `runtime/routing/nvidia_models.py` (110 LOC static D-20-1 launch-set registry) — Nemotron 49b-v1.5 chat-primary (reasoning_capable=False) + Nemotron 120b-a12b long-context (reasoning_capable=True) + Nemotron Nano-Omni-30b reasoning+vision.
+- **TierMetadata.reasoning_capable: bool = False** additive field at `tier.py:78` — preserves existing TierMetadata constructions byte-for-byte.
+- **TierMetadata.cost_verified_at_deploy: bool = True** additive field at `tier.py:78` per D-13-3 verify-at-deploy precedent; NVIDIA entries set False (R-20-4 confirmed NVIDIA does NOT publish $/Mtok per the hosted-catalog ToS).
+- **D-18-5 quality-proxy boost integration** at `routing/scoring.score_tier` — +0.10 quality_fit when reasoning_capable=True AND quality_proxy >= 0.5. Below threshold neutral so routine traffic stays cost-sensitive.
+- **`tier_metadata_from_env` extension** at `tier.py:337-405` honors `PERSONA_<TIER>_REASONING_CAPABLE` + `PERSONA_<TIER>_COST_VERIFIED_AT_DEPLOY` env vars with `{true,1,yes,on}` truthy parsing.
+- **D-18-1 internal-heuristic scorer choice** NOT REOPENED — Spec 20 only extends scorer's input data; D-20-20 FALSE-TENSION reclassification per Phase 1 reviewer panel (credential resolution at construction-time ≠ scoring at turn-time).
+
+#### Operator commitments added to MAINTENANCE.md (T25, Cluster B; 7 → 12 rows)
+
+5 event-driven rows per acceptance criterion 12: NVIDIA hosted-catalog 40 RPM headroom monitoring (D-20-7 RESHAPED — event-driven NOT calendar-bound per R-20-4 trial-tier reality) + per-NVIDIA-model rate-limit monitoring + capability-matrix freshness review (T13 VILA/Cosmos verify-at-deploy) + multi-model fallback-rate monitoring (TurnLog `fallback_engaged` aggregate; threshold 10%) + cross-provider credential-resolver staleness (D-20-X-nvidia-allow-set-extend atomic-four-touch invariant for future provider additions).
+
+#### Operator-pass surface (acceptance criterion 10 🟦 CSA-3)
+
+T22 external smoke at [`packages/core/tests/external/test_nvidia_smoke.py`](packages/core/tests/external/test_nvidia_smoke.py) — 4 surface scaffolds (chat / reasoning / vision / image-gen Branch B) gated on `PERSONA_NVIDIA_API_KEY`; module-level skip cleanly without key. Operator runbook at [`docs/specs/phase2/spec_20/closeout.md`](docs/specs/phase2/spec_20/closeout.md) §"External smoke"; operator-override env vars `PERSONA_NVIDIA_SMOKE_<surface>_MODEL` per D-13-3 verify-at-deploy precedent. Approximate cost per run: low single-digit cents on paid tier; effectively free on 40 RPM trial; wall-clock <60s.
+
+#### 11 named follow-ups (per [`closeout.md §6`](docs/specs/phase2/spec_20/closeout.md))
+
+1. D-20-X-imagegen-audit-fallback-fields-followup (T19 deferred image-gen audit-log plumbing)
+2. D-20-X-t10-loc-overshoot-accepted (NvidiaImageBackend 562 LOC soft-ceiling judgment-call)
+3. D-20-X-t20-loc-overshoot-accepted (cross-spec integration test 616 LOC documentation-discipline)
+4. D-20-X-t21-loc-overshoot-accepted (cross-provider fallback test 926 LOC documentation-discipline)
+5. D-20-X-t22-loc-overshoot-accepted (external smoke scaffold 324 LOC documentation-discipline)
+6. D-20-X-worktree-isolation-harness-anomaly (operational note; 69% leak rate observed; routed to harness-optimizer)
+7. D-20-X-tier-name-backends-property-readers (reusable wrapper-Protocol composition pattern)
+8. D-20-X-multi-model-image-edit-not-implemented (Protocol compliance shim; tracks Spec 21+ image-editing)
+9. D-11-9 demo-primary re-evaluation (gated on R-20-4 free-tier verified production-suitable OR AI Enterprise license procured)
+10. Spec 21 per-call provider-routing reservation (persona YAML override + router-driven dynamic per-turn selection)
+11. Anthropic `list[ReasoningBlock]` arm population (post-T12 follow-up; AnthropicBackend adapter; cross-spec Spec 10/11 conversation-history signature round-trip verification)
+
+#### Per-package version pins at Spec 20 close-out
+
+`persona-core` 1.0.0 unchanged (additive amendments) · `persona-runtime` 0.18.0 unchanged · `persona-api` 0.16.0 unchanged · `persona-web` 0.15.0 unchanged · `persona-voice` 0.V2.0 unchanged. **Spec 20 ships as additive amendments to closed specs (Spec 02 / 05 / 13 / 15 / 18) — no package version bumps required; CHANGELOG entry per surface lands here under `[Unreleased]` until next package-level release.**
 
 ---
 

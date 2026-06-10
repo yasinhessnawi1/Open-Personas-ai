@@ -18,7 +18,7 @@ for the spec and ``docs/specs/phase2/spec_15/decisions.md`` for D-15-1..5
 
 from __future__ import annotations
 
-from persona.imagegen._factory import load_image_backend
+from persona.imagegen._factory import load_image_backend, load_image_backend_from_env
 from persona.imagegen.config import ImageBackendConfig, ImageProvider
 from persona.imagegen.errors import (
     ContentRejectedError,
@@ -26,6 +26,12 @@ from persona.imagegen.errors import (
     ImageGenUnavailableError,
     ImageProviderError,
 )
+from persona.imagegen.multi_model_image import (
+    AllModelsFailedError,
+    AttemptRecord,
+    MultiModelImageBackend,
+)
+from persona.imagegen.nvidia_image import NvidiaImageBackend
 from persona.imagegen.protocol import ImageBackend
 from persona.imagegen.result import (
     GeneratedImage,
@@ -42,6 +48,8 @@ from persona.imagegen.safety import (
 from persona.imagegen.tool import make_generate_image_tool
 
 __all__ = [
+    "AllModelsFailedError",
+    "AttemptRecord",
     "ContentRejectedError",
     "GeneratedImage",
     "GenerationResult",
@@ -55,8 +63,11 @@ __all__ = [
     "ImageProviderError",
     "ImageQuality",
     "ImageSize",
+    "MultiModelImageBackend",
+    "NvidiaImageBackend",
     "hash_prompt_for_audit",
     "is_hard_line_violation",
     "load_image_backend",
+    "load_image_backend_from_env",
     "make_generate_image_tool",
 ]

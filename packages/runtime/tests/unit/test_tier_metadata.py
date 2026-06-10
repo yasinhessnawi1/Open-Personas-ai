@@ -243,3 +243,164 @@ class TestTierRegistryFromEnvWithMetadata:
         # No metadata env vars — tier still configured, metadata is None.
         registry = tier_registry_from_env()
         assert registry.metadata_for("mid") is None
+
+
+# ----- Spec 20 T14 — reasoning_capable + cost_verified_at_deploy -------------
+
+
+class TestTierMetadataReasoningCapable:
+    """Spec 20 T14 — additive ``reasoning_capable`` field (D-18-5 boost)."""
+
+    def test_defaults_to_false(self) -> None:
+        # Back-compat: existing constructions stay valid; flag defaults False.
+        md = _full_metadata()
+        assert md.reasoning_capable is False
+
+    def test_constructs_with_true(self) -> None:
+        md = TierMetadata(
+            cost_input_per_1k_tokens=1.5,
+            cost_output_per_1k_tokens=7.5,
+            first_token_latency_ms=600.0,
+            throughput_tokens_per_sec=30.0,
+            context_window=1_000_000,
+            tool_strength="strong",
+            reasoning_capable=True,
+        )
+        assert md.reasoning_capable is True
+
+    def test_frozen_after_construction(self) -> None:
+        md = TierMetadata(
+            cost_input_per_1k_tokens=1.5,
+            cost_output_per_1k_tokens=7.5,
+            first_token_latency_ms=600.0,
+            throughput_tokens_per_sec=30.0,
+            context_window=1_000_000,
+            tool_strength="strong",
+            reasoning_capable=True,
+        )
+        with pytest.raises(ValidationError):
+            md.reasoning_capable = False  # type: ignore[misc]
+
+
+class TestTierMetadataCostVerifiedAtDeploy:
+    """Spec 20 T14 — D-13-3 verify-at-deploy convention surface."""
+
+    def test_defaults_to_true(self) -> None:
+        md = _full_metadata()
+        assert md.cost_verified_at_deploy is True
+
+    def test_constructs_with_false(self) -> None:
+        # NVIDIA launch-set entries set this to False to flag best-estimate
+        # cost values to operators (R-20-4 — NVIDIA doesn't publish $/Mtok).
+        md = TierMetadata(
+            cost_input_per_1k_tokens=0.30,
+            cost_output_per_1k_tokens=0.60,
+            first_token_latency_ms=300.0,
+            throughput_tokens_per_sec=45.0,
+            context_window=131072,
+            tool_strength="strong",
+            reasoning_capable=False,
+            cost_verified_at_deploy=False,
+        )
+        assert md.cost_verified_at_deploy is False
+
+
+# ----- Spec 20 T14 — env-var reading for new optional fields -----------------
+
+
+class TestTierMetadataFromEnvReasoningCapable:
+    """Spec 20 T14 — ``<PREFIX>REASONING_CAPABLE`` env-var support."""
+
+    def _set_required_env(self, monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
+        monkeypatch.setenv(f"{prefix}COST_INPUT_PER_1K", "0.3")
+        monkeypatch.setenv(f"{prefix}COST_OUTPUT_PER_1K", "1.5")
+        monkeypatch.setenv(f"{prefix}FIRST_TOKEN_LATENCY_MS", "800")
+        monkeypatch.setenv(f"{prefix}THROUGHPUT_TOKENS_PER_SEC", "60")
+        monkeypatch.setenv(f"{prefix}CONTEXT_WINDOW", "200000")
+        monkeypatch.setenv(f"{prefix}TOOL_STRENGTH", "strong")
+
+    def test_reasoning_capable_defaults_false_when_var_absent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._set_required_env(monkeypatch, "PERSONA_FRONTIER_")
+        md = tier_metadata_from_env(prefix="PERSONA_FRONTIER_")
+        assert md is not None
+        assert md.reasoning_capable is False
+
+    @pytest.mark.parametrize("truthy", ["1", "true", "True", "TRUE", "yes", "on"])
+    def test_reasoning_capable_reads_truthy_values(
+        self, monkeypatch: pytest.MonkeyPatch, truthy: str
+    ) -> None:
+        self._set_required_env(monkeypatch, "PERSONA_FRONTIER_")
+        monkeypatch.setenv("PERSONA_FRONTIER_REASONING_CAPABLE", truthy)
+        md = tier_metadata_from_env(prefix="PERSONA_FRONTIER_")
+        assert md is not None
+        assert md.reasoning_capable is True
+
+    @pytest.mark.parametrize("falsy", ["0", "false", "no", "off"])
+    def test_reasoning_capable_reads_falsy_values(
+        self, monkeypatch: pytest.MonkeyPatch, falsy: str
+    ) -> None:
+        self._set_required_env(monkeypatch, "PERSONA_FRONTIER_")
+        monkeypatch.setenv("PERSONA_FRONTIER_REASONING_CAPABLE", falsy)
+        md = tier_metadata_from_env(prefix="PERSONA_FRONTIER_")
+        assert md is not None
+        assert md.reasoning_capable is False
+
+    def test_unknown_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._set_required_env(monkeypatch, "PERSONA_FRONTIER_")
+        monkeypatch.setenv("PERSONA_FRONTIER_REASONING_CAPABLE", "garbage")
+        md = tier_metadata_from_env(prefix="PERSONA_FRONTIER_")
+        assert md is not None
+        assert md.reasoning_capable is False
+
+    def test_optional_flag_does_not_gate_metadata_return(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The new optional flags must NOT cause partial-env behaviour — six
+        # required vars present + no optional flag should still return metadata.
+        self._set_required_env(monkeypatch, "PERSONA_MID_")
+        md = tier_metadata_from_env(prefix="PERSONA_MID_")
+        assert md is not None
+
+
+class TestTierMetadataFromEnvCostVerifiedAtDeploy:
+    """Spec 20 T14 — ``<PREFIX>COST_VERIFIED_AT_DEPLOY`` env-var support."""
+
+    def _set_required_env(self, monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
+        monkeypatch.setenv(f"{prefix}COST_INPUT_PER_1K", "0.3")
+        monkeypatch.setenv(f"{prefix}COST_OUTPUT_PER_1K", "1.5")
+        monkeypatch.setenv(f"{prefix}FIRST_TOKEN_LATENCY_MS", "800")
+        monkeypatch.setenv(f"{prefix}THROUGHPUT_TOKENS_PER_SEC", "60")
+        monkeypatch.setenv(f"{prefix}CONTEXT_WINDOW", "200000")
+        monkeypatch.setenv(f"{prefix}TOOL_STRENGTH", "strong")
+
+    def test_defaults_true_when_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._set_required_env(monkeypatch, "PERSONA_FRONTIER_")
+        md = tier_metadata_from_env(prefix="PERSONA_FRONTIER_")
+        assert md is not None
+        assert md.cost_verified_at_deploy is True
+
+    def test_reads_false_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._set_required_env(monkeypatch, "PERSONA_FRONTIER_")
+        monkeypatch.setenv("PERSONA_FRONTIER_COST_VERIFIED_AT_DEPLOY", "false")
+        md = tier_metadata_from_env(prefix="PERSONA_FRONTIER_")
+        assert md is not None
+        assert md.cost_verified_at_deploy is False
+
+
+class TestTierMetadataFromEnvAllTiers:
+    """T14 — parametrised verification that env-reader works for every tier prefix."""
+
+    @pytest.mark.parametrize("prefix", ["PERSONA_FRONTIER_", "PERSONA_MID_", "PERSONA_SMALL_"])
+    def test_reads_per_tier_prefix(self, monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
+        monkeypatch.setenv(f"{prefix}COST_INPUT_PER_1K", "0.3")
+        monkeypatch.setenv(f"{prefix}COST_OUTPUT_PER_1K", "1.5")
+        monkeypatch.setenv(f"{prefix}FIRST_TOKEN_LATENCY_MS", "800")
+        monkeypatch.setenv(f"{prefix}THROUGHPUT_TOKENS_PER_SEC", "60")
+        monkeypatch.setenv(f"{prefix}CONTEXT_WINDOW", "200000")
+        monkeypatch.setenv(f"{prefix}TOOL_STRENGTH", "strong")
+        monkeypatch.setenv(f"{prefix}REASONING_CAPABLE", "true")
+        md = tier_metadata_from_env(prefix=prefix)
+        assert md is not None
+        assert md.reasoning_capable is True

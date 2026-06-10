@@ -28,12 +28,14 @@ The decisions that shape this file:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
+from persona.backends.types import reasoning_as_text
 from persona.logging import get_logger
 from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
 from persona.schema.conversation import ConversationMessage
@@ -119,11 +121,18 @@ class _RoundOutcome:
     char-by-char — acceptance §6 #2) while still capturing the full text, the
     reconstructed tool calls, and the final usage for the tool sub-loop +
     episodic write-back.
+
+    Spec 20 T12 (D-20-5): ``reasoning_text`` accumulates the raw reasoning
+    delta strings emitted by ``StreamChunk.reasoning`` (str arm) across the
+    round. The runtime hashes this at write-back and discards the raw text
+    — content-hash-only persistence per the D-15-X-hard-line-filter
+    precedent.
     """
 
     text: str = ""
     calls: list[ToolCall] = field(default_factory=list)
     usage: TokenUsage | None = None
+    reasoning_text: str = ""
 
 
 class ConversationLoop:
@@ -259,6 +268,10 @@ class ConversationLoop:
         usage: TokenUsage | None = None
         assistant_text = ""
         tool_messages: list[ConversationMessage] = []
+        # Spec 20 T12 (D-20-5): accumulate reasoning text across rounds for
+        # the TurnLog content hash; raw text is hashed and DISCARDED at
+        # write-back — never persisted.
+        reasoning_buffer = ""
 
         while True:
             prompt_messages = [
@@ -279,6 +292,7 @@ class ConversationLoop:
                 yield _text_chunk(delta)
             round_text, round_calls, round_usage = outcome.text, outcome.calls, outcome.usage
             assistant_text = round_text
+            reasoning_buffer += outcome.reasoning_text
 
             at_cap = rounds >= self._max_tool_rounds
             if round_calls and not at_cap:
@@ -370,6 +384,7 @@ class ConversationLoop:
                     yield _text_chunk(delta)
                 assistant_text = final_outcome.text
                 round_usage = final_outcome.usage
+                reasoning_buffer += final_outcome.reasoning_text
 
             # Normal completion (or post-cap final text) — the text already
             # streamed delta-by-delta above. The single is_final=True chunk is
@@ -395,6 +410,7 @@ class ConversationLoop:
             compacted=compacted,
             decision=decision,
             routing_latency_ms=routing_latency_ms,
+            reasoning_text=reasoning_buffer,
         )
         now = datetime.now(UTC)
         conversation.messages.append(
@@ -557,6 +573,16 @@ class ConversationLoop:
                     first_token_recorded = True
                 outcome.text += chunk.delta
                 yield chunk.delta
+            # Spec 20 T12 (D-20-5): buffer reasoning deltas for the TurnLog
+            # content hash. str arm only — list[ReasoningBlock] is collapsed
+            # via reasoning_as_text so structured Anthropic blocks contribute
+            # plaintext to the hash without round-tripping signatures here
+            # (the AnthropicBackend list arm is reachable from the boundary
+            # type but not yet emitted by openai_compat — follow-up).
+            if chunk.reasoning is not None:
+                collapsed = reasoning_as_text(chunk.reasoning)
+                if collapsed:
+                    outcome.reasoning_text += collapsed
             if chunk.usage is not None:
                 outcome.usage = chunk.usage
             delta = chunk.tool_call_delta
@@ -651,12 +677,29 @@ class ConversationLoop:
         compacted: bool,
         decision: RoutingDecision,
         routing_latency_ms: float,
+        reasoning_text: str = "",
     ) -> None:
         prompt_tokens = usage.prompt_tokens if usage is not None else 0
         completion_tokens = usage.completion_tokens if usage is not None else 0
         cost = estimate_cost_cents(
             backend.provider_name, backend.model_name, prompt_tokens, completion_tokens
         )
+        # Spec 20 T12 (D-20-5): content-hash-only — hash the raw reasoning
+        # text and DISCARD it. Token-count approximation from whitespace
+        # split is a coarse v0.1 estimate (providers don't surface separate
+        # reasoning_tokens on the str arm); refine once
+        # ``CompletionUsage.completion_tokens_details`` lands per provider.
+        reasoning_text_hash: str | None = None
+        reasoning_total_tokens: int | None = None
+        if reasoning_text:
+            reasoning_text_hash = hashlib.sha256(reasoning_text.encode("utf-8")).hexdigest()
+            reasoning_total_tokens = len(reasoning_text.split())
+        # Spec 20 T19 (D-20-9): populate the multi-model fallback fields.
+        # The wrapper's per-call attempt ledger lives on ``last_attempts``;
+        # single-backend (non-wrapper) callers safely return an empty list
+        # via ``getattr(..., None) or []``, yielding the zero-fallback
+        # default shape (backward compat).
+        fallback_kwargs = _compute_fallback_fields(backend)
         self._turn_log_writer.write(
             TurnLog(
                 conversation_id=conversation.conversation_id,
@@ -676,5 +719,78 @@ class ConversationLoop:
                 routing_latency_ms=routing_latency_ms,
                 routing_fallback_triggered=decision.fallback_triggered,
                 routing_fallback_reason=decision.fallback_reason,
+                reasoning_total_tokens=reasoning_total_tokens,
+                reasoning_text_hash=reasoning_text_hash,
+                **fallback_kwargs,
             )
         )
+
+
+class _FallbackFields(TypedDict):
+    """Typed shape of the T19 fallback-instrumentation projection.
+
+    Matches the six additive ``tier_*`` / ``fallback_engaged`` fields on
+    :class:`TurnLog` so the helper's return value type-checks at the
+    spread-into-constructor call site under ``mypy --strict``.
+    """
+
+    tier_model_chosen: str | None
+    tier_provider_used: str | None
+    tier_fallback_count: int
+    tier_fallback_reasons: list[str]
+    tier_fallback_providers: list[str]
+    fallback_engaged: bool
+
+
+def _compute_fallback_fields(backend: ChatBackend) -> _FallbackFields:
+    """Project ``MultiModelChatBackend.last_attempts`` into TurnLog T19 fields.
+
+    Per D-20-9 privacy: only class names reach the log (NEVER error
+    messages or context dict values). Per D-20-7 the operator-dashboard
+    fallback-rate trigger consumes ``tier_fallback_count`` /
+    ``fallback_engaged`` directly.
+
+    Single-backend (non-wrapper) callers — backends that do not expose a
+    ``last_attempts`` accessor — get the zero-fallback default shape
+    (``tier_model_chosen`` + ``tier_provider_used`` carry the actually-used
+    primary backend; counts are zero; lists are empty). This is the
+    backward-compat path for legacy callers and the degenerate length-1
+    chain that ``TierRegistry`` short-circuits past the wrapper entirely
+    (D-20-17 case (a)).
+
+    For :class:`MultiModelChatBackend` callers, the winner is the backend
+    at index ``len(last_attempts)`` in the ``backends`` list: every prior
+    backend fell through (one ``AttemptRecord`` each); the next one
+    served the turn. The wrapper's own ``provider_name`` / ``model_name``
+    properties report the PRIMARY backend's identity (not the active
+    one), so we must reach into ``backends[len(attempts)]`` to record the
+    *actually-used* model on the TurnLog.
+
+    The ``AllModelsFailedError`` exhaustion case never reaches this
+    function — the loop's caller catches the error before write-back —
+    but we defensively guard against an over-length attempt ledger by
+    falling back to the wrapper's reported identity.
+    """
+    attempts = getattr(backend, "last_attempts", None) or []
+    fallback_reasons: list[str] = [a.last_error_class for a in attempts]
+    fallback_providers: list[str] = [a.provider for a in attempts]
+    count = len(fallback_reasons)
+    # Resolve the actually-used backend's identity when this is the
+    # multi-model wrapper. ``getattr(..., "backends", None)`` returns the
+    # ordered chain on the wrapper, ``None`` on bare backends.
+    wrapper_backends = getattr(backend, "backends", None)
+    if wrapper_backends is not None and 0 <= count < len(wrapper_backends):
+        winner = wrapper_backends[count]
+        chosen_model: str | None = winner.model_name
+        chosen_provider: str | None = winner.provider_name
+    else:
+        chosen_model = backend.model_name
+        chosen_provider = backend.provider_name
+    return _FallbackFields(
+        tier_model_chosen=chosen_model,
+        tier_provider_used=chosen_provider,
+        tier_fallback_count=count,
+        tier_fallback_reasons=fallback_reasons,
+        tier_fallback_providers=fallback_providers,
+        fallback_engaged=count > 0,
+    )

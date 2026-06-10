@@ -7,10 +7,12 @@ from typing import Any
 import pytest
 from persona.backends.types import (
     ChatResponse,
+    ReasoningBlock,
     StreamChunk,
     TokenUsage,
     ToolCallDelta,
     ToolSpec,
+    reasoning_as_text,
     tool_spec_from_tool,
 )
 from persona.schema.tools import ToolCall, ToolResult
@@ -213,3 +215,92 @@ class TestToolSpecFromTool:
         spec = tool_spec_from_tool(source)
         source.parameters_schema["a"] = 999
         assert spec.parameters == {"a": 1}
+
+
+# -----------------------------------------------------------------------------
+# Spec 20 T12 — Reasoning surface (D-20-2)
+# -----------------------------------------------------------------------------
+
+
+class TestReasoningBlock:
+    def test_construct_thinking_block(self) -> None:
+        b = ReasoningBlock(kind="thinking", text="step 1", signature="sig-abc", index=0)
+        assert b.kind == "thinking"
+        assert b.text == "step 1"
+        assert b.signature == "sig-abc"
+        assert b.index == 0
+        assert b.data is None
+        assert b.id is None
+
+    def test_construct_redacted_block(self) -> None:
+        b = ReasoningBlock(kind="redacted_thinking", data="opaque-blob")
+        assert b.kind == "redacted_thinking"
+        assert b.text is None
+        assert b.data == "opaque-blob"
+
+    def test_frozen(self) -> None:
+        b = ReasoningBlock(kind="thinking", text="x")
+        with pytest.raises(ValidationError):
+            b.text = "y"  # type: ignore[misc]
+
+    def test_extra_fields_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ReasoningBlock.model_validate({"kind": "thinking", "text": "x", "extra": "nope"})
+
+    def test_kind_literal_enforced(self) -> None:
+        with pytest.raises(ValidationError):
+            ReasoningBlock(kind="bogus")  # type: ignore[arg-type]
+
+
+class TestReasoningAsText:
+    def test_none_returns_none(self) -> None:
+        assert reasoning_as_text(None) is None
+
+    def test_str_returns_str(self) -> None:
+        assert reasoning_as_text("foo") == "foo"
+
+    def test_concatenates_block_text(self) -> None:
+        blocks = [
+            ReasoningBlock(kind="thinking", text="a"),
+            ReasoningBlock(kind="thinking", text="b"),
+        ]
+        assert reasoning_as_text(blocks) == "ab"
+
+    def test_skips_blocks_without_text(self) -> None:
+        blocks = [
+            ReasoningBlock(kind="thinking", text="a"),
+            ReasoningBlock(kind="redacted_thinking", data="opaque"),
+            ReasoningBlock(kind="thinking", text="b"),
+        ]
+        assert reasoning_as_text(blocks) == "ab"
+
+    def test_all_redacted_collapses_to_none(self) -> None:
+        blocks = [ReasoningBlock(kind="redacted_thinking", data="opaque")]
+        assert reasoning_as_text(blocks) is None
+
+    def test_empty_list_collapses_to_none(self) -> None:
+        assert reasoning_as_text([]) is None
+
+
+class TestStreamChunkReasoning:
+    def test_default_reasoning_is_none(self) -> None:
+        c = StreamChunk(delta="hi")
+        assert c.reasoning is None
+
+    def test_str_arm_accepted(self) -> None:
+        c = StreamChunk(delta="hi", reasoning="thinking step")
+        assert c.reasoning == "thinking step"
+
+    def test_list_arm_accepted(self) -> None:
+        blocks = [ReasoningBlock(kind="thinking", text="a", signature="sig-1")]
+        c = StreamChunk(delta="hi", reasoning=blocks)
+        assert isinstance(c.reasoning, list)
+        assert c.reasoning[0].signature == "sig-1"
+
+    def test_invalid_type_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            StreamChunk(delta="hi", reasoning=123)  # type: ignore[arg-type]
+
+    def test_extra_fields_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            StreamChunk.model_validate({"delta": "hi", "extra": "nope"})

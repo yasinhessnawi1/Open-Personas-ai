@@ -12,25 +12,80 @@ the Protocol / config / boundary types do not pay the import cost of the
 provider SDKs (``openai`` is already a Spec 02 dep but ``fal-client`` is
 new in T07).
 
+Spec 20 T17 adds :func:`load_image_backend_from_env`, the env-driven
+entry point that mirrors :func:`persona_runtime.tier.tier_registry_from_env`:
+when ``PERSONA_IMAGEGEN_MODELS`` is set, the function parses the CSV via
+T11's :func:`persona.backends.credentials.parse_models_list`, resolves
+each provider's credentials, and wraps N≥2 resolved backends in a
+:class:`~persona.imagegen.multi_model_image.MultiModelImageBackend`. The
+backward-compat single-backend triplet path falls through to
+:func:`load_image_backend` with an :class:`ImageBackendConfig`
+constructed from the existing ``PERSONA_IMAGEGEN_*`` triplet.
+
 References:
-    docs/specs/phase2/spec_15/decisions.md gate paragraph #1 + D-15-1
-    (provider set ``Literal["openai", "fal"]``).
+    docs/specs/phase2/spec_15/decisions.md gate paragraph #1 + D-15-1.
+    docs/specs/phase2/spec_20/decisions.md D-20-15 + D-20-17 + D-20-18.
 """
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
+from pydantic import SecretStr
+
+from persona.backends.credentials import (
+    ProviderCredentialResolver,
+)
+from persona.backends.errors import (
+    LocalProviderInModelsListError,
+    MalformedTierModelsError,
+    ProviderCredentialMissingError,
+    TierNotConfiguredError,
+)
+from persona.imagegen.config import DEFAULT_BASE_URLS, ImageBackendConfig
 from persona.imagegen.errors import ImageProviderError
+from persona.logging import get_logger
 
 if TYPE_CHECKING:
-    from persona.imagegen.config import ImageBackendConfig
     from persona.imagegen.protocol import ImageBackend
 
-__all__ = ["load_image_backend"]
+__all__ = ["load_image_backend", "load_image_backend_from_env"]
+
+_LOG = get_logger("imagegen.factory")
+
+_IMAGEGEN_TIER_NAME: str = "imagegen"
+_MODELS_ENV_VAR: str = "PERSONA_IMAGEGEN_MODELS"
+_TRIPLET_VARS: tuple[str, str, str] = (
+    "PERSONA_IMAGEGEN_PROVIDER",
+    "PERSONA_IMAGEGEN_MODEL",
+    "PERSONA_IMAGEGEN_API_KEY",
+)
+_IMAGE_PROVIDERS: frozenset[str] = frozenset({"openai", "fal", "nvidia"})
+"""Closed set of providers with concrete :class:`ImageBackend` implementations.
+
+T11's :func:`persona.backends.credentials.parse_models_list` validates
+against the chat-side Provider Literal (anthropic / openai / deepseek /
+groq / together / nvidia), which excludes ``fal`` (image-only). The
+image-gen factory needs its own parser that validates against the
+image-side provider set instead. The parser mirrors T11's D-20-17 case (d)
+failure modes verbatim — same ``reason`` codes, same context shape — so
+operator-facing surfaces stay symmetric across chat and image-gen.
+"""
+
+_LOCAL_PROVIDERS_REJECTED: frozenset[str] = frozenset({"local", "ollama"})
+"""D-20-18 — same EXPLICIT REJECT set as the chat-side parser.
+
+``local`` / ``ollama`` have no image-backend implementations either, but
+we keep the explicit reject here so the error class
+(:class:`LocalProviderInModelsListError`) and ``hint`` carry forward
+consistently across surfaces.
+"""
+
+_LOCAL_REJECT_HINT: str = "use PERSONA_IMAGEGEN_PROVIDER single-backend fast path"
 
 
-_SUPPORTED_PROVIDERS: tuple[str, ...] = ("openai", "fal")
+_SUPPORTED_PROVIDERS: tuple[str, ...] = ("openai", "fal", "nvidia")
 """Closed set of provider identifiers shipped at v0.1 (D-15-1).
 
 Kept in sync with :data:`persona.imagegen.config.ImageProvider`; the
@@ -90,8 +145,244 @@ def load_image_backend(config: ImageBackendConfig) -> ImageBackend:
         )
 
         return FalImageBackend(config)
+    if provider == "nvidia":
+        # Spec 20 T10 — NVIDIA Build Catalog. The concrete backend's
+        # ``__init__`` fail-fasts on missing api_key, on the
+        # D-20-X-flux-1-dev-license-block model set, and on unknown
+        # models (``reason="unsupported_model"``).
+        from persona.imagegen.nvidia_image import (
+            NvidiaImageBackend,
+        )
+
+        return NvidiaImageBackend(config)
     supported = ", ".join(_SUPPORTED_PROVIDERS)
     raise ImageProviderError(
         f"unknown image provider {provider!r}; expected one of {supported}",
         context={"provider": str(provider), "supported": supported},
+    )
+
+
+def _parse_image_models_list(raw_value: str) -> list[tuple[str, str]]:
+    """Parse ``PERSONA_IMAGEGEN_MODELS`` into ``(provider, model)`` slots.
+
+    Mirrors :func:`persona.backends.credentials.parse_models_list` verbatim
+    (same ``reason`` codes, same exception classes, same context shape) but
+    validates the provider token against :data:`_IMAGE_PROVIDERS` instead
+    of the chat-side Provider Literal. T11's parser cannot accept ``fal``
+    (image-only) so the image-gen factory carries its own narrow validator.
+
+    Args:
+        raw_value: Raw env-var value as read by the caller.
+
+    Returns:
+        Parsed list of ``(provider, model)`` tuples preserving CSV order
+        (fallback chain order is meaningful — see D-20-4).
+
+    Raises:
+        MalformedTierModelsError: D-20-17 case (d) — empty input, empty
+            CSV entry, missing slash, unknown provider (outside
+            :data:`_IMAGE_PROVIDERS`), or empty model component.
+        LocalProviderInModelsListError: D-20-18 — ``local`` or ``ollama``
+            token in any slot.
+    """
+    stripped = raw_value.strip()
+    if not stripped:
+        raise MalformedTierModelsError(
+            f"PERSONA_{_IMAGEGEN_TIER_NAME.upper()}_MODELS is empty after strip",
+            context={
+                "tier": _IMAGEGEN_TIER_NAME,
+                "value": raw_value,
+                "reason": "empty_after_strip",
+            },
+        )
+
+    results: list[tuple[str, str]] = []
+    for position, raw_entry in enumerate(stripped.split(",")):
+        entry = raw_entry.strip()
+        if not entry:
+            raise MalformedTierModelsError(
+                f"PERSONA_{_IMAGEGEN_TIER_NAME.upper()}_MODELS has empty CSV "
+                f"entry at position {position}",
+                context={
+                    "tier": _IMAGEGEN_TIER_NAME,
+                    "value": raw_value,
+                    "reason": "empty_csv_entry",
+                    "position": str(position),
+                },
+            )
+        if "/" not in entry:
+            raise MalformedTierModelsError(
+                f"PERSONA_{_IMAGEGEN_TIER_NAME.upper()}_MODELS entry "
+                f"{entry!r} missing slash separator at position {position}",
+                context={
+                    "tier": _IMAGEGEN_TIER_NAME,
+                    "value": raw_value,
+                    "reason": "missing_slash",
+                    "position": str(position),
+                },
+            )
+        provider_token, _, model_token = entry.partition("/")
+        provider_token = provider_token.strip()
+        model_token = model_token.strip()
+        is_image_provider = provider_token in _IMAGE_PROVIDERS
+        is_local_reject = provider_token in _LOCAL_PROVIDERS_REJECTED
+        if not is_image_provider and not is_local_reject:
+            supported = ", ".join(sorted(_IMAGE_PROVIDERS))
+            raise MalformedTierModelsError(
+                f"PERSONA_{_IMAGEGEN_TIER_NAME.upper()}_MODELS unknown provider "
+                f"{provider_token!r} at position {position}; "
+                f"expected one of {supported}",
+                context={
+                    "tier": _IMAGEGEN_TIER_NAME,
+                    "value": raw_value,
+                    "reason": "unknown_provider",
+                    "position": str(position),
+                    "supported": supported,
+                },
+            )
+        if not model_token:
+            raise MalformedTierModelsError(
+                f"PERSONA_{_IMAGEGEN_TIER_NAME.upper()}_MODELS empty model "
+                f"after slash at position {position}",
+                context={
+                    "tier": _IMAGEGEN_TIER_NAME,
+                    "value": raw_value,
+                    "reason": "empty_model",
+                    "position": str(position),
+                },
+            )
+        if provider_token in _LOCAL_PROVIDERS_REJECTED:
+            # D-20-18 EXPLICIT REJECT — same shape as T11's chat-side parser.
+            raise LocalProviderInModelsListError(
+                f"PERSONA_{_IMAGEGEN_TIER_NAME.upper()}_MODELS rejects "
+                f"{provider_token!r} at position {position}",
+                context={
+                    "tier": _IMAGEGEN_TIER_NAME,
+                    "position": str(position),
+                    "hint": _LOCAL_REJECT_HINT,
+                },
+            )
+        results.append((provider_token, model_token))
+    return results
+
+
+def load_image_backend_from_env() -> ImageBackend:
+    """Build a single :class:`ImageBackend` from the environment (D-20-17).
+
+    Four-case precedence (Spec 20 D-20-17) mirroring the chat-side
+    :func:`persona_runtime.tier.tier_registry_from_env`:
+
+    * **(a) MODELS-only set** — ``PERSONA_IMAGEGEN_MODELS`` parses to N
+      slots; build a :class:`~persona.imagegen.multi_model_image.MultiModelImageBackend`
+      wrapper around the N resolved backends (or return the bare backend
+      when N==1 after credential resolution). No log.
+    * **(b) Triplet-only set** — ``PERSONA_IMAGEGEN_PROVIDER`` +
+      ``..._MODEL`` + ``..._API_KEY`` all set; build a single backend via
+      :func:`load_image_backend` (backward-compat fast path). No log.
+    * **(c) Both set** — MODELS wins; INFO log identifies the ignored
+      triplet vars (operator-mid-migration aid).
+    * **(d) Malformed MODELS** — :class:`MalformedTierModelsError` propagates
+      from the parser.
+
+    D-20-15 per-slot disposition (ALL fail → :class:`TierNotConfiguredError`;
+    ≥1 resolves → wrapper with remaining, WARN per skipped).
+
+    D-20-18: ``local`` / ``ollama`` tokens rejected by
+    :func:`parse_models_list` (irrelevant for image-gen but the parser is
+    shared with the chat side).
+
+    Returns:
+        Either a bare :class:`ImageBackend` (case (b), or case (a) with
+        N==1 after credential resolution) or a wrapping
+        :class:`MultiModelImageBackend` (case (a)/(c) with N≥2).
+
+    Raises:
+        TierNotConfiguredError: D-20-15 ALL-fail branch — every provider in
+            ``PERSONA_IMAGEGEN_MODELS`` lacked a credential.
+        ImageProviderError: A MODELS-list slot referenced a provider with no
+            :class:`ImageBackend` implementation (chat-only provider like
+            ``anthropic``, ``deepseek``, ``groq``, ``together``).
+        MalformedTierModelsError: D-20-17 case (d).
+        LocalProviderInModelsListError: D-20-18 rejection.
+    """
+    env_snapshot: dict[str, str] = dict(os.environ)
+    raw_models = env_snapshot.get(_MODELS_ENV_VAR, "")
+    if not raw_models.strip():
+        # Cases (b): no MODELS — fall back to the legacy triplet path.
+        # `ImageBackendConfig.from_env` reads the triplet; the concrete
+        # backend's `__init__` fail-fasts on missing api_key.
+        return load_image_backend(ImageBackendConfig.from_env())
+
+    # Cases (a) / (c): MODELS wins. D-20-17 case (d) is raised by the parser.
+    # Mirror T11's :func:`parse_models_list` discipline but validate against
+    # :data:`_IMAGE_PROVIDERS` (image-gen surface narrows the chat-side
+    # Provider Literal — ``fal`` is image-only and not in the chat Literal,
+    # so T11's parser can't accept it).
+    parsed = _parse_image_models_list(raw_models)
+
+    # D-20-17 case (c): both forms set — emit INFO log naming ignored triplet vars.
+    ignored = sorted(var for var in _TRIPLET_VARS if env_snapshot.get(var, "").strip())
+    if ignored:
+        _LOG.info(
+            "PERSONA_IMAGEGEN_MODELS takes precedence; ignoring triplet vars "
+            "{ignored} (D-20-17 case (c))",
+            ignored=",".join(ignored),
+        )
+
+    resolver = ProviderCredentialResolver(env=env_snapshot)
+    resolved_backends: list[ImageBackend] = []
+    skipped: list[tuple[str, str]] = []
+    for position, (provider, model) in enumerate(parsed):
+        try:
+            creds = resolver.resolve(provider)  # type: ignore[arg-type]
+        except ProviderCredentialMissingError as exc:
+            env_var = exc.context.get("env_var", "")
+            _LOG.warning(
+                "provider credential missing; skipping image backend slot "
+                "tier={tier} provider={provider} env_var={env_var} "
+                "position={position}/{total}",
+                tier=_IMAGEGEN_TIER_NAME,
+                provider=provider,
+                env_var=env_var,
+                position=position,
+                total=len(parsed),
+            )
+            skipped.append((provider, env_var))
+            continue
+        # Synthesize a per-slot ImageBackendConfig. The provider's default
+        # base URL is sourced from :data:`DEFAULT_BASE_URLS` if the resolver
+        # didn't carry one (e.g., the per-provider env var was unset).
+        slot_base_url = creds.base_url or DEFAULT_BASE_URLS.get(provider)
+        slot_config = ImageBackendConfig(
+            provider=provider,  # type: ignore[arg-type]
+            model=model,
+            api_key=creds.api_key if creds.api_key is not None else SecretStr(""),
+            base_url=slot_base_url,
+        )
+        resolved_backends.append(load_image_backend(slot_config))
+
+    if not resolved_backends:
+        # D-20-15 ALL-fail branch — fail-loud with operator-actionable context.
+        raise TierNotConfiguredError(
+            f"tier {_IMAGEGEN_TIER_NAME!r} has no resolvable backends",
+            context={
+                "tier": _IMAGEGEN_TIER_NAME,
+                "configured_models": ",".join(f"{p}/{m}" for p, m in parsed),
+                "missing_providers": ",".join(p for p, _ in skipped),
+                "consulted_env_vars": ",".join(v for _, v in skipped if v),
+            },
+        )
+
+    if len(resolved_backends) == 1:
+        # Degenerate single-backend fast path — bypass wrapper overhead.
+        return resolved_backends[0]
+
+    # Wrap N≥2 in MultiModelImageBackend. Lazy import keeps the
+    # :mod:`persona.imagegen` package importable for callers that don't
+    # need the wrapper (parallel of the lazy concrete-backend imports above).
+    from persona.imagegen.multi_model_image import MultiModelImageBackend
+
+    return MultiModelImageBackend(
+        backends=resolved_backends,
+        tier_name=_IMAGEGEN_TIER_NAME,
     )

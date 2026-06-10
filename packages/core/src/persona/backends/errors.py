@@ -9,6 +9,47 @@ our types rather than on a transitive dependency.
 
 See ``docs/specs/spec_02/decisions.md`` D-02-1 for the
 ``BackendTimeoutError`` rationale and D-02-8 for ``retry_after_s`` semantics.
+
+Error class hierarchy partition (Spec 20 D-20-16 — settled)
+-----------------------------------------------------------
+
+This module ships three distinct error-class families. The partition matters
+for callers writing ``except`` clauses — ``except ProviderError`` catches
+HTTP/SDK failures but does NOT catch wrapper/config failures; that is
+intentional, since wrapper/config errors should fail-loud at the application
+layer rather than be swept into generic retry handlers.
+
+1. **Provider-layer errors** root at :class:`ProviderError(PersonaError)`.
+   Backends raise these for HTTP/SDK failures: :class:`AuthenticationError`,
+   :class:`RateLimitError`, :class:`ModelNotFoundError`,
+   :class:`BackendTimeoutError`. The :class:`MultiModelChatBackend`
+   classifier (Spec 20 T15) buckets these per D-20-9 into SURFACE /
+   RETRY-THEN-FALLBACK / FALLBACK-NO-RETRY.
+
+2. **Wrapper-layer + configuration-layer errors** root at
+   :class:`PersonaError` directly (NOT :class:`ProviderError`):
+   :class:`AllModelsFailedError` (wrapper-layer, Spec 20 T15/T16),
+   :class:`ProviderCredentialMissingError` (config-layer, D-20-15),
+   :class:`LocalProviderInModelsListError` (config-layer, D-20-18),
+   :class:`MalformedTierModelsError` (config-layer, D-20-17),
+   :class:`IncompleteTierConfigError` (config-layer, D-20-17),
+   :class:`TierNotConfiguredError` (config-layer, D-20-15 ALL-fail branch).
+   These represent failures of the composition layer
+   (:class:`persona.backends.credentials.ProviderCredentialResolver`,
+   :class:`persona.backends.tier_registry.TierRegistry`,
+   :class:`persona.backends.multi_model_chat.MultiModelChatBackend`)
+   where the failure is not provider-side.
+
+3. **Router-vision errors** root at
+   :class:`RoutingConstraintsUnsatisfiableError(PersonaError)` (Spec 18
+   generalisation): :class:`NoVisionTierConfiguredError`, plus
+   :class:`BackendVisionNotSupportedError(PersonaError)` sibling for
+   backend-dispatch failures.
+
+The partition is cemented by parametrized contract tests in
+``packages/core/tests/unit/backends/test_errors_hierarchy.py`` — any
+future amendment that reparents a wrapper/config error to
+:class:`ProviderError` will trip those tests immediately.
 """
 
 from __future__ import annotations
@@ -16,14 +57,20 @@ from __future__ import annotations
 from persona.errors import PersonaError
 
 __all__ = [
+    "AllModelsFailedError",
     "AuthenticationError",
     "BackendTimeoutError",
     "BackendVisionNotSupportedError",
+    "IncompleteTierConfigError",
+    "LocalProviderInModelsListError",
+    "MalformedTierModelsError",
     "ModelNotFoundError",
     "NoVisionTierConfiguredError",
+    "ProviderCredentialMissingError",
     "ProviderError",
     "RateLimitError",
     "RoutingConstraintsUnsatisfiableError",
+    "TierNotConfiguredError",
 ]
 
 
@@ -137,6 +184,105 @@ class RoutingConstraintsUnsatisfiableError(PersonaError):
     vision-specific case (subclass relationship — the existing
     :class:`isinstance` checks at ``test_router_vision.py:200-203`` and any
     downstream callers keep working).
+    """
+
+
+class ProviderCredentialMissingError(PersonaError):
+    """Raised when a provider in a MODELS list has no API key configured.
+
+    Spec 20 D-20-15 + D-20-16: wrapper/configuration-layer error (slots under
+    :class:`PersonaError`, NOT under :class:`ProviderError` — provider-layer
+    errors describe a live API call, this describes a configuration gap).
+
+    The ``ProviderCredentialResolver`` raises this when an API-keyed provider's
+    ``PERSONA_<PROVIDER>_API_KEY`` env var is absent. ``TierRegistry`` catches
+    per-slot at construction; if at least one provider in the tier's MODELS
+    list resolves, it WARNs and skips this slot. If every slot fails, the
+    registry re-raises as :class:`TierNotConfiguredError`.
+
+    Context: ``{"provider", "env_var"}``.
+    """
+
+
+class LocalProviderInModelsListError(PersonaError):
+    """Raised when ``local`` or ``ollama`` appears in ``PERSONA_<TIER>_MODELS``.
+
+    Spec 20 D-20-18 + D-20-16: wrapper/configuration-layer error. Three
+    converging justifications drive the EXPLICIT REJECT: (1) the Provider
+    Literal vs ``DEFAULT_BASE_URLS`` asymmetry — ``local`` has no HTTP
+    transport; (2) GPU-memory exclusivity makes cross-provider fallback
+    semantics unsound for in-process weights; (3) no operator demand.
+
+    The ``hint`` context key routes operators to the correct single-backend
+    fast path (``PERSONA_LOCAL_MODEL_ID`` for ``local``, the per-tier
+    ``PERSONA_<TIER>_PROVIDER=ollama`` triplet for ``ollama``).
+
+    Context: ``{"tier", "position", "hint"}``.
+    """
+
+
+class MalformedTierModelsError(PersonaError):
+    """Raised when ``PERSONA_<TIER>_MODELS`` cannot be parsed.
+
+    Spec 20 D-20-17 case (d) + D-20-16: wrapper/configuration-layer error.
+    Parser surfaces a structured ``reason`` so operators see which entry
+    failed and why. Reasons: ``empty_after_strip`` / ``empty_csv_entry`` /
+    ``missing_slash`` / ``unknown_provider`` / ``empty_model``.
+
+    Context: ``{"tier", "value", "reason"}`` (plus ``"position"`` when the
+    failure is a specific CSV slot).
+    """
+
+
+class IncompleteTierConfigError(PersonaError):
+    """Raised when 1-2 of the 3 triplet vars are set with no MODELS list.
+
+    Spec 20 D-20-17 + D-20-16: wrapper/configuration-layer error. The
+    backward-compat path (case (b)) requires *all three* of
+    ``PERSONA_<TIER>_PROVIDER``, ``PERSONA_<TIER>_MODEL``,
+    ``PERSONA_<TIER>_API_KEY`` to be set. A partial set is almost certainly
+    an operator mid-migration mistake; failing loud at construction beats
+    silently dropping the partial config.
+
+    Context: ``{"tier", "missing_vars"}``.
+    """
+
+
+class TierNotConfiguredError(PersonaError):
+    """Raised when every provider in a tier's MODELS list fails to resolve.
+
+    Spec 20 D-20-15 ALL-fail branch + D-20-16: wrapper/configuration-layer
+    error. Mirrors Spec 05 D-05-3's fail-fast-at-construction discipline:
+    a tier with no usable backend is a startup error, not a runtime error.
+
+    Context: ``{"tier", "missing_providers", "configured_models",
+    "consulted_env_vars"}``.
+    """
+
+
+class AllModelsFailedError(PersonaError):
+    """Raised by :class:`MultiModelChatBackend` when every backend exhausts.
+
+    Spec 20 D-20-16: wrapper-layer error class (slots under
+    :class:`PersonaError`, NOT under :class:`ProviderError` — the wrapper
+    has no live API call of its own; it composes provider-layer attempts).
+
+    Emitted only after the wrapper has walked the full ordered backend list
+    per the D-20-9 three-bucket classifier, applying D-20-10 N=1 same-model
+    retry to RETRY-THEN-FALLBACK errors and falling through immediately on
+    FALLBACK-NO-RETRY errors. SURFACE-bucket errors short-circuit the walk
+    (the wrapper re-raises and never reaches this class).
+
+    Context shape:
+
+    * ``tier`` — configured tier name passed at construction (empty string
+      if unnamed).
+    * ``attempt_count`` — string-formatted number of attempts.
+    * ``attempts_json`` — string repr of the per-attempt
+      :class:`AttemptRecord` dicts (provider, model, last_error_class,
+      last_error_status_code, retried_same_model).
+    * ``final_error_class`` — class name of the last backend's terminal
+      exception, repeated for fast log filtering.
     """
 
 

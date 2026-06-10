@@ -33,6 +33,10 @@ from persona.backends.errors import (
 from persona_runtime.routing.heuristic import HeuristicRouter
 from persona_runtime.routing.latency import FirstTokenLatencyTracker
 from persona_runtime.routing.layer1 import apply_constraint_filter
+from persona_runtime.routing.nvidia_models import (
+    NVIDIA_LAUNCH_MODEL_METADATA,
+    nvidia_metadata_for_model,
+)
 from persona_runtime.routing.protocol import Router, RouterScorer
 from persona_runtime.routing.types import (
     RoutingContext,
@@ -44,6 +48,7 @@ from persona_runtime.routing.unified import UnifiedRouter
 __all__ = [
     "FirstTokenLatencyTracker",
     "HeuristicRouter",
+    "NVIDIA_LAUNCH_MODEL_METADATA",
     "NoVisionTierConfiguredError",
     "Router",
     "RouterScorer",
@@ -53,4 +58,5 @@ __all__ = [
     "RoutingProfile",
     "UnifiedRouter",
     "apply_constraint_filter",
+    "nvidia_metadata_for_model",
 ]

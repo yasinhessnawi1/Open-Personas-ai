@@ -32,6 +32,7 @@ from persona.backends.openai_compat import (
     _message_to_anthropic,
     _message_to_openai,
     _native_tools_supported,
+    _strip_reasoning_for_provider,
 )
 from persona.backends.protocol import ChatBackend
 from persona.backends.types import ChatResponse, StreamChunk, ToolSpec
@@ -84,6 +85,30 @@ class TestCapabilityMatrix:
 
     def test_unsupported_groq_unlisted_model(self) -> None:
         assert _native_tools_supported("groq", "whisper-large-v3") is False
+
+    def test_nvidia_is_frozenset_with_launch_models(self) -> None:
+        # Spec 20 T09 / D-20-1 launch set — three Nemotron models advertise
+        # native tool calling at launch. Unlisted nvidia models fall through
+        # to the prompt-based shim (same allow-list semantics as groq /
+        # deepseek).
+        cap = _NATIVE_TOOLS_CAPABILITY["nvidia"]
+        assert isinstance(cap, frozenset)
+        assert cap == frozenset(
+            {
+                "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                "nvidia/nemotron-3-super-120b-a12b",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            }
+        )
+
+    def test_supported_nvidia_listed_model(self) -> None:
+        assert _native_tools_supported("nvidia", "nvidia/llama-3.3-nemotron-super-49b-v1.5") is True
+
+    def test_unsupported_nvidia_unlisted_model_falls_through_to_shim(self) -> None:
+        # Allowlisted provider — unknown model returns False so the
+        # OpenAICompatibleBackend uses the prompt-based shim instead of
+        # asking the provider for native tool calls it can't service.
+        assert _native_tools_supported("nvidia", "nvidia/some-unknown-model") is False
 
 
 class TestToolCallMessageProtocol:
@@ -350,6 +375,40 @@ class TestConstruction:
         backend = OpenAICompatibleBackend(config)
         # _openai client base_url string is configured.
         assert backend._openai is not None  # type: ignore[attr-defined]
+
+    def test_nvidia_constructs_with_launch_model(self) -> None:
+        # Spec 20 T09 — D-20-X-nvidia-allow-set-extend invariant. The four
+        # anchors (Provider Literal, DEFAULT_BASE_URLS, both capability
+        # matrices, allow-set) must land atomically. Missing any one raises
+        # ProviderError here — this test gates that they all landed.
+        backend = OpenAICompatibleBackend(
+            _config("nvidia", model="nvidia/llama-3.3-nemotron-super-49b-v1.5")
+        )
+        assert isinstance(backend, ChatBackend)
+        assert backend.provider_name == "nvidia"
+        assert backend.supports_native_tools is True
+        # NVIDIA dispatches through the openai SDK branch (non-default base_url),
+        # same as deepseek / groq / together.
+        assert backend._openai is not None  # type: ignore[attr-defined]
+        assert backend._anthropic is None  # type: ignore[attr-defined]
+
+    def test_nvidia_constructs_with_unlisted_model_uses_shim(self) -> None:
+        # Allowlisted provider — unknown model still constructs cleanly but
+        # routes via the prompt-based shim (mirrors groq's behaviour).
+        backend = OpenAICompatibleBackend(_config("nvidia", model="nvidia/some-unknown-model"))
+        assert backend.supports_native_tools is False
+        assert backend.provider_name == "nvidia"
+
+    def test_nvidia_default_base_url_resolves(self) -> None:
+        # NVIDIA's hosted catalog URL — verify the openai client received the
+        # /v1/-terminated base URL from DEFAULT_BASE_URLS.
+        backend = OpenAICompatibleBackend(
+            _config("nvidia", model="nvidia/llama-3.3-nemotron-super-49b-v1.5")
+        )
+        assert backend._openai is not None  # type: ignore[attr-defined]
+        assert "integrate.api.nvidia.com" in str(
+            backend._openai.base_url  # type: ignore[union-attr]
+        )
 
     def test_anthropic_base_url_has_no_doubled_v1(self) -> None:
         # Regression for D-10-9: the `anthropic` SDK appends its own
@@ -846,3 +905,176 @@ class TestAnthropicRealCall:
         # A non-empty reply means the request reached /v1/messages (not /v1/v1/...).
         assert response.content.strip()
         assert response.provider == "anthropic"
+
+
+# -----------------------------------------------------------------------------
+# Spec 20 T12 — Reasoning surface (D-20-2, D-20-3, D-20-X-*)
+# -----------------------------------------------------------------------------
+
+
+def _openai_stream_chunk_with_reasoning(
+    *,
+    content: str = "",
+    reasoning_content: str | None = None,
+    reasoning: str | None = None,
+    usage: Any | None = None,
+) -> Any:
+    """Build a fake openai-py ChoiceDelta carrying reasoning via either field name.
+
+    D-20-X-nemotron-field-name-dual-probe: NVIDIA Nemotron canonical
+    ``reasoning_content`` + Nano-Omni VLM alias ``reasoning`` arrive as
+    Pydantic extras (not statically typed) on the chunk delta.
+    """
+    chunk = MagicMock()
+    delta = MagicMock(spec=["content", "tool_calls", "reasoning_content", "reasoning"])
+    delta.content = content
+    delta.tool_calls = []
+    delta.reasoning_content = reasoning_content
+    delta.reasoning = reasoning
+    choice = MagicMock()
+    choice.delta = delta
+    chunk.choices = [choice]
+    chunk.usage = usage
+    return chunk
+
+
+class TestNemotronDualProbeStream:
+    @pytest.mark.asyncio
+    async def test_reasoning_content_field_captured(self) -> None:
+        backend = OpenAICompatibleBackend(_config("nvidia"))
+        usage = MagicMock(prompt_tokens=1, completion_tokens=2)
+        chunks_in = [
+            _openai_stream_chunk_with_reasoning(
+                content="hello", reasoning_content="step-1 ", reasoning=None
+            ),
+            _openai_stream_chunk_with_reasoning(usage=usage),
+        ]
+        with patch.object(
+            backend._openai.chat.completions,  # type: ignore[union-attr]
+            "create",
+            new=AsyncMock(return_value=_async_iter(chunks_in)),
+        ):
+            collected: list[StreamChunk] = []
+            async for c in backend.chat_stream([_user("hi")]):
+                collected.append(c)
+        reasoning_chunks = [c for c in collected if c.reasoning is not None]
+        assert reasoning_chunks, "no reasoning surfaced"
+        assert reasoning_chunks[0].reasoning == "step-1 "
+
+    @pytest.mark.asyncio
+    async def test_reasoning_alias_field_captured(self) -> None:
+        backend = OpenAICompatibleBackend(_config("nvidia"))
+        usage = MagicMock(prompt_tokens=1, completion_tokens=2)
+        chunks_in = [
+            _openai_stream_chunk_with_reasoning(
+                content="hi", reasoning_content=None, reasoning="nano-omni-thought"
+            ),
+            _openai_stream_chunk_with_reasoning(usage=usage),
+        ]
+        with patch.object(
+            backend._openai.chat.completions,  # type: ignore[union-attr]
+            "create",
+            new=AsyncMock(return_value=_async_iter(chunks_in)),
+        ):
+            collected: list[StreamChunk] = []
+            async for c in backend.chat_stream([_user("hi")]):
+                collected.append(c)
+        reasoning_chunks = [c for c in collected if c.reasoning is not None]
+        assert reasoning_chunks
+        assert reasoning_chunks[0].reasoning == "nano-omni-thought"
+
+    @pytest.mark.asyncio
+    async def test_reasoning_only_chunk_no_text(self) -> None:
+        backend = OpenAICompatibleBackend(_config("nvidia"))
+        usage = MagicMock(prompt_tokens=1, completion_tokens=2)
+        chunks_in = [
+            _openai_stream_chunk_with_reasoning(
+                content="", reasoning_content="silent-thought", reasoning=None
+            ),
+            _openai_stream_chunk_with_reasoning(content="answer", usage=usage),
+        ]
+        with patch.object(
+            backend._openai.chat.completions,  # type: ignore[union-attr]
+            "create",
+            new=AsyncMock(return_value=_async_iter(chunks_in)),
+        ):
+            collected: list[StreamChunk] = []
+            async for c in backend.chat_stream([_user("hi")]):
+                collected.append(c)
+        reasoning_chunks = [c for c in collected if c.reasoning is not None]
+        assert any(c.reasoning == "silent-thought" for c in reasoning_chunks)
+
+
+class TestExtraBodyPassThrough:
+    @pytest.mark.asyncio
+    async def test_chat_passes_extra_body_when_set(self) -> None:
+        backend = OpenAICompatibleBackend(
+            BackendConfig(
+                provider="nvidia",
+                model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                api_key=SecretStr("k"),
+                extra_body={"chat_template_kwargs": {"thinking": True}},
+            )
+        )
+        create_mock = AsyncMock(return_value=_mock_openai_chat_completion())
+        with patch.object(
+            backend._openai.chat.completions,  # type: ignore[union-attr]
+            "create",
+            new=create_mock,
+        ):
+            await backend.chat([_user("hi")])
+        kwargs = create_mock.call_args.kwargs
+        assert kwargs.get("extra_body") == {"chat_template_kwargs": {"thinking": True}}
+
+    @pytest.mark.asyncio
+    async def test_chat_omits_extra_body_when_none(self) -> None:
+        backend = OpenAICompatibleBackend(_config("openai"))
+        create_mock = AsyncMock(return_value=_mock_openai_chat_completion())
+        with patch.object(
+            backend._openai.chat.completions,  # type: ignore[union-attr]
+            "create",
+            new=create_mock,
+        ):
+            await backend.chat([_user("hi")])
+        kwargs = create_mock.call_args.kwargs
+        assert "extra_body" not in kwargs
+
+
+class TestDeepseekReasoningStripInvariant:
+    def test_strips_reasoning_content_from_assistant_for_deepseek(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "ok", "reasoning_content": "secret-thought"},
+        ]
+        out = _strip_reasoning_for_provider(messages, "deepseek")
+        assert out[1] == {"role": "assistant", "content": "ok"}
+        assert "reasoning_content" not in out[1]
+
+    def test_preserves_other_assistant_fields_for_deepseek(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "assistant",
+                "content": "ok",
+                "reasoning_content": "x",
+                "tool_calls": [{"id": "c1"}],
+            },
+        ]
+        out = _strip_reasoning_for_provider(messages, "deepseek")
+        assert out[0]["tool_calls"] == [{"id": "c1"}]
+        assert "reasoning_content" not in out[0]
+
+    def test_passthrough_for_non_deepseek_providers(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {"role": "assistant", "content": "ok", "reasoning_content": "preserved"},
+        ]
+        for provider in ("openai", "nvidia", "groq", "anthropic", "together"):
+            out = _strip_reasoning_for_provider(messages, provider)
+            assert out[0].get("reasoning_content") == "preserved", provider
+
+    def test_no_op_when_field_absent(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "ok"},
+        ]
+        out = _strip_reasoning_for_provider(messages, "deepseek")
+        assert out == messages

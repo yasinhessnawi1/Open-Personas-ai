@@ -23,7 +23,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 import anthropic
 import openai
@@ -49,6 +49,9 @@ from persona.backends.types import (
     TokenUsage,
     ToolCallDelta,
     ToolSpec,
+)
+from persona.backends.types import (
+    ReasoningBlock as ReasoningBlock,  # re-export hook for downstream typing
 )
 from persona.logging import get_logger
 from persona.schema.content import ImageContent, TextContent
@@ -90,6 +93,13 @@ _NATIVE_TOOLS_CAPABILITY: dict[str, frozenset[str] | Literal["all"]] = {
         }
     ),
     "together": frozenset(),  # opt-in only; default off
+    "nvidia": frozenset(
+        {
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        }
+    ),
 }
 
 
@@ -103,13 +113,49 @@ def _native_tools_supported(provider: str, model: str) -> bool:
 
 
 # D-13-3 vision capability matrix; verify-at-deploy per T19 close-out.
+# D-20-1 (Spec 20): NVIDIA vision tier defaults to VILA / Cosmos (NVIDIA Open
+# Model License — no EU carve-out, no anti-distillation) over Llama-3.2-Vision
+# (Llama 3.2 Community License §1(a) excludes EU-domiciled developers per R-20-5).
 _VISION_CAPABILITY: dict[str, frozenset[str] | Literal["all"]] = {
     "anthropic": "all",
     "openai": frozenset({"gpt-4o", "gpt-4o-mini", "gpt-4-turbo"}),
     "deepseek": frozenset(),
     "groq": frozenset(),
     "together": frozenset(),
+    "nvidia": frozenset(
+        {
+            # T09 entry — omni-modal Nemotron (text/image/video/speech in).
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            # T13 entries — NVIDIA-owned VLMs verified at build.nvidia.com
+            # (Open Model License; no EU carve-out per R-20-5 + D-20-1).
+            # VILA family — https://build.nvidia.com/nvidia/vila
+            "nvidia/vila",
+            # Cosmos Nemotron VLM (VILA's successor per NVIDIA Jan-2025
+            # rebranding) — https://build.nvidia.com/nvidia/cosmos-nemotron-34b
+            "nvidia/cosmos-nemotron-34b",
+            # Cosmos Reason vision-reasoning VLMs for physical-AI workloads.
+            # https://build.nvidia.com/nvidia/cosmos-reason1-7b
+            # https://build.nvidia.com/nvidia/cosmos-reason2-8b
+            "nvidia/cosmos-reason1-7b",
+            "nvidia/cosmos-reason2-8b",
+        }
+    ),
 }
+
+# D-13-3 "verify-at-deploy" precedent — model IDs above were sourced from a
+# build.nvidia.com catalog scan at T13 implementation time. Exact slugs are
+# subject to NVIDIA-side rename (the VILA → Cosmos Nemotron consolidation
+# announced January 2025 is the most recent example). Operators MUST re-verify
+# the four IDs in this constant at deploy time; T25 MAINTENANCE.md row tracks
+# the operator re-verification cadence per the D-20-7 event-driven trigger.
+_NVIDIA_VISION_MODELS_VERIFY_AT_DEPLOY: Final[frozenset[str]] = frozenset(
+    {
+        "nvidia/vila",
+        "nvidia/cosmos-nemotron-34b",
+        "nvidia/cosmos-reason1-7b",
+        "nvidia/cosmos-reason2-8b",
+    }
+)
 
 
 def _vision_supported(provider: str, model: str) -> bool:
@@ -165,6 +211,7 @@ class OpenAICompatibleBackend:
             "deepseek",
             "groq",
             "together",
+            "nvidia",
         }:
             msg = (
                 f"OpenAICompatibleBackend does not handle provider "
@@ -468,6 +515,14 @@ class OpenAICompatibleBackend:
         if not use_native and tools:
             msgs = _prepend_shim_to_openai(msgs, tools)
 
+        # D-20-X-deepseek-reasoning-strip-invariant: DeepSeek returns HTTP 400
+        # if ``reasoning_content`` is echoed in input messages. Strip from prior
+        # assistant turns before sending. Runtime currently authors assistant
+        # text as a plain string (no reasoning field on the wire), so this is
+        # a defensive invariant guarding future serialisers that lift reasoning
+        # into the message payload.
+        msgs = _strip_reasoning_for_provider(msgs, self._provider)
+
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": msgs,
@@ -478,6 +533,9 @@ class OpenAICompatibleBackend:
             kwargs["stop"] = stop
         if use_native and tools:
             kwargs["tools"] = [_tool_spec_to_openai(t) for t in tools]
+        # D-20-3: opaque pass-through to the vendor SDK's ``extra_body``.
+        if self._config.extra_body is not None:
+            kwargs["extra_body"] = self._config.extra_body
 
         response = await self._openai.chat.completions.create(**kwargs)
         return _parse_openai_response(response, self._provider, use_native)
@@ -507,6 +565,9 @@ class OpenAICompatibleBackend:
             msgs = _prepend_shim_to_openai(msgs, tools)
             shim_state = ShimState()
 
+        # D-20-X-deepseek-reasoning-strip-invariant (mirrors _chat_openai).
+        msgs = _strip_reasoning_for_provider(msgs, self._provider)
+
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": msgs,
@@ -519,6 +580,9 @@ class OpenAICompatibleBackend:
             kwargs["stop"] = stop
         if use_native and tools:
             kwargs["tools"] = [_tool_spec_to_openai(t) for t in tools]
+        # D-20-3: opaque pass-through to the vendor SDK's ``extra_body``.
+        if self._config.extra_body is not None:
+            kwargs["extra_body"] = self._config.extra_body
 
         usage: TokenUsage | None = None
         stream = await self._openai.chat.completions.create(**kwargs)
@@ -542,13 +606,36 @@ class OpenAICompatibleBackend:
             delta = getattr(choices[0], "delta", None)
             text = getattr(delta, "content", None) or ""
             tool_calls = getattr(delta, "tool_calls", None) or []
+            # D-20-X-nemotron-field-name-dual-probe: NVIDIA Nemotron emits via
+            # two field names depending on model family — canonical
+            # ``reasoning_content`` OR alias ``reasoning`` on newer Nano-Omni
+            # VLM endpoints. Both arrive via Pydantic extras on openai-py
+            # ``ChoiceDelta`` (NOT statically typed). Probe both. DeepSeek-R1
+            # and OpenAI Chat Completions also fit the str arm.
+            reasoning_delta = getattr(delta, "reasoning_content", None) or getattr(
+                delta, "reasoning", None
+            )
             if text:
                 if shim_state is not None:
                     consumer_text, tc_delta = parse_tool_call_delta(text, shim_state)
                     if consumer_text or tc_delta is not None:
-                        yield StreamChunk(delta=consumer_text, tool_call_delta=tc_delta)
+                        yield StreamChunk(
+                            delta=consumer_text,
+                            tool_call_delta=tc_delta,
+                            reasoning=reasoning_delta if reasoning_delta else None,
+                        )
+                        reasoning_delta = None  # consumed
                 else:
-                    yield StreamChunk(delta=text)
+                    yield StreamChunk(
+                        delta=text,
+                        reasoning=reasoning_delta if reasoning_delta else None,
+                    )
+                    reasoning_delta = None  # consumed
+            elif reasoning_delta:
+                # Reasoning-only chunk (no text delta): emit a StreamChunk
+                # carrying only the reasoning fragment so the runtime can
+                # buffer it for the TurnLog hash.
+                yield StreamChunk(delta="", reasoning=reasoning_delta)
             for tc in tool_calls:
                 fn = getattr(tc, "function", None)
                 idx = getattr(tc, "index", 0) or 0
@@ -903,6 +990,38 @@ def _message_to_openai(
             for tc in msg.tool_calls
         ]
     return base
+
+
+def _strip_reasoning_for_provider(
+    messages: list[dict[str, Any]], provider: str
+) -> list[dict[str, Any]]:
+    """D-20-X-deepseek-reasoning-strip-invariant.
+
+    DeepSeek returns HTTP 400 if ``reasoning_content`` is echoed in input
+    messages. Strip the field from any assistant message dict before sending.
+    All other providers are passed through unchanged. The runtime currently
+    authors assistant messages as plain str (no reasoning field), so this
+    is defensive — guarding future serialisers that lift reasoning into the
+    on-wire message payload.
+
+    Args:
+        messages: Wire-shape message dicts (already serialised).
+        provider: Active backend provider name.
+
+    Returns:
+        A new list with ``reasoning_content`` removed from every assistant
+        message when ``provider == "deepseek"``; the input list otherwise.
+    """
+    if provider != "deepseek":
+        return messages
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if m.get("role") == "assistant" and "reasoning_content" in m:
+            cleaned = {k: v for k, v in m.items() if k != "reasoning_content"}
+            out.append(cleaned)
+        else:
+            out.append(m)
+    return out
 
 
 def _prepend_shim_to_openai(

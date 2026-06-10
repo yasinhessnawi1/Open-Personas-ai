@@ -12,7 +12,7 @@ invariants the spec describes (e.g., ``TokenUsage.total_tokens`` consistency).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -23,10 +23,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ChatResponse",
+    "ReasoningBlock",
     "StreamChunk",
     "ToolCallDelta",
     "ToolSpec",
     "TokenUsage",
+    "reasoning_as_text",
     "tool_spec_from_tool",
 ]
 
@@ -132,6 +134,47 @@ class ChatResponse(BaseModel):
     latency_ms: float = Field(ge=0.0)
 
 
+class ReasoningBlock(BaseModel):
+    """One structured reasoning block from a provider that emits typed blocks (D-20-2).
+
+    Used in the list arm of ``StreamChunk.reasoning: str | list[ReasoningBlock] | None``.
+    The ``str`` arm covers NVIDIA / OpenAI Chat Completions / DeepSeek-R1
+    (single concatenated CoT string). The ``list`` arm covers Anthropic
+    extended thinking (and OpenAI Responses API summary-vs-text distinction)
+    where the on-wire shape is a sequence of typed blocks that cannot be
+    losslessly collapsed to a single string (``signature`` is a cryptographic
+    HMAC that MUST round-trip; ``data`` on redacted blocks is an opaque
+    encrypted blob).
+
+    Attributes:
+        kind: Block discriminator. ``"thinking"`` = plaintext reasoning;
+            ``"redacted_thinking"`` = opaque encrypted blob (Anthropic);
+            ``"summary"`` / ``"text"`` = OpenAI Responses API distinction.
+        text: Plaintext content when ``kind in {"thinking", "summary", "text"}``.
+            ``None`` for ``"redacted_thinking"``.
+        signature: Anthropic per-block cryptographic HMAC. Opaque to Persona;
+            MUST round-trip verbatim if Persona re-sends the block to the
+            provider as input on a later turn.
+        data: Anthropic redacted opaque encrypted blob. Only set when
+            ``kind == "redacted_thinking"``.
+        index: Anthropic ``content[]`` block position OR OpenAI Responses
+            ``output_index``. Provider-assigned; preserved so callers can
+            sort or pair with deltas. ``None`` for str-arm shims that emit
+            individual blocks without positional metadata.
+        id: Provider-assigned item id (OpenAI Responses ``item_id``).
+            ``None`` for providers that don't emit one.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["thinking", "redacted_thinking", "summary", "text"]
+    text: str | None = None
+    signature: str | None = None
+    data: str | None = None
+    index: int | None = None
+    id: str | None = None
+
+
 class StreamChunk(BaseModel):
     """One chunk yielded by :meth:`ChatBackend.chat_stream`.
 
@@ -144,6 +187,20 @@ class StreamChunk(BaseModel):
             iterator after, but ``is_final=True`` is the authoritative end.
         usage: Token accounting; populated only on the final chunk. None on
             intermediate chunks.
+        reasoning: Optional reasoning surface (D-20-2). Two arms:
+
+            * ``str`` — single concatenated CoT delta. Used by NVIDIA
+              Nemotron, OpenAI Chat Completions ``reasoning_content``,
+              and DeepSeek-R1. The runtime concatenates these per-chunk
+              strings into one buffer per turn.
+            * ``list[ReasoningBlock]`` — typed structured blocks (Anthropic
+              extended thinking with ``signature``-bearing thinking blocks
+              and opaque redacted blocks; OpenAI Responses API with
+              ``summary`` vs ``text`` distinction). Cannot be losslessly
+              collapsed to a single string — use :func:`reasoning_as_text`
+              for str-only consumers.
+
+            ``None`` when the provider emitted no reasoning on this chunk.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -152,6 +209,30 @@ class StreamChunk(BaseModel):
     tool_call_delta: ToolCallDelta | None = None
     is_final: bool = False
     usage: TokenUsage | None = None
+    reasoning: str | list[ReasoningBlock] | None = None
+
+
+def reasoning_as_text(r: str | list[ReasoningBlock] | None) -> str | None:
+    """Collapse the list arm of ``StreamChunk.reasoning`` to plain text (D-20-2).
+
+    For str-only consumers (prompt builder, audit logger, UI text rendering)
+    that don't need to round-trip Anthropic ``signature`` or distinguish
+    OpenAI Responses ``summary`` from ``text``.
+
+    Args:
+        r: A reasoning surface — ``str``, ``list[ReasoningBlock]``, or ``None``.
+
+    Returns:
+        The concatenated plain text, or ``None`` if no plaintext content
+        was present (e.g., a list containing only ``"redacted_thinking"``
+        blocks collapses to ``None``, not the empty string).
+    """
+    if r is None:
+        return None
+    if isinstance(r, str):
+        return r
+    parts = [b.text for b in r if b.text is not None]
+    return "".join(parts) if parts else None
 
 
 def tool_spec_from_tool(tool: ToolDescriptor) -> ToolSpec:

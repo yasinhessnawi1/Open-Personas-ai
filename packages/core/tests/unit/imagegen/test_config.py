@@ -174,9 +174,10 @@ class TestFromEnv:
 
 class TestImageProviderLiteral:
     def test_image_provider_literal_values(self) -> None:
-        # D-15-1: closed set of two at v0.1. Adding a third requires a
-        # decisions-doc update + a new factory entry.
-        assert set(get_args(ImageProvider)) == {"openai", "fal"}
+        # D-15-1 (v0.1: openai + fal) + Spec 20 D-20-1 adds nvidia. Adding
+        # a fourth provider requires a decisions-doc update + a new
+        # factory entry.
+        assert set(get_args(ImageProvider)) == {"openai", "fal", "nvidia"}
 
     def test_default_base_urls_cover_all_providers(self) -> None:
         for provider in get_args(ImageProvider):

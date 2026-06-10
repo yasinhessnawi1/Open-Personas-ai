@@ -26,13 +26,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 __all__ = ["DEFAULT_BASE_URLS", "ImageBackendConfig", "ImageProvider"]
 
 
-ImageProvider = Literal["openai", "fal"]
-"""Closed set of image-generation providers shipped at v0.1 (D-15-1).
+ImageProvider = Literal["openai", "fal", "nvidia"]
+"""Closed set of image-generation providers shipped at v0.1 (D-15-1) +
+Spec 20 D-20-1 (NVIDIA Build Catalog).
 
 OpenAI ``gpt-image-1.x`` is demo-primary (D-15-X-demo-primary-provider);
 Flux 1.1 [pro] via fal.ai is the alternative for cost/style
-differentiation. Extending this Literal goes through code review +
-a new entry in :func:`persona.imagegen._factory.load_image_backend`.
+differentiation. NVIDIA (Spec 20 T10) routes to either the OpenAI-compat
+shape (Branch B — ``integrate.api.nvidia.com``) for FLUX.2-klein-4b /
+Qwen-Image variants OR the legacy GenAI shape (Branch A —
+``ai.api.nvidia.com``) for SDXL. Extending this Literal goes through
+code review + a new entry in
+:func:`persona.imagegen._factory.load_image_backend`.
 """
 
 
@@ -45,6 +50,13 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     # the SDK handles routing internally. The URL is recorded here for
     # observability + override scenarios (proxy, mock server).
     "fal": "https://queue.fal.run/",
+    # NVIDIA Branch B (OpenAI-compat) — Spec 20 R-20-3 / D-20-1. The
+    # openai SDK appends ``/v1/images/generations`` so the base URL needs
+    # the ``/v1/`` suffix. NVIDIA Branch A (legacy GenAI) lives on
+    # ``ai.api.nvidia.com`` and is hard-coded inside
+    # :class:`persona.imagegen.nvidia_image.NvidiaImageBackend` because
+    # it bypasses the openai SDK entirely.
+    "nvidia": "https://integrate.api.nvidia.com/v1/",
 }
 """Per-provider default base URLs. The caller can override via
 :attr:`ImageBackendConfig.base_url` (proxies, self-hosted endpoints, or
