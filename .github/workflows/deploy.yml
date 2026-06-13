@@ -48,21 +48,26 @@ jobs:
       # need to pay the local Docker disk cost. `.dockerignore` keeps the
       # build context tiny (~5 MB) so the upload to Fly's builder is fast.
       #
-      # ``--dockerfile`` (explicit) overrides the ``dockerfile = "../packages/
-      # api/Dockerfile"`` setting in fly.toml. Modern flyctl resolves that
-      # relative to CWD (= $GITHUB_WORKSPACE = repo root in CI), so the ``..``
-      # goes ABOVE the repo and the file is not found; older flyctl resolves
-      # relative to fly.toml's directory (works locally). The explicit flag
-      # is unambiguous in both environments and is the production-recommended
-      # form. CWD here is the repo root (default for actions/checkout@v4).
+      # Path strategy: both ``--config`` and ``--dockerfile`` use ABSOLUTE
+      # paths via $WORKSPACE (= ${{ github.workspace }}, the repo checkout
+      # root). Relative paths are unreliable here: a prior attempt with
+      # ``--dockerfile packages/api/Dockerfile`` (no ``..``) still resolved
+      # to ``/home/runner/work/Open-Persona/packages/api/Dockerfile`` — one
+      # level ABOVE the checkout, missing the second ``Open-Persona/``
+      # segment. flyctl appears to apply ``../packages/api/Dockerfile`` from
+      # fly.toml's ``[build]`` setting and then re-resolve, so the leading
+      # ``..`` survives even when the flag is given. Absolute paths bypass
+      # that resolution entirely. $WORKSPACE is set from
+      # ``github.workspace`` (system-provided, not user-controllable).
       - name: flyctl deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          WORKSPACE: ${{ github.workspace }}
         run: |
           flyctl deploy \
             --remote-only \
-            --config deploy/fly.toml \
-            --dockerfile packages/api/Dockerfile \
+            --config "$WORKSPACE/deploy/fly.toml" \
+            --dockerfile "$WORKSPACE/packages/api/Dockerfile" \
             --app open-persona-api \
             --strategy rolling \
             --wait-timeout 600
