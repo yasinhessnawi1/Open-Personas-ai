@@ -47,6 +47,14 @@ jobs:
       # Remote build — Fly's builders are tuned for this and CI runners don't
       # need to pay the local Docker disk cost. `.dockerignore` keeps the
       # build context tiny (~5 MB) so the upload to Fly's builder is fast.
+      #
+      # ``--dockerfile`` (explicit) overrides the ``dockerfile = "../packages/
+      # api/Dockerfile"`` setting in fly.toml. Modern flyctl resolves that
+      # relative to CWD (= $GITHUB_WORKSPACE = repo root in CI), so the ``..``
+      # goes ABOVE the repo and the file is not found; older flyctl resolves
+      # relative to fly.toml's directory (works locally). The explicit flag
+      # is unambiguous in both environments and is the production-recommended
+      # form. CWD here is the repo root (default for actions/checkout@v4).
       - name: flyctl deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -54,6 +62,7 @@ jobs:
           flyctl deploy \
             --remote-only \
             --config deploy/fly.toml \
+            --dockerfile packages/api/Dockerfile \
             --app open-persona-api \
             --strategy rolling \
             --wait-timeout 600
