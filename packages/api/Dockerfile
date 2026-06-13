@@ -21,6 +21,7 @@ COPY pyproject.toml uv.lock ./
 COPY packages/core/pyproject.toml packages/core/pyproject.toml
 COPY packages/runtime/pyproject.toml packages/runtime/pyproject.toml
 COPY packages/api/pyproject.toml packages/api/pyproject.toml
+COPY packages/voice/pyproject.toml packages/voice/pyproject.toml
 # Provision the venv with all workspace members (frozen install).
 COPY packages/ packages/
 RUN uv sync --frozen --all-packages --no-dev

@@ -56,5 +56,15 @@ README.md
 !packages/core/src/persona/skills/builtin/**/SKILL.md
 !packages/core/src/persona/skills/builtin/**/supplements/*.md
 
+# Re-include per-package README.md files (v0.2 OSS prep). Each package's
+# pyproject.toml declares ``readme = "README.md"``; without these, hatchling
+# fails ``uv sync`` during the builder stage with
+# ``OSError: Readme file does not exist: README.md`` when validating package
+# metadata. Mirrors the SKILL.md re-include pattern above.
+!packages/core/README.md
+!packages/runtime/README.md
+!packages/api/README.md
+!packages/voice/README.md
+
 # Tests are not needed by the runtime image
 packages/*/tests/
