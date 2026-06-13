@@ -38,6 +38,25 @@ jobs:
   publish:
     runs-on: ubuntu-latest
 
+    # Tag-ref guard: a tag push naturally arrives on ``refs/tags/v...``; a
+    # manual workflow_dispatch run is only allowed against a ``v*.*.*`` tag.
+    # Together this means the publish job CANNOT be triggered from a branch
+    # — closes the "compromised account dispatches from a fork-merged
+    # malicious commit" path that the bare ``workflow_dispatch:`` opened.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch'
+       && github.ref_type == 'tag'
+       && startsWith(github.ref, 'refs/tags/v'))
+
+    # GitHub Environments gate. The ``pypi`` environment is configured in
+    # repo Settings -> Environments with ``Required reviewers`` (just you)
+    # and ``Deployment branches and tags`` restricted to ``v*.*.*``. Until
+    # that environment exists in the UI, this line is a no-op; once it
+    # exists, the job pauses for review before publishing — hard gate
+    # against accidental publishes or a compromised dispatch.
+    environment: pypi
+
     # Serialize publishes so two near-simultaneous tag pushes can't race to
     # upload the same version. ``cancel-in-progress: false`` because a publish
     # in flight should never be interrupted mid-upload.
@@ -51,11 +70,16 @@ jobs:
       contents: read
 
     steps:
+      # Third-party actions are pinned to specific release tags (not @main /
+      # @master). The follow-up is to pin to commit SHAs + add Dependabot for
+      # deliberate bumps — see the v0.2.x hardening backlog.
       - uses: actions/checkout@v4
 
+      # Pin uv to an exact release rather than ``latest`` so a bad upstream
+      # release can't break the publish unexpectedly. Bump deliberately.
       - uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.6.9"
 
       # Sync the workspace so uv build can resolve the workspace member graph.
       # ``--no-dev`` keeps the install slim (no pytest/mypy/ruff). All 3
