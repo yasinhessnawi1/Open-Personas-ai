@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, inspect, text
 pytestmark = pytest.mark.integration
 
 _API_DIR = Path(__file__).resolve().parents[2]  # packages/api
-_ALEMBIC_INI = _API_DIR / "alembic" / "alembic.ini"
+_ALEMBIC_INI = _API_DIR / "alembic.ini"
 
 
 def _alembic_config(database_url: str) -> Config:

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 _API_DIR = Path(__file__).resolve().parents[2]
-_ALEMBIC_INI = _API_DIR / "alembic" / "alembic.ini"
+_ALEMBIC_INI = _API_DIR / "alembic.ini"
 
 # 384-dim zero vector literal for the pgvector NOT NULL ``embedding`` column.
 _ZERO_VEC = "[" + ",".join(["0"] * 384) + "]"

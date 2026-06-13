@@ -129,7 +129,7 @@ def migrated_engine(database_url: str) -> Iterator[Engine]:
         with engine.begin() as conn:
             conn.execute(text("DROP SCHEMA public CASCADE"))
             conn.execute(text("CREATE SCHEMA public"))
-        cfg = Config(str(api_dir / "alembic" / "alembic.ini"))
+        cfg = Config(str(api_dir / "alembic.ini"))
         cfg.set_main_option("script_location", str(api_dir / "alembic"))
         cfg.set_main_option("sqlalchemy.url", database_url)
         command.upgrade(cfg, "head")
