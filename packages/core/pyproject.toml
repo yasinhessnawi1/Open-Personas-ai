@@ -126,15 +126,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/persona"]
 # Hatchling includes all files under the listed packages by default, which
-# covers the bundled SKILL.md packs (web_research / document_drafting /
-# docx_generation / pptx_generation / xlsx_generation / pdf_generation) +
-# their `supplements/*.md` files (Spec 16 M1a mode — supplements ship as
+# covers the bundled SKILL.md packs (web_research / data_analysis /
+# document_generation / code_review) + their `supplements/*.md` and
+# `templates/*.md` files (Spec 16 M1a mode — bundled assets ship as
 # installed package data alongside SKILL.md, read from disk at runtime
-# via `SkillSpec.path` per D-16-2-path). The explicit include below
-# regression-guards against any future change to hatch's default file
-# filter that might strip non-Python assets from the wheel.
+# via `SkillSpec.path` per D-16-2-path). Spec 24 (D-24-1) collapses the 5
+# document-format packs into the one `document_generation` skill. The
+# explicit include below regression-guards against any future change to
+# hatch's default file filter that might strip non-Python assets.
 include = [
     "src/persona/py.typed",
+    "src/persona/skills/catalog.toml",
     "src/persona/skills/builtin/**/SKILL.md",
     "src/persona/skills/builtin/**/supplements/*.md",
+    "src/persona/skills/builtin/**/templates/*.md",
 ]

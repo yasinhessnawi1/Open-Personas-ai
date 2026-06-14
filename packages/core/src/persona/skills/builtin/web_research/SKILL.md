@@ -3,8 +3,10 @@ name: web_research
 description: Research a topic by decomposing the question, searching the web, fetching pages, and synthesising findings with citations.
 when_to_use: >
   Use this skill when the user asks to research a topic, investigate
-  something, gather evidence from multiple sources, or produce a report
-  drawn from web content. Do not use for single factual lookups — call
+  something, gather evidence from multiple sources, produce a report drawn
+  from web content, or SUMMARISE/CONDENSE researched material into a brief
+  (summarisation is folded into this skill's synthesis step — there is no
+  separate summarise skill). Do not use for single factual lookups — call
   the web_search tool directly for those.
 tools_required:
   - web_search

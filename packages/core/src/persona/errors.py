@@ -29,10 +29,16 @@ __all__ = [
     "RuntimeWriteForbiddenError",
     "SandboxViolationError",
     "SchemaVersionMismatchError",
+    "SkillArgumentValidationError",
+    "SkillCompositionDepthError",
+    "SkillCycleError",
     "SkillManifestError",
+    "SkillNameCollisionError",
     "StoreNotFoundError",
     "ToolExecutionError",
     "ToolNotAllowedError",
+    "UnknownDocumentFormatError",
+    "UnknownDocumentTemplateError",
 ]
 
 
@@ -122,6 +128,25 @@ class ToolExecutionError(PersonaError):
     """Raised when a tool execution fails inside the toolbox."""
 
 
+class UnknownDocumentFormatError(PersonaError):
+    """Raised when ``document_generation`` is asked for a format with no handler.
+
+    Carries ``context={"format": ..., "available": ...}`` so the caller (and
+    logs) name the rejected format and the registered alternatives. Reading-B
+    dispatch error (D-24-1); the format catalogue lives in
+    :mod:`persona.skills.document_generation.registry`.
+    """
+
+
+class UnknownDocumentTemplateError(PersonaError):
+    """Raised when ``document_generation`` is asked for an unregistered template.
+
+    Carries ``context={"template": ..., "available": ...}``. Templates are
+    bundled Markdown files registered in
+    :mod:`persona.skills.document_generation.registry` (D-24-2).
+    """
+
+
 class SandboxViolationError(PersonaError):
     """Raised when a file operation attempts to escape its sandbox directory."""
 
@@ -179,6 +204,49 @@ class SkillManifestError(PersonaError):
     underlying problem was a YAML parse failure. The scanner's per-skill
     envelope (D-04-4) catches this exception and logs a structured warning;
     the persona keeps loading with the offending skill omitted.
+    """
+
+
+class SkillArgumentValidationError(PersonaError):
+    """Raised when ``use_skill`` arguments fail a skill's ``parameters`` schema.
+
+    Spec 24 (D-24-8). The skill's declared JSON Schema is compiled to a frozen
+    ``extra="forbid"`` Pydantic model and the call arguments are validated
+    strictly at activation time. ``context`` carries
+    ``{"skill": ..., "errors": ...}``. The ``use_skill`` tool catches this and
+    returns ``ToolResult(is_error=True)`` so the model can self-correct.
+    """
+
+
+class SkillNameCollisionError(PersonaError):
+    """Raised when the ``skills.toml`` catalog has a name clash (D-24-6).
+
+    Spec 24. A collection name that duplicates a skill id is ambiguous under the
+    uniform ``kind:ref`` addressing scheme and is rejected at catalog load
+    (fail-loud, per R-24-1 — unlike Semantic Kernel's silent last-write-wins).
+    ``context`` carries ``{"name": ...}``.
+    """
+
+
+class SkillCycleError(PersonaError):
+    """Raised when a ``use_skill`` activation would revisit a skill already in
+    the active composition chain (A→B→A).
+
+    Spec 24 (D-24-4). Cycle detection is a visited-set of skill names along the
+    active chain; the check runs **before** the depth check so a cycle is
+    diagnosed as a cycle, not a depth overflow. ``context`` carries
+    ``{"requested": ..., "chain": "A→B"}``. The runtime intercept catches this
+    and informs the model with a system message rather than failing the turn.
+    """
+
+
+class SkillCompositionDepthError(PersonaError):
+    """Raised when a ``use_skill`` activation would exceed the composition depth cap.
+
+    Spec 24 (D-24-4). The cap (``MAX_SKILL_COMPOSITION_DEPTH`` = 3) bounds skill
+    chaining (research→draft→format) without enabling runaway. ``context``
+    carries ``{"requested": ..., "chain": ..., "max_depth": ...}``. The runtime
+    intercept catches this and informs the model rather than failing the turn.
     """
 
 

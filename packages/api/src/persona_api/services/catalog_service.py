@@ -30,14 +30,12 @@ __all__ = ["list_skills", "list_tools"]
 
 # Every bundled skill folder under persona/skills/builtin (architecture §9.3,
 # spec 13). The scanner emits one entry per declared skill that exists on disk.
+# Spec 24 (D-24-1): the 5 document-format packs folded into document_generation.
 _BUILTIN_SKILLS = [
+    "code_review",
     "data_analysis",
-    "document_drafting",
-    "docx_generation",
-    "pdf_generation",
-    "pptx_generation",
+    "document_generation",
     "web_research",
-    "xlsx_generation",
 ]
 
 

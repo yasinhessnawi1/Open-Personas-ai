@@ -272,6 +272,128 @@ class TestUseSkillIntercept:
         assert "Now I will research carefully." in accumulated
         assert writer.logs[0].skill_used == "web_research"
 
+    @staticmethod
+    def _skill(name: str) -> SkillSpec:
+        body = f"Instructions for {name}."
+        return SkillSpec(
+            name=name,
+            description=f"{name} skill.",
+            path=__import__("pathlib").Path(f"/tmp/{name}/SKILL.md"),
+            content=body,
+            content_token_count=count_tokens(body),
+        )
+
+    @pytest.mark.asyncio
+    async def test_composition_chain_of_three_completes(self) -> None:
+        # Spec 24 (D-24-4): a depth-3 chain (a→b→c) all activate within one turn.
+        skills = [self._skill("a"), self._skill("b"), self._skill("c")]
+        use_skill = make_use_skill_tool(skills)
+        backend = ScriptedBackend(
+            [
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "a"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "b"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "c"}),
+                ScriptedRound(text="Done composing."),
+            ]
+        )
+        loop, _stores, writer = _make_loop(backend, scanned_skills=skills, extra_tools=[use_skill])
+        chunks = [c async for c in loop.turn(_conv(2), "do a chain")]
+        assert chunks[-1].is_final is True
+        # First skill recorded; the turn completed without a crash.
+        assert writer.logs[0].skill_used == "a"
+
+    @pytest.mark.asyncio
+    async def test_cycle_does_not_crash_the_turn(self) -> None:
+        # a→b→a: the cycle is caught at the intercept and surfaced as a system
+        # message; the turn proceeds rather than raising SkillCycleError.
+        skills = [self._skill("a"), self._skill("b")]
+        use_skill = make_use_skill_tool(skills)
+        backend = ScriptedBackend(
+            [
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "a"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "b"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "a"}),
+                ScriptedRound(text="Recovered from the cycle."),
+            ]
+        )
+        loop, _stores, writer = _make_loop(backend, scanned_skills=skills, extra_tools=[use_skill])
+        chunks = [c async for c in loop.turn(_conv(2), "cycle me")]
+        assert chunks[-1].is_final is True
+        assert "Recovered from the cycle." in "".join(c.delta for c in chunks)
+
+    @pytest.mark.asyncio
+    async def test_depth_cap_does_not_crash_the_turn(self) -> None:
+        # a→b→c→d: the 4th exceeds the depth cap; caught, turn proceeds.
+        skills = [self._skill(n) for n in ("a", "b", "c", "d")]
+        use_skill = make_use_skill_tool(skills)
+        backend = ScriptedBackend(
+            [
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "a"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "b"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "c"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "d"}),
+                ScriptedRound(text="Stopped at the cap."),
+            ]
+        )
+        loop, _stores, writer = _make_loop(
+            backend, scanned_skills=skills, extra_tools=[use_skill], max_tool_rounds=6
+        )
+        chunks = [c async for c in loop.turn(_conv(2), "go deep")]
+        assert chunks[-1].is_final is True
+        assert writer.logs[0].skill_used == "a"
+
+    @pytest.mark.asyncio
+    async def test_turnlog_records_full_skill_invocation_chain(self) -> None:
+        # Spec 24 (D-24-10): skills_invoked carries full records (name + params).
+        skills = [self._skill("a"), self._skill("b")]
+        use_skill = make_use_skill_tool(skills)
+        backend = ScriptedBackend(
+            [
+                ScriptedRound(
+                    tool_name="use_skill",
+                    tool_args={"skill_name": "a", "parameters": {"k": "v"}},
+                ),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "b"}),
+                ScriptedRound(text="Composed."),
+            ]
+        )
+        loop, _stores, writer = _make_loop(backend, scanned_skills=skills, extra_tools=[use_skill])
+        [c async for c in loop.turn(_conv(2), "chain")]
+        invoked = writer.logs[0].skills_invoked
+        assert [r.name for r in invoked] == ["a", "b"]
+        assert invoked[0].parameters == {"k": "v"}
+        assert invoked[1].parameters is None
+        assert all(r.content_tokens > 0 for r in invoked)
+        assert writer.logs[0].skill_budget_exceeded is False
+
+    @pytest.mark.asyncio
+    async def test_turnlog_flags_skill_budget_exceeded(self) -> None:
+        # A composed skill whose content overflows the remaining shared budget
+        # is skipped whole and the flag is set (D-24-X-budget-exhaustion-policy).
+        small = self._skill("a")
+        big = SkillSpec(
+            name="big",
+            description="huge skill.",
+            path=__import__("pathlib").Path("/tmp/big/SKILL.md"),
+            content="x",
+            content_token_count=5000,  # exceeds the 2000-token shared budget
+        )
+        use_skill = make_use_skill_tool([small, big])
+        backend = ScriptedBackend(
+            [
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "a"}),
+                ScriptedRound(tool_name="use_skill", tool_args={"skill_name": "big"}),
+                ScriptedRound(text="Budget hit."),
+            ]
+        )
+        loop, _stores, writer = _make_loop(
+            backend, scanned_skills=[small, big], extra_tools=[use_skill]
+        )
+        [c async for c in loop.turn(_conv(2), "overflow")]
+        assert writer.logs[0].skill_budget_exceeded is True
+        # Only the first skill was actually injected/recorded.
+        assert [r.name for r in writer.logs[0].skills_invoked] == ["a"]
+
 
 class TestEpisodicWriteBackTiming:
     """Acceptance #10 / D-05-12: a partially-consumed turn writes NOTHING."""

@@ -16,7 +16,8 @@ ChromaDB or Postgres + pgvector. Ships the schema, the four memory stores
 behind a `MemoryStore` protocol, the backend layer behind a `ChatBackend`
 protocol, a sandboxed tool layer (`Toolbox`, MCP client, built-in
 `web_search` / `web_fetch` / `file_read` / `file_write`), a skills layer
-(`SkillScanner` + `SkillInjector` + six built-in skill packs), a vision
+(`SkillScanner` + `SkillInjector` + skill composition + a `skills.toml`
+catalog + four built-in skill packs), a vision
 layer (`ImageContent` + `ImageBackend`), document ingestion + generation,
 a code-execution sandbox protocol, an `AuditLogger` protocol with a JSONL
 default, per-component loguru logging, and a `persona` CLI. Every other
@@ -105,14 +106,18 @@ uv run ruff check packages/core
 - Versioned append-only stores; identity is immutable at runtime
 - SHA-256 `content_hash` on every chunk; one `AuditEvent` per mutation
 - Three-source write policy: `system` / `user` / `persona_self`
-- 2k-token-budgeted skill injection (`SkillInjector.TOKEN_BUDGET`)
+- 2k-token-budgeted skill injection (`SkillInjector.TOKEN_BUDGET`); depth-3
+  skill composition (cycle detection + shared budget); `skills.toml` catalog
+  with `collection:` refs
 - Native tool calls (Anthropic / OpenAI / DeepSeek / Groq / Together / NVIDIA /
   OpenRouter) + prompt-shim fallback (Ollama / HF local)
 - MCP Streamable HTTP client + adapter
 - Sandboxed file tools (path resolver rejects `..`, abs paths, symlink
   escape, NUL bytes, mixed separators)
-- Six built-in skill packs: `web_research`, `document_drafting`,
-  `docx_generation`, `pptx_generation`, `xlsx_generation`, `pdf_generation`
+- Four built-in skill packs: `web_research`, `data_analysis`,
+  `document_generation` (one parameterized skill spanning docx/pdf/pptx/xlsx/
+  md/txt), `code_review` (deprecated `*_generation` / `document_drafting`
+  names still resolve via the alias shim)
 - Image generation backends (OpenAI gpt-image-1, fal.ai Flux 1.1 [pro])
   with three-layer safety + categorical hard-line filter
 - Vision input (`ImageContent`) + document ingestion + a `CodeSandbox`

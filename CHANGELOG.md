@@ -38,6 +38,28 @@ Per-spec entries are added by the close-out phase of each spec.
 #### Fixed
 - **OpenRouter resolver crash on negative sentinel pricing** (found by the operator pass, D-23-X-openrouter-negative-pricing) — the live catalog returns `"-1"` (variable/not-applicable) pricing on some entries, which violated `ModelMetadata`'s `ge=0` cost bound and crashed the resolver. The resolver now skips-and-WARNs entries that fail validation (mirrors the Spec 22 catalog-parser skip pattern); a skipped entry is a metadata miss → static fallback → rule-based.
 
+### Skills v2 — Abstract Document Generation + Skills Ecosystem Maturation (Phase 5 complete 2026-06-14, pending sign-off)
+
+> **Two coupled deliverables, one spec:** (1) the five document-format builtin skills (`docx`/`pdf`/`pptx`/`xlsx_generation` + `document_drafting`) collapse into one parameterized **`document_generation`** instruction-pack skill with registry-dispatched format handlers — the model still writes code in the `code_execution` sandbox, so persona-core takes **zero** new rendering dependencies; and (2) **skills-ecosystem maturation** — a richer `SKILL.md` schema, depth-capped skill composition, token-budget telemetry, and a lightweight `skills.toml` catalog. **13 decisions locked**; **zero new dependencies** (every rendering lib already ships in the sandbox image; `parameters` validation and the catalog reuse Pydantic + stdlib `tomllib`).
+>
+> **Backward compatibility is non-negotiable:** every persona YAML declaring a deleted skill name keeps working via an alias shim (INFO log per resolution, v0.3 WARN, v0.4 removal). The behavior tests (`test_use_skill_tool.py`, `test_tools_skills.py`) stay byte-for-byte; the structure tests' coverage was relocated onto `document_generation` + alias-resolution assertions. Default pytest **3614 passed**; `mypy --strict` core clean; `ruff` clean.
+
+#### Added (persona-core)
+- **Unified `document_generation` skill** ([`skills/builtin/document_generation/`](packages/core/src/persona/skills/builtin/document_generation/)) — one `SKILL.md` covering six formats (`docx`/`pdf`/`pptx`/`xlsx`/`md`/`txt`) with the migrated supplements (format-prefixed) + four placeholder templates. Dispatch **code** lives in [`skills/document_generation/`](packages/core/src/persona/skills/document_generation/): a `DocumentHandler` protocol + `FormatHandler` descriptors + a `registry` (format/template resolution; `UnknownDocumentFormatError` / `UnknownDocumentTemplateError`). New format = a handler module + registry entry, no new top-level skill.
+- **Enhanced `SkillSpec` schema** — `parameters` (JSON Schema), `not_for`, `composes_with`, `output_format`, `token_budget`, parsed from the `SKILL.md` `metadata` block (Agent-Skills-standard escape hatch). Strict `parameters` validation at `use_skill` call time via a Pydantic model compiled from the schema (`skills/parameters.py`; `SkillArgumentValidationError`) — no `jsonschema` dependency.
+- **Skill composition** ([`skills/composition.py`](packages/core/src/persona/skills/composition.py)) — depth-3 cap + visited-set cycle detection + a single shared token budget (`SkillCompositionState`; `SkillCompositionDepthError` / `SkillCycleError`). Budget exhaustion skips a composed skill whole (never truncates, never fails the turn).
+- **`skills.toml` catalog** ([`skills/catalog.toml`](packages/core/src/persona/skills/catalog.toml) + `skills/catalog.py`) — declarative builtin index + named collections; a persona references `collection:<name>` / `skill:<id>` / a bare id. Local, zero-network precursor to the deferred federated registry (federation fields reserved-not-implemented; `SkillNameCollisionError` on a collection/skill name clash).
+- **`code_review` builtin skill** — language-neutral review process with an untrusted-input security posture and a structured Critical/Suggestions/Verdict output (D-24-7). Summarisation folded into `web_research` (named in its `when_to_use`, not a standalone skill).
+- **Alias shim** ([`skills/aliases.py`](packages/core/src/persona/skills/aliases.py)) — the 5 deleted skill names resolve to `document_generation` at scan time (dedup + INFO log).
+
+#### Added (persona-runtime)
+- **Composition discipline in both loops** — the `use_skill` intercept in `loop.py` + `agentic/loop.py` applies the shared depth/cycle/budget state (surgical; only the intercept changed).
+- **TurnLog skill telemetry** — `skills_invoked` (full `SkillInvocation` records: name + params + injected size) + `skill_budget_exceeded`. Runtime-only JSONL fields; the Postgres writer maps a fixed columnar subset, so **no migration** (D-24-10).
+
+#### Changed
+- **Deleted** the 5 document-format skill directories (D-24-9); the catalog service surfaces the 4 live skill folders.
+- **`docs/ARCHITECTURE.md` §4.5 + §9.3** editorial amendments (ecosystem-maturation paragraph; catalog-vs-federation boundary).
+
 ### Spec 21 — Proactive Autonomy: Question Asking + Task Auto-Dispatch (Phase 6 complete 2026-06-13, pending sign-off)
 
 > **Two coupled autonomy features, one spec:** (1) **proactive clarifying questions** (3 predefined options + 1 free-form) across chat *and* agentic-loop contexts, tuned by a new per-persona **autonomy preference** (`cautious | balanced | decisive`, YAML-default + `persona_self`-learnable); and (2) **consent-gated task auto-dispatch** — a request mapping to the persona's declared tools/skills can auto-start a Run, with a one-time per-persona consent gate. **20 decisions locked** (Phase 4) per [`docs/specs/phase2/spec_21/decisions.md`](docs/specs/phase2/spec_21/decisions.md); zero new dependencies.

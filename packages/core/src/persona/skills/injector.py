@@ -81,16 +81,22 @@ class SkillInjector:
                 to decide the branch.
 
         Returns:
-            A string that fits within ``TOKEN_BUDGET`` tokens. Either:
-            verbatim ``skill.content``, the summariser's output, or a
-            character-prefix of ``skill.content`` followed by ``MARKER``.
+            A string that fits within the effective budget. Either: verbatim
+            ``skill.content``, the summariser's output, or a character-prefix of
+            ``skill.content`` followed by ``MARKER``.
+
+        The effective budget is the skill's own ``token_budget`` when it
+        declares one (Spec 24, D-24-5 per-skill override), else the class-wide
+        :data:`TOKEN_BUDGET`. A per-skill override only tightens or loosens this
+        one skill's content cap; it never changes the class default.
         """
-        if skill.content_token_count <= self.TOKEN_BUDGET:
+        budget = skill.token_budget or self.TOKEN_BUDGET
+        if skill.content_token_count <= budget:
             return skill.content
 
         if self._summariser is not None:
             summary = await self._summariser(skill.content)
-            if count_tokens(summary) <= self.TOKEN_BUDGET:
+            if count_tokens(summary) <= budget:
                 return summary
             # Summariser exceeded the budget (rare; defensive). Fall
             # through to truncation on the SUMMARY, not the original — the
@@ -99,11 +105,11 @@ class SkillInjector:
                 "summariser returned over-budget content; falling back to truncation",
                 skill=skill.name,
                 summary_tokens=count_tokens(summary),
-                budget=self.TOKEN_BUDGET,
+                budget=budget,
             )
-            return _truncate(summary, self.TOKEN_BUDGET)
+            return _truncate(summary, budget)
 
-        return _truncate(skill.content, self.TOKEN_BUDGET)
+        return _truncate(skill.content, budget)
 
 
 def _truncate(content: str, budget: int) -> str:

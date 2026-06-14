@@ -54,15 +54,26 @@ def test_list_skills(client: TestClient) -> None:
     names = {s["name"] for s in resp.json()}
     # Every folder under persona/skills/builtin must be declared in the
     # catalog — otherwise the authoring wizard can't suggest the skill.
+    # Spec 24 (D-24-1): the 5 document-format packs folded into the single
+    # document_generation skill (deprecated names still resolve via the alias
+    # shim, but the catalog surfaces only the live folders).
     assert {
+        "code_review",
         "data_analysis",
-        "document_drafting",
-        "docx_generation",
-        "pdf_generation",
-        "pptx_generation",
+        "document_generation",
         "web_research",
-        "xlsx_generation",
     } <= names
+    # The deleted document-format skills must NOT appear as separate entries.
+    assert not (
+        {
+            "document_drafting",
+            "docx_generation",
+            "pdf_generation",
+            "pptx_generation",
+            "xlsx_generation",
+        }
+        & names
+    )
 
 
 def test_tools_requires_auth(client: TestClient) -> None:

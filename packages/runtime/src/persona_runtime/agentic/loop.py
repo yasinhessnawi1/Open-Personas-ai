@@ -40,11 +40,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from persona.autonomy import policy_for, resolve_autonomy
+from persona.errors import SkillCompositionDepthError, SkillCycleError
 from persona.logging import get_logger
 from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
 from persona.schema.conversation import ConversationMessage
 from persona.schema.tools import ToolResult
-from persona.skills import collect_skill_supplements, render_skill_index
+from persona.skills import collect_skill_supplements, count_tokens, render_skill_index
+from persona.skills.composition import AdmissionResult, SkillCompositionState
 from persona.tools import format_tool_result
 
 from persona_runtime.agentic.compactor import StepHistoryCompactor
@@ -159,6 +161,9 @@ class AgenticLoop:
         # root's deferred_input_files_provider callable wired into the
         # code_execution factory. Cleared at every run() entry.
         self.deferred_input_files: list[SandboxFile] = []
+        # Spec 24 (D-24-4): per-run skill-composition chain; re-created at each
+        # run() entry (declared here so the attribute is always present).
+        self._composition = SkillCompositionState(budget=self._injector.TOKEN_BUDGET)
 
     async def run(
         self,
@@ -186,6 +191,9 @@ class AgenticLoop:
         persona_id = self._require_persona_id()
         started_at = datetime.now(UTC)
         self.deferred_input_files.clear()  # M1a per-run reset (D-16-2)
+        # Spec 24 (D-24-4): per-run skill-composition chain (depth cap + cycle
+        # detection + shared budget). Reset each run, like deferred_input_files.
+        self._composition = SkillCompositionState(budget=self._injector.TOKEN_BUDGET)
         # Spec 21 T07: per-run proactive-question state. Cap is autonomy-scaled
         # (D-21-5: cautious 5 / balanced 3 / decisive 1); resolved from the
         # self_facts learning chain overlay (D-21-8/11). Questions consume a
@@ -523,14 +531,38 @@ class AgenticLoop:
         result: ToolResult,
         context: list[ConversationMessage],
     ) -> None:
-        """If a ``use_skill`` call succeeded, inject the skill content into context."""
+        """If a ``use_skill`` call succeeded, inject the skill content into context.
+
+        Spec 24 (D-24-4): activations are subject to the per-run composition
+        chain — depth cap, cycle detection, shared budget. Cycle/depth refusals
+        and budget skips append an informative system message instead (the run
+        proceeds); the first skill goes through the per-skill injector, a
+        composed skill (already shown to fit) is appended verbatim.
+        """
         if call.name != "use_skill" or result.data is None or "skill_name" not in result.data:
             return
         name = str(result.data["skill_name"])
         spec = self._skills_by_name.get(name)
         if spec is None:
             return
-        content = await self._injector.inject(spec)
+        try:
+            admission = self._composition.admit(name, content_tokens=spec.content_token_count)
+        except (SkillCycleError, SkillCompositionDepthError) as exc:
+            _logger.info("skill composition refused reason={r}", r=type(exc).__name__)
+            context.append(self._system(f"Skill '{name}' was not activated: {exc}."))
+            return
+        if admission is AdmissionResult.SKIPPED_BUDGET:
+            context.append(
+                self._system(
+                    f"Skill '{name}' was not activated: the skill budget is exhausted. "
+                    "Continue with the instructions already loaded."
+                )
+            )
+            return
+        content = (
+            await self._injector.inject(spec) if self._composition.depth == 1 else spec.content
+        )
+        self._composition.record_injected(count_tokens(content))
         self.deferred_input_files.extend(collect_skill_supplements(spec))
         context.append(self._system(f"Activated skill '{name}':\n{content}"))
 

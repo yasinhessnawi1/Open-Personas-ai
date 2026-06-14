@@ -1,0 +1,37 @@
+# Open Persona — builtin skill catalog (Spec 24, D-24-1 / D-24-6).
+#
+# A lightweight, declarative registry of the bundled skills + named collections.
+# This is the PRECURSOR to the deferred federated registry (architecture §9.3),
+# NOT the registry itself: resolution is 100% local and zero-network. A persona
+# YAML can reference a skill directly (`web_research`), explicitly
+# (`skill:web_research`), or by collection (`collection:document`).
+#
+# Each [skill.<id>] entry is a minimal index — `path` only; the SKILL.md stays
+# the source of truth for description / parameters / etc. The fields a future
+# federation would add are reserved but NOT implemented here:
+#
+#   # owner   = "local"     # becomes owner/name under federation
+#   # source  = "builtin"   # builtin | git | registry
+#   # version = "1.0"        # tag-over-hash semantics later
+#
+# A builtin skill is simply the (owner=local, source=builtin) degenerate case.
+
+[skill.web_research]
+path = "builtin/web_research"
+
+[skill.data_analysis]
+path = "builtin/data_analysis"
+
+[skill.document_generation]
+path = "builtin/document_generation"
+
+[skill.code_review]
+path = "builtin/code_review"
+
+[collection.document]
+description = "Document production: research-then-draft-then-format."
+members = ["document_generation"]
+
+[collection.research]
+description = "Web research and dataset analysis."
+members = ["web_research", "data_analysis"]

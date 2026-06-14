@@ -35,21 +35,24 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict
 
 from persona.autonomy import policy_for, resolve_autonomy
 from persona.backends.errors import IntelligentRoutingError
 from persona.backends.types import reasoning_as_text
+from persona.errors import SkillCompositionDepthError, SkillCycleError
 from persona.logging import get_logger
 from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
 from persona.schema.conversation import ConversationMessage
 from persona.schema.tools import ToolCall, ToolResult
-from persona.skills import collect_skill_supplements, render_skill_index
+from persona.skills import collect_skill_supplements, count_tokens, render_skill_index
+from persona.skills.composition import AdmissionResult, SkillCompositionState
 from persona.tools import format_tool_result
 
 from persona_runtime.agentic.events import RunEvent
 from persona_runtime.ambiguity import DetectionContext, detect_ambiguity, should_ask
 from persona_runtime.logging import (
+    SkillInvocation,
     TurnLog,
     cost_basis_for,
     detect_tool_refusals,
@@ -163,6 +166,21 @@ class _ProactiveDecision:
 
     question: ProactiveQuestion | None = None
     assumption_nudge: str | None = None
+
+
+class _ComposedSkill(NamedTuple):
+    """Result of one ``use_skill`` composition step (Spec 24, D-24-4).
+
+    ``content`` is the new accumulated active-skill-content block to splice into
+    the next prompt (``None`` when nothing was injected); ``message`` is a
+    system message to surface to the model (``None`` when the skill activated
+    cleanly); ``record`` is the telemetry entry for an activated skill (``None``
+    when the skill was refused/skipped).
+    """
+
+    content: str | None
+    message: str | None
+    record: SkillInvocation | None
 
 
 class ConversationLoop:
@@ -387,7 +405,11 @@ class ConversationLoop:
         rounds = 0
         skill_used: str | None = None
         matched_skill_content: str | None = None
-        injected_this_turn = False
+        # Spec 24 (D-24-4): per-turn skill-composition chain (depth cap + cycle
+        # detection + shared budget) replaces the old one-skill-per-turn flag.
+        composition = SkillCompositionState(budget=self._injector.TOKEN_BUDGET)
+        # Spec 24 (D-24-10): full per-skill activation records for the TurnLog.
+        skills_invoked: list[SkillInvocation] = []
         tool_call_count = 0
         # Spec 25 T22 (§2.4): ORed across the turn's tool dispatches from each
         # ToolResult.metadata["sandbox_session_recreated"] flag (set by the
@@ -466,25 +488,23 @@ class ConversationLoop:
                         call.name == "use_skill"
                         and result.data is not None
                         and "skill_name" in result.data
+                        and (name := str(result.data["skill_name"])) in self._skills_by_name
                     ):
-                        name = str(result.data["skill_name"])
-                        if injected_this_turn:
-                            tool_messages.append(
-                                ConversationMessage(
-                                    role="system",
-                                    content=(
-                                        "A skill was already activated this turn. "
-                                        "Request additional skills on the next turn."
-                                    ),
-                                    created_at=datetime.now(UTC),
-                                )
-                            )
-                        elif name in self._skills_by_name:
-                            spec = self._skills_by_name[name]
-                            matched_skill_content = await self._injector.inject(spec)
-                            self.deferred_input_files.extend(collect_skill_supplements(spec))
-                            skill_used = name
-                            injected_this_turn = True
+                        spec = self._skills_by_name[name]
+                        params = result.data.get("parameters")
+                        composed = await self._compose_skill(
+                            spec,
+                            composition,
+                            matched_skill_content,
+                            params if isinstance(params, dict) else None,
+                        )
+                        if composed.message is not None:
+                            tool_messages.append(self._system_message(composed.message))
+                        if composed.content is not None:
+                            matched_skill_content = composed.content
+                            skill_used = skill_used or name
+                        if composed.record is not None:
+                            skills_invoked.append(composed.record)
                 # One round = one re-prompt-after-dispatch (D-05-11), regardless
                 # of how many tool calls this round contained. The counter bounds
                 # re-generations, not individual dispatches.
@@ -597,6 +617,8 @@ class ConversationLoop:
             refusal_retry_engaged=refusal_retry_engaged,
             session_recreated=session_recreated,
             skill_used=skill_used,
+            skills_invoked=skills_invoked,
+            skill_budget_exceeded=composition.budget_exceeded,
             compacted=compacted,
             decision=decision,
             routing_latency_ms=routing_latency_ms,
@@ -713,6 +735,44 @@ class ConversationLoop:
     @staticmethod
     def _system_message(text: str) -> ConversationMessage:
         return ConversationMessage(role="system", content=text, created_at=datetime.now(UTC))
+
+    async def _compose_skill(
+        self,
+        spec: SkillSpec,
+        state: SkillCompositionState,
+        current_content: str | None,
+        parameters: dict[str, Any] | None,
+    ) -> _ComposedSkill:
+        """Admit ``spec`` into the composition chain and return what to inject.
+
+        Applies the shared depth/cycle/budget discipline (D-24-4 /
+        D-24-X-budget-exhaustion-policy): cycle/depth are refused with an
+        informative system message (the turn proceeds); a composed skill that
+        would overflow the remaining shared budget is skipped whole (never
+        truncated). The first skill goes through the per-skill injector; a
+        composed skill (already shown to fit) is appended verbatim.
+        """
+        try:
+            admission = state.admit(spec.name, content_tokens=spec.content_token_count)
+        except (SkillCycleError, SkillCompositionDepthError) as exc:
+            _logger.info("skill composition refused reason={r}", r=type(exc).__name__)
+            return _ComposedSkill(None, f"Skill '{spec.name}' was not activated: {exc}.", None)
+        if admission is AdmissionResult.SKIPPED_BUDGET:
+            return _ComposedSkill(
+                None,
+                f"Skill '{spec.name}' was not activated: the per-turn skill budget is "
+                "exhausted. Continue with the instructions already loaded.",
+                None,
+            )
+        content = await self._injector.inject(spec) if state.depth == 1 else spec.content
+        injected_tokens = count_tokens(content)
+        state.record_injected(injected_tokens)
+        self.deferred_input_files.extend(collect_skill_supplements(spec))
+        merged = content if current_content is None else f"{current_content}\n\n{content}"
+        record = SkillInvocation(
+            name=spec.name, parameters=parameters, content_tokens=injected_tokens
+        )
+        return _ComposedSkill(merged, None, record)
 
     def _retrieve(self, persona_id: str, user_message: str) -> RetrievedContext:
         """Retrieve per-turn context using the real store signatures (§4.1)."""
@@ -1009,6 +1069,8 @@ class ConversationLoop:
         latency_ms: float,
         tool_calls: int,
         skill_used: str | None,
+        skills_invoked: list[SkillInvocation],
+        skill_budget_exceeded: bool,
         compacted: bool,
         decision: RoutingDecision,
         routing_latency_ms: float,
@@ -1072,6 +1134,8 @@ class ConversationLoop:
                 cost_basis=cost_basis,
                 tool_calls=tool_calls,
                 skill_used=skill_used,
+                skills_invoked=skills_invoked,
+                skill_budget_exceeded=skill_budget_exceeded,
                 history_compacted=compacted,
                 timestamp=datetime.now(UTC),
                 routing_decision=decision,

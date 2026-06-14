@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 import threading
 from datetime import datetime  # noqa: TC003 — Pydantic needs runtime access for TurnLog.timestamp
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from persona.logging import get_logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 __all__ = [
     "JSONLTurnLogWriter",
     "MemoryTurnLogWriter",
+    "SkillInvocation",
     "TurnLog",
     "TurnLogWriter",
     "cost_basis_for",
@@ -45,6 +46,27 @@ __all__ = [
 ]
 
 _logger = get_logger("runtime.turnlog")
+
+
+class SkillInvocation(BaseModel):
+    """One ``use_skill`` activation record for the TurnLog (Spec 24, D-24-10).
+
+    Full call record — name + parameters + injected-content size — for the
+    skill-invocation audit trail. JSONL-only telemetry; never columnar (the
+    Postgres writer maps a fixed field subset, so no migration).
+
+    Attributes:
+        name: The activated skill.
+        parameters: The ``parameters`` object the model passed to ``use_skill``
+            (``None`` when none were supplied).
+        content_tokens: Tokens of skill content injected for this activation.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    parameters: dict[str, Any] | None = None
+    content_tokens: int = Field(default=0, ge=0)
 
 
 class TurnLog(BaseModel):
@@ -198,6 +220,14 @@ class TurnLog(BaseModel):
     # in ``ToolResult.metadata["sandbox_session_recreated"]``; the turn loop ORs
     # it across the turn's tool dispatches into this field.
     sandbox_session_recreated: bool = False
+    # Spec 24 (D-24-10) — skill-invocation telemetry. ``skills_invoked`` is the
+    # ordered chain of skills activated this turn (full call records: name +
+    # params + injected size); ``skill_budget_exceeded`` flags a turn where a
+    # composed skill was skipped because the shared per-turn skill budget was
+    # exhausted (D-24-X-budget-exhaustion-policy). Runtime-only JSONL fields —
+    # the Postgres writer maps a fixed columnar subset, so NO migration.
+    skills_invoked: list[SkillInvocation] = Field(default_factory=list)
+    skill_budget_exceeded: bool = False
 
     @field_validator("timestamp", mode="after")
     @classmethod

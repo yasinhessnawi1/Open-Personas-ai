@@ -13,6 +13,7 @@ spec 04 can scan it.
 from __future__ import annotations
 
 from pathlib import Path  # noqa: TC003 — Pydantic needs runtime access
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,6 +40,19 @@ class SkillSpec(BaseModel):
         content_token_count: Pre-computed ``cl100k_base`` token count of
             ``content``. Read by the injector without re-tokenising. Added
             in spec 04 (D-04-1, D-04-2).
+        parameters: Optional JSON Schema (2020-12) describing the skill's
+            call signature. Parsed from the SKILL.md front-matter ``metadata``
+            block (D-24-X-skill-md-spec-compliance) and validated strictly at
+            ``use_skill`` call time (D-24-8). Added in spec 24.
+        not_for: Anti-examples — when explicitly NOT to use the skill. Added
+            in spec 24.
+        composes_with: Names of skills this one commonly chains with (D-24-4
+            composition hints). Added in spec 24.
+        output_format: Free-text description of the skill's output shape.
+            Added in spec 24.
+        token_budget: Optional per-skill override of the 2000-token skill
+            content budget; ``None`` keeps the injector default. Added in
+            spec 24 (D-24-5 hard-cap default retained).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -52,3 +66,13 @@ class SkillSpec(BaseModel):
     tools_required: list[str] = Field(default_factory=list)
     content: str = ""
     content_token_count: int = Field(default=0, ge=0)
+    # Spec 24 additive v2-schema fields (D-24-X-skill-md-spec-compliance).
+    # Populated by the scanner from the SKILL.md ``metadata`` block; all
+    # optional so spec-01/spec-04 callers stay valid without modification.
+    # ``parameters`` holds a raw JSON Schema dict (heterogeneous by nature —
+    # ``Any`` is unavoidable here; it is validated at call time, not at scan).
+    parameters: dict[str, Any] | None = None
+    not_for: list[str] = Field(default_factory=list)
+    composes_with: list[str] = Field(default_factory=list)
+    output_format: str | None = None
+    token_budget: int | None = Field(default=None, ge=1)

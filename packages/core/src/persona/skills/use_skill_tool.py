@@ -27,9 +27,11 @@ surface is left untouched.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from persona.errors import SkillArgumentValidationError
 from persona.schema.tools import ToolResult
+from persona.skills.parameters import validate_parameters
 from persona.tools.protocol import AsyncTool, tool
 
 if TYPE_CHECKING:
@@ -109,17 +111,23 @@ def make_use_skill_tool(skills: list[SkillSpec]) -> AsyncTool:
         An :class:`persona.tools.protocol.AsyncTool` instance named
         ``use_skill``.
     """
-    available = {s.name for s in skills}
+    by_name = {s.name: s for s in skills}
+    available = set(by_name)
 
     @tool(
         name="use_skill",
         description=(
             "Activate one of the persona's declared skills by name. "
-            "Pass the skill_name; the runtime will inject the skill's "
-            "instructions into the next turn."
+            "Pass the skill_name; optionally pass parameters (an object) when "
+            "the skill declares a parameter schema (e.g. document_generation "
+            "takes format). The runtime injects the skill's instructions into "
+            "the next turn."
         ),
     )
-    async def use_skill(skill_name: str) -> ToolResult:
+    async def use_skill(
+        skill_name: str,
+        parameters: dict[str, Any] | None = None,  # noqa: ANN401 — JSON object, validated per-skill (D-24-8)
+    ) -> ToolResult:
         if skill_name not in available:
             return ToolResult(
                 tool_name="use_skill",
@@ -129,10 +137,26 @@ def make_use_skill_tool(skills: list[SkillSpec]) -> AsyncTool:
                 ),
                 is_error=True,
             )
+        # D-24-8: when the model supplies parameters, validate them strictly
+        # against the skill's declared schema. Omitting the optional arg
+        # entirely is allowed (the skill still activates on its SKILL.md
+        # guidance) — only *supplied* arguments are gated.
+        if parameters is not None:
+            try:
+                validate_parameters(by_name[skill_name], parameters)
+            except SkillArgumentValidationError as exc:
+                return ToolResult(
+                    tool_name="use_skill",
+                    content=f"Invalid parameters for {skill_name}: {exc}",
+                    is_error=True,
+                )
+        data: dict[str, Any] = {"skill_name": skill_name}
+        if parameters is not None:
+            data["parameters"] = parameters
         return ToolResult(
             tool_name="use_skill",
             content=f"Activating skill: {skill_name}",
-            data={"skill_name": skill_name},
+            data=data,
         )
 
     return use_skill

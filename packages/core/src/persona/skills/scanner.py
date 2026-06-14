@@ -43,6 +43,8 @@ from persona.logging import get_logger
 from persona.schema.skills import SkillSpec
 from persona.skills._frontmatter import parse_skill_markdown
 from persona.skills._tokens import count_tokens
+from persona.skills.aliases import resolve_skill_aliases
+from persona.skills.catalog import expand_collections
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -89,8 +91,12 @@ class SkillScanner:
             order as ``declared_skills``. Missing or malformed skills are
             omitted with a WARNING log.
         """
+        # Spec 24: expand ``collection:`` / ``skill:`` refs against the catalog
+        # (D-24-6), then rewrite deprecated skill names (the 5 deleted
+        # document-format skills) to ``document_generation`` so old persona YAMLs
+        # keep loading (D-24-3 / D-24-9). Both steps de-duplicate.
         out: list[SkillSpec] = []
-        for name in declared_skills:
+        for name in resolve_skill_aliases(expand_collections(declared_skills)):
             spec = self._scan_one(name, tool_allow_list)
             if spec is not None:
                 out.append(spec)
@@ -124,6 +130,12 @@ class SkillScanner:
         skill_md = matches[0]
         try:
             meta, body = parse_skill_markdown(skill_md)
+            # Spec 24 v2 fields live under the Agent-Skills-standard ``metadata``
+            # escape hatch (D-24-X-skill-md-spec-compliance). A non-mapping
+            # ``metadata`` yields no v2 fields rather than dropping the skill.
+            md = meta.get("metadata")
+            if not isinstance(md, dict):
+                md = {}
             spec = SkillSpec(
                 name=meta.get("name", name),
                 description=meta["description"],
@@ -132,6 +144,11 @@ class SkillScanner:
                 tools_required=list(meta.get("tools_required") or []),
                 content=body,
                 content_token_count=count_tokens(body),
+                parameters=md.get("parameters"),
+                not_for=list(md.get("not_for") or []),
+                composes_with=list(md.get("composes_with") or []),
+                output_format=md.get("output_format"),
+                token_budget=md.get("token_budget"),
             )
         except SkillManifestError as e:
             _logger.warning(
