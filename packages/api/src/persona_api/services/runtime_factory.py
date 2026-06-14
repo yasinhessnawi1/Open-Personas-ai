@@ -17,6 +17,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from persona.audit import JSONLAuditLogger
+from persona.backends.metadata import (
+    ChainedModelMetadataResolver,
+    OpenRouterModelMetadataResolver,
+    StaticModelMetadataResolver,
+)
+from persona.backends.openrouter_catalog import OpenRouterCatalogClient
 from persona.config import PersonaCoreConfig
 from persona.errors import PersonaNotFoundError
 from persona.history import ConversationHistoryManager
@@ -35,6 +41,7 @@ from persona_runtime.agentic.loop import AgenticLoop
 from persona_runtime.loop import ConversationLoop
 from persona_runtime.prompt import PromptBuilder
 from persona_runtime.router import Router
+from persona_runtime.routing import FirstTokenLatencyTracker, IntelligentRouter
 from sqlalchemy import select
 
 from persona_api.db.models import personas as personas_t
@@ -129,6 +136,49 @@ class RuntimeFactory:
         self._image_backend = image_backend
         # MCP clients accumulated across requests, closed on shutdown.
         self._mcp_clients: list[MCPClient] = []
+        # Spec 23 T13: app-scoped intelligent-routing collaborators, wired into
+        # every per-request loop. Both are stateless w.r.t. persona; the
+        # FirstTokenLatencyTracker is deliberately app-scoped so its per-model
+        # EWMA persists across requests (D-18-X-first-token-measurement-impl /
+        # D-23-6). Per-persona ``routing.intelligent.enabled`` gates whether the
+        # loop actually consults the router — existing personas (default off)
+        # route byte-identically (criterion 11).
+        self._latency_tracker = FirstTokenLatencyTracker()
+        self._intelligent_router = self._build_intelligent_router(
+            tier_registry, self._latency_tracker
+        )
+
+    @staticmethod
+    def _build_intelligent_router(
+        tier_registry: TierRegistry, latency_tracker: FirstTokenLatencyTracker
+    ) -> IntelligentRouter:
+        """Compose the IntelligentRouter (static metadata + optional OpenRouter).
+
+        The static per-provider tables are always available (the authoritative,
+        offline source). When ``PERSONA_OPENROUTER_API_KEY`` is set, the
+        OpenRouter catalog is added as the broad-coverage fallback
+        (D-23-X-resolver-precedence: static-authoritative-on-overlap). Catalog
+        client construction is network-free (D-22-11); the first ``list_models``
+        fetch is lazy + fail-open (D-22-1). The shared ``latency_tracker`` lets
+        the router consult live per-model latency (D-23-6).
+        """
+        import os
+
+        openrouter = None
+        api_key = os.environ.get("PERSONA_OPENROUTER_API_KEY", "").strip()
+        if api_key:
+            base_url = os.environ.get("PERSONA_OPENROUTER_BASE_URL", "").strip() or None
+            openrouter = OpenRouterModelMetadataResolver(
+                OpenRouterCatalogClient(api_key, base_url=base_url)
+            )
+        resolver = ChainedModelMetadataResolver(
+            static=StaticModelMetadataResolver(), openrouter=openrouter
+        )
+        return IntelligentRouter(
+            tier_registry=tier_registry,
+            metadata_resolver=resolver,
+            latency_tracker=latency_tracker,
+        )
 
     # -- shared per-request pieces ------------------------------------------
 
@@ -296,6 +346,14 @@ class RuntimeFactory:
             router=Router(),
             tier_registry=self._tier_registry,
             turn_log_writer=self._turn_log_writer,
+            # Spec 23 T13: app-scoped intelligent-routing wiring. The shared
+            # latency tracker persists per-model EWMA across requests; the
+            # IntelligentRouter is consulted only when the persona opted in
+            # (routing.intelligent.enabled) — default-off personas route
+            # byte-identically (criterion 11). A persona with an unenforceable
+            # per-day cap fails loud at this construction (D-23-7 ruling).
+            latency_tracker=self._latency_tracker,
+            intelligent_router=self._intelligent_router,
         )
         # Replace the loop's default-empty deferred_input_files with the
         # SHARED holder (same identity), so the use_skill intercept's

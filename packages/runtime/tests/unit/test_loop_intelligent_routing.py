@@ -1,0 +1,294 @@
+"""Spec 23 T11 — IntelligentRouter wired through the ConversationLoop.
+
+The load-bearing test here is the **backward-compat contract** (criterion 11 /
+the merge-safety gate): a persona with no ``routing.intelligent`` block produces a
+byte-identical routing decision whether or not an IntelligentRouter is injected.
+The positive test proves the opt-in path enriches the decision + records it on the
+TurnLog (criteria 1, 5, 10) end-to-end through the loop.
+
+Scripted backend, no real model / network — lives in tests/unit/.
+"""
+
+from __future__ import annotations
+
+import pytest
+from _fakes import FakeStore, ScriptedBackend, ScriptedRound  # type: ignore[import-not-found]
+from persona.backends import BackendConfig
+from persona.backends.model_metadata import ModelMetadata
+from persona.backends.multi_model import MultiModelChatBackend
+from persona.history import ConversationHistoryManager
+from persona.schema.conversation import Conversation
+from persona.schema.persona import IntelligentRoutingConfig, Persona, PersonaIdentity, RoutingConfig
+from persona.skills import SkillInjector, SkillScanner
+from persona.tools import Toolbox
+from persona_runtime.logging import MemoryTurnLogWriter
+from persona_runtime.loop import ConversationLoop
+from persona_runtime.prompt import PromptBuilder
+from persona_runtime.routing import HeuristicRouter, IntelligentRouter
+from persona_runtime.tier import TierConfig, TierRegistry
+
+_CFG = BackendConfig(provider="anthropic", model="primary", api_key="sk-test")
+
+
+class _MapResolver:
+    def __init__(self, table: dict[str, ModelMetadata]) -> None:
+        self._table = table
+
+    def resolve(self, model_id: str) -> ModelMetadata | None:
+        return self._table.get(model_id)
+
+
+def _md(*, quality: float, cost: float = 0.1) -> ModelMetadata:
+    return ModelMetadata(
+        cost_input_per_1k_tokens=cost,
+        cost_output_per_1k_tokens=cost,
+        latency_p50_ms=300.0,
+        quality_benchmark=quality,
+        tools_supported=True,
+        vision_supported=True,
+        context_length=200_000,
+    )
+
+
+def _multi_model_registry() -> TierRegistry:
+    """A frontier tier whose backend is a 2-model wrapper (cheap, then good)."""
+    subs = [
+        ScriptedBackend(
+            [ScriptedRound(text="cheap says hi")], provider_name="deepseek", model_name="cheap"
+        ),
+        ScriptedBackend(
+            [ScriptedRound(text="good says hi")], provider_name="anthropic", model_name="good"
+        ),
+    ]
+    wrapper = MultiModelChatBackend(subs, tier_name="frontier")  # type: ignore[arg-type]
+    return TierRegistry(
+        {
+            "frontier": TierConfig(
+                name="frontier", backend_config=_CFG, preconstructed_backend=wrapper
+            )
+        }
+    )
+
+
+def _persona(intelligent: IntelligentRoutingConfig | None = None) -> Persona:
+    routing = RoutingConfig(intelligent=intelligent) if intelligent is not None else RoutingConfig()
+    return Persona(
+        persona_id="astrid",
+        identity=PersonaIdentity(name="Astrid", role="assistant", background="bg", constraints=[]),
+        routing=routing,
+    )
+
+
+def _build_loop(
+    *, persona: Persona, registry: TierRegistry, intelligent_router: IntelligentRouter | None
+) -> tuple[ConversationLoop, MemoryTurnLogWriter]:
+    writer = MemoryTurnLogWriter()
+    loop = ConversationLoop(
+        persona=persona,
+        stores={k: FakeStore() for k in ("identity", "self_facts", "worldview", "episodic")},  # type: ignore[arg-type, misc]
+        toolbox=Toolbox([], allow_list=None),  # type: ignore[arg-type]
+        skill_scanner=SkillScanner([]),
+        skill_injector=SkillInjector(),
+        scanned_skills=[],
+        history_manager=ConversationHistoryManager(compact_every=10, keep_recent=5),
+        prompt_builder=PromptBuilder(),
+        router=HeuristicRouter(tier_registry=registry),
+        tier_registry=registry,
+        turn_log_writer=writer,
+        intelligent_router=intelligent_router,
+    )
+    return loop, writer
+
+
+def _conversation() -> Conversation:
+    return Conversation(conversation_id="c1", persona_id="astrid", messages=[])
+
+
+class TestBackwardCompatContract:
+    """Criterion 11 / merge-safety gate: feature OFF ⇒ byte-identical decision."""
+
+    @pytest.mark.asyncio
+    async def test_no_intelligent_router_leaves_decision_unchanged(self) -> None:
+        loop, writer = _build_loop(
+            persona=_persona(), registry=_multi_model_registry(), intelligent_router=None
+        )
+        async for _ in loop.turn(_conversation(), "hello"):
+            pass
+        d = writer.logs[0].routing_decision
+        assert d is not None
+        # No model-selection happened: all Spec 23 fields at their defaults.
+        assert d.model_candidates == ()
+        assert d.score_vector == {}
+        assert d.weights_used == {}
+        assert d.model_fallback_engaged is False
+        assert d.model_fallback_reason is None
+
+    @pytest.mark.asyncio
+    async def test_router_present_but_disabled_is_identical_to_absent(self) -> None:
+        # A persona WITHOUT a routing.intelligent block defaults enabled=False, so
+        # injecting a router must change nothing — proves the gate, not just the
+        # default wiring.
+        resolver = _MapResolver(
+            {"anthropic/good": _md(quality=0.95), "deepseek/cheap": _md(quality=0.5)}
+        )
+
+        loop_off, w_off = _build_loop(
+            persona=_persona(), registry=_multi_model_registry(), intelligent_router=None
+        )
+        loop_disabled, w_disabled = _build_loop(
+            persona=_persona(),
+            registry=_multi_model_registry(),
+            intelligent_router=IntelligentRouter(
+                tier_registry=_multi_model_registry(), metadata_resolver=resolver
+            ),
+        )
+        async for _ in loop_off.turn(_conversation(), "hello"):
+            pass
+        async for _ in loop_disabled.turn(_conversation(), "hello"):
+            pass
+
+        d_off = w_off.logs[0].routing_decision
+        d_disabled = w_disabled.logs[0].routing_decision
+        assert d_off is not None
+        assert d_disabled is not None
+        # Byte-identical decision: same tier + model + all model-selection fields.
+        assert d_off.tier == d_disabled.tier
+        assert d_off.model == d_disabled.model
+        assert d_disabled.model_fallback_engaged is False
+        assert d_disabled.model_candidates == ()
+
+
+class TestOptInPath:
+    """Criterion 1 / 5 / 10: enabled ⇒ metadata-driven model choice, recorded."""
+
+    @pytest.mark.asyncio
+    async def test_enabled_picks_highest_scorer_and_records_it(self) -> None:
+        resolver = _MapResolver(
+            {"anthropic/good": _md(quality=0.95), "deepseek/cheap": _md(quality=0.50)}
+        )
+        registry = _multi_model_registry()
+        loop, writer = _build_loop(
+            persona=_persona(IntelligentRoutingConfig(enabled=True)),
+            registry=registry,
+            intelligent_router=IntelligentRouter(
+                tier_registry=registry, metadata_resolver=resolver
+            ),
+        )
+        async for _ in loop.turn(_conversation(), "hello"):
+            pass
+        d = writer.logs[0].routing_decision
+        assert d is not None
+        # Default (quality-led) weights → the higher-quality model wins, even
+        # though it sits at slot 1 in the MODELS list (reorder_primary moved it).
+        assert d.model == "anthropic/good"
+        assert d.model_fallback_engaged is False
+        assert set(d.model_candidates) == {"anthropic/good", "deepseek/cheap"}
+        assert set(d.score_vector) == {"cost", "quality", "latency"}
+        assert d.weights_used == {"cost": 0.40, "quality": 0.50, "latency": 0.10}
+
+    @pytest.mark.asyncio
+    async def test_metadata_miss_degrades_gracefully(self) -> None:
+        # Empty resolver → every candidate misses → degrade to rule-based slot-0,
+        # turn still completes (criterion 9).
+        registry = _multi_model_registry()
+        loop, writer = _build_loop(
+            persona=_persona(IntelligentRoutingConfig(enabled=True)),
+            registry=registry,
+            intelligent_router=IntelligentRouter(
+                tier_registry=registry, metadata_resolver=_MapResolver({})
+            ),
+        )
+        chunks = [c async for c in loop.turn(_conversation(), "hello")]
+        assert chunks[-1].is_final is True
+        d = writer.logs[0].routing_decision
+        assert d is not None
+        assert d.model_fallback_engaged is True
+        assert d.model_fallback_reason == "metadata_miss"
+
+
+class TestPerDayBudgetFailLoud:
+    """D-23-7 ruling: a configured per-day cap must NOT silently no-op (v0.2)."""
+
+    def test_per_day_cap_with_intelligent_routing_fails_at_construction(self) -> None:
+        from persona.backends.errors import IntelligentRoutingError
+        from persona.schema.persona import RoutingBudgetConfig
+
+        registry = _multi_model_registry()
+        persona = Persona(
+            persona_id="astrid",
+            identity=PersonaIdentity(
+                name="Astrid", role="assistant", background="bg", constraints=[]
+            ),
+            routing=RoutingConfig(
+                intelligent=IntelligentRoutingConfig(enabled=True),
+                budget=RoutingBudgetConfig(max_cents_per_day=500.0),
+            ),
+        )
+        with pytest.raises(IntelligentRoutingError) as exc:
+            _build_loop(
+                persona=persona,
+                registry=registry,
+                intelligent_router=IntelligentRouter(
+                    tier_registry=registry, metadata_resolver=_MapResolver({})
+                ),
+            )
+        assert "max_cents_per_day" in exc.value.context
+
+    def test_per_day_cap_inert_when_intelligent_disabled(self) -> None:
+        # Feature off → budget is inert by design; no error.
+        from persona.schema.persona import RoutingBudgetConfig
+
+        persona = Persona(
+            persona_id="astrid",
+            identity=PersonaIdentity(
+                name="Astrid", role="assistant", background="bg", constraints=[]
+            ),
+            routing=RoutingConfig(budget=RoutingBudgetConfig(max_cents_per_day=500.0)),
+        )
+        # No raise.
+        _build_loop(persona=persona, registry=_multi_model_registry(), intelligent_router=None)
+
+
+class TestTurnLogJsonlCarriesModelSelection:
+    """Criterion 10: the model-selection audit trail survives JSONL serialisation."""
+
+    @pytest.mark.asyncio
+    async def test_jsonl_round_trip_carries_model_selection_fields(self, tmp_path: object) -> None:
+        import json
+        from pathlib import Path
+
+        from persona_runtime.logging import JSONLTurnLogWriter
+
+        root = Path(str(tmp_path))
+        resolver = _MapResolver(
+            {"anthropic/good": _md(quality=0.95), "deepseek/cheap": _md(quality=0.50)}
+        )
+        registry = _multi_model_registry()
+        writer = JSONLTurnLogWriter(root)
+        loop = ConversationLoop(
+            persona=_persona(IntelligentRoutingConfig(enabled=True)),
+            stores={k: FakeStore() for k in ("identity", "self_facts", "worldview", "episodic")},  # type: ignore[arg-type, misc]
+            toolbox=Toolbox([], allow_list=None),  # type: ignore[arg-type]
+            skill_scanner=SkillScanner([]),
+            skill_injector=SkillInjector(),
+            scanned_skills=[],
+            history_manager=ConversationHistoryManager(compact_every=10, keep_recent=5),
+            prompt_builder=PromptBuilder(),
+            router=HeuristicRouter(tier_registry=registry),
+            tier_registry=registry,
+            turn_log_writer=writer,
+            intelligent_router=IntelligentRouter(
+                tier_registry=registry, metadata_resolver=resolver
+            ),
+        )
+        async for _ in loop.turn(_conversation(), "hello"):
+            pass
+
+        line = (root / "c1.jsonl").read_text(encoding="utf-8").strip()
+        payload = json.loads(line)
+        rd = payload["routing_decision"]
+        assert rd["model"] == "anthropic/good"
+        assert rd["model_fallback_engaged"] is False
+        assert set(rd["model_candidates"]) == {"anthropic/good", "deepseek/cheap"}
+        assert set(rd["score_vector"]) == {"cost", "quality", "latency"}
+        assert rd["weights_used"] == {"cost": 0.40, "quality": 0.50, "latency": 0.10}

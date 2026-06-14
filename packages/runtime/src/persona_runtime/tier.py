@@ -238,6 +238,41 @@ class TierRegistry:
         effective = self._resolve(tier_name)
         return self._tiers[effective].metadata
 
+    def candidate_models_for(self, tier_name: str) -> tuple[tuple[str, str], ...]:
+        """Return the tier's candidate ``(provider, model)`` pairs (Spec 23 T10).
+
+        Read-only — reads the preconstructed :class:`MultiModelChatBackend`
+        wrapper's ``backends`` (Spec 20 D-20-17) WITHOUT instantiating anything
+        (it never calls :meth:`get`). This is the enumeration seam the
+        :class:`~persona_runtime.routing.intelligent_router.IntelligentRouter`
+        uses to score the models within a tier (D-23-X-seam-shape).
+
+        Returns ``()`` — "nothing to choose, no-op" — when the tier has no
+        preconstructed multi-model wrapper: a single-backend (triplet / lazy)
+        tier, a degenerate length-1 wrapper that was bypassed at build time, or
+        an unconfigured tier with no fallback. The IntelligentRouter treats an
+        empty result as "this is not a multi-model tier" and leaves the
+        rule-based slot-0 selection untouched.
+
+        Args:
+            tier_name: The tier the router chose.
+
+        Returns:
+            ``(provider_name, model_name)`` for each constructed sub-backend in
+            fallback order, or ``()`` when the tier is not a multi-model tier.
+        """
+        # Resolve WITHOUT logging / instantiation: exact match, then the same
+        # fallback order :meth:`get` uses, else give up quietly.
+        effective = tier_name if tier_name in self._tiers else None
+        if effective is None:
+            effective = next((c for c in _FALLBACK_ORDER if c in self._tiers), None)
+        if effective is None:
+            return ()
+        backend = self._tiers[effective].preconstructed_backend
+        if not isinstance(backend, MultiModelChatBackend):
+            return ()
+        return tuple((b.provider_name, b.model_name) for b in backend.backends)
+
     def supports_vision_for(self, tier_name: str) -> bool:
         """Whether the backend for ``tier_name`` accepts image content.
 

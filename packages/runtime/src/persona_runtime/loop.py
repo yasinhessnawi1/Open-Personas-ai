@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict
 
 from persona.autonomy import policy_for, resolve_autonomy
+from persona.backends.errors import IntelligentRoutingError
 from persona.backends.types import reasoning_as_text
 from persona.logging import get_logger
 from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
@@ -63,6 +64,7 @@ from persona_runtime.routing import (
     RoutingContext,
     RoutingDecision,
     classifiers,
+    reorder_primary,
 )
 
 if TYPE_CHECKING:
@@ -82,7 +84,7 @@ if TYPE_CHECKING:
     from persona_runtime.prompt import PromptBuilder
     from persona_runtime.question_author import QuestionAuthor
     from persona_runtime.questions import ProactiveQuestion
-    from persona_runtime.routing import Router
+    from persona_runtime.routing import IntelligentRouter, Router
     from persona_runtime.tier import TierRegistry
 
 __all__ = ["ConversationLoop"]
@@ -189,6 +191,7 @@ class ConversationLoop:
         max_tool_rounds: int = 5,
         latency_tracker: FirstTokenLatencyTracker | None = None,
         question_author: QuestionAuthor | None = None,
+        intelligent_router: IntelligentRouter | None = None,
     ) -> None:
         self._persona = persona
         self._stores = stores
@@ -229,6 +232,36 @@ class ConversationLoop:
         # tracker is the legacy path (no measurement, no UnifiedRouter
         # latency signal).
         self._latency_tracker = latency_tracker
+        # Spec 23 T11: opt-in model-within-tier selection (D-23-X-seam-shape).
+        # ``None`` (the default) is the v0.1 path — every existing caller stays
+        # byte-identical. The per-session spend tally is loop-owned (D-23-7 /
+        # D-25-X-t12-window-location precedent: the loop owns the rolling window,
+        # not the stateless router/backend); it accumulates each turn's cost and
+        # feeds the soft per-session budget ramp. (Per-day enforcement needs a
+        # cross-session persistent store — deferred; see MAINTENANCE.md.)
+        self._intelligent_router = intelligent_router
+        self._session_spent_cents: float = 0.0
+        # Spec 23 T11 (D-23-7): per-day budget enforcement needs a cross-session
+        # persistent spend store that v0.2 does not have — the loop tracks only
+        # its own per-session tally. A configured ``max_cents_per_day`` must NOT
+        # silently no-op (operators trust a cost cap they set), so fail LOUD at
+        # construction rather than accept an unenforced cap. Per-turn (hard) and
+        # per-session (soft) ship functional; remove the per-day cap or use those.
+        if (
+            intelligent_router is not None
+            and persona.routing.intelligent.enabled
+            and persona.routing.budget.max_cents_per_day is not None
+        ):
+            raise IntelligentRoutingError(
+                "routing.budget.max_cents_per_day is set but per-day enforcement is "
+                "not available in this version (no cross-session spend store); the cap "
+                "would not be enforced. Remove max_cents_per_day, or use "
+                "max_cents_per_turn / max_cents_per_session which are enforced.",
+                context={
+                    "persona_id": persona.persona_id or "",
+                    "max_cents_per_day": str(persona.routing.budget.max_cents_per_day),
+                },
+            )
         # Spec 18 T06 strangler-fig affordance: legacy callers may have
         # constructed `Router()` without a registry; ensure the router's
         # registry slot is wired so `route(context)` can do Layer 1 filtering.
@@ -339,6 +372,12 @@ class ConversationLoop:
         if on_event is not None:
             await on_event(RunEvent.tier(tier))
         backend = self._tiers.get(tier)
+        # Spec 23 T11 seam (D-23-X-seam-shape): when intelligent routing chose a
+        # model within this tier, re-wrap the tier backend so the chosen model is
+        # primary (rest preserved as fallback). No-op when the feature is off or
+        # the choice equals the current primary — backward-compat (criterion 11).
+        if self._intelligent_router is not None and self._persona.routing.intelligent.enabled:
+            backend = reorder_primary(backend, decision.model)
         max_tokens = _backend_max_tokens(backend)
 
         # Mutable per-turn state for the generation sub-loop. ``tool_messages``
@@ -764,14 +803,34 @@ class ConversationLoop:
             # Composition root handles the override — the router never sees
             # this case (Spec 05 rule 1 preserved). Build a minimal decision
             # so the TurnLog records the override path for observability.
-            return RoutingDecision(
+            decision = RoutingDecision(
                 tier=override,
                 model=self._tiers.model_name_for(override),
                 rationale=f"persona_override → {override}",
                 candidates_considered=(override,),
             )
+            # Spec 23 T11: a tier override pins the TIER; intelligent routing may
+            # still pick the best MODEL within it (orthogonal). Off-path is a
+            # no-op (criterion 11) — the override context is built only when active.
+            if self._model_selection_active():
+                ctx = self._build_routing_context(user_message, conversation, turn_has_image)
+                decision = self._enrich_with_model_selection(decision, ctx)
+            return decision
 
-        routing_context = RoutingContext(
+        routing_context = self._build_routing_context(user_message, conversation, turn_has_image)
+        decision = self._router.route(routing_context)
+        # Spec 23 T11 (D-23-X-seam-shape): enrich the rule-based tier decision
+        # with the metadata-driven model choice. No-op when the feature is off —
+        # the decision is byte-identical to v0.1 (criterion 11).
+        if self._model_selection_active():
+            decision = self._enrich_with_model_selection(decision, routing_context)
+        return decision
+
+    def _build_routing_context(
+        self, user_message: str, conversation: Conversation, turn_has_image: bool
+    ) -> RoutingContext:
+        """Build the turn's :class:`RoutingContext` (extracted, Spec 18 T06)."""
+        return RoutingContext(
             requires_vision=turn_has_image,
             estimated_input_tokens=len(user_message) // 4,  # v0.1 cheap estimate
             requires_strong_tools=False,
@@ -781,7 +840,40 @@ class ConversationLoop:
             conversation_phase="opening" if conversation.turn_count == 0 else "middle",
             profile="text_default",
         )
-        return self._router.route(routing_context)
+
+    def _model_selection_active(self) -> bool:
+        """Whether Spec 23 model-within-tier selection should run this turn."""
+        return self._intelligent_router is not None and self._persona.routing.intelligent.enabled
+
+    def _enrich_with_model_selection(
+        self, decision: RoutingDecision, context: RoutingContext
+    ) -> RoutingDecision:
+        """Overlay the IntelligentRouter's model choice onto ``decision`` (Spec 23 T11).
+
+        Raises:
+            BudgetExceededError: per-turn hard cap admits no candidate (criterion
+                7) — propagates out of the turn (fail-loud).
+        """
+        if self._intelligent_router is None:  # defensive — callers gate on _model_selection_active
+            return decision
+        sel = self._intelligent_router.select_model(
+            decision.tier,
+            context,
+            intelligent=self._persona.routing.intelligent,
+            budget=self._persona.routing.budget,
+            session_spent_cents=self._session_spent_cents,
+            day_spent_cents=0.0,  # per-day needs a persistent cross-session store (deferred)
+        )
+        return decision.model_copy(
+            update={
+                "model": sel.model or decision.model,
+                "model_candidates": sel.model_candidates,
+                "score_vector": sel.score_vector,
+                "weights_used": sel.weights_used,
+                "model_fallback_engaged": sel.fallback_engaged,
+                "model_fallback_reason": sel.fallback_reason,
+            }
+        )
 
     async def _stream_round(
         self,
@@ -930,6 +1022,10 @@ class ConversationLoop:
         cost = estimate_cost_cents(
             backend.provider_name, backend.model_name, prompt_tokens, completion_tokens
         )
+        # Spec 23 T11 (D-23-7): accumulate this turn's cost into the loop-owned
+        # per-session tally that feeds the soft per-session budget ramp on the
+        # NEXT turn. Loop-owned, never on the stateless router/backend.
+        self._session_spent_cents += cost
         # Spec 25 T13 (§2.6 / D-25-7): surface how ``cost`` was derived so
         # operators can tell provider-listed rates from verify-at-deploy
         # shadow-price estimates (e.g. NVIDIA).

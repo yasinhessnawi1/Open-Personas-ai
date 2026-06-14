@@ -11,6 +11,33 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Spec 23 — Intelligent Routing: Cost/Quality/Latency-Aware Model Selection (Phase 4 complete; operator-pass green, pending final sign-off)
+
+> **Opt-in, metadata-driven model selection WITHIN a tier.** The rule-based router still picks the tier (frontier/mid/small — ARCHITECTURE §5.3 / §9 intact); a new `IntelligentRouter` then scores the candidate models in that tier's MODELS list on cost / quality / latency (+ a hard capability gate) and picks the best, re-wrapping the tier backend so the chosen model is primary (Spec 20 fallback chain preserved). Deterministic scoring on **published metadata** — no router model, no embeddings (§9.10 editorial enrichment). Default **off**; existing personas route byte-identically (criterion 11, proven via a router-present-but-disabled contract test). Zero new dependencies.
+>
+> **Gates:** 12 acceptance criteria — see [`docs/specs/phase2/spec_23/closeout.md`](docs/specs/phase2/spec_23/closeout.md). `mypy --strict` core (122) + runtime (33) + `mypy` api (56) clean; `ruff` clean (577 files); **3243 unit tests passed, 25 skipped**, zero Spec 05/18/20/22 regressions. Operator pass pending (tool-touching: model-callable selection).
+
+#### Added (persona-core)
+- **`ModelMetadata`** + **`ModelMetadataResolver`** Protocol ([`backends/model_metadata.py`](packages/core/src/persona/backends/model_metadata.py)) — per-model cost (cents/1k, matching `TierMetadata`), normalised quality (`[0,1]`), published latency, capability flags, context length, `cost_verified_at_deploy`.
+- **Static per-provider metadata tables** ([`backends/metadata/`](packages/core/src/persona/backends/metadata/)) — `anthropic / openai / google / deepseek / nvidia`, the single authoritative numbers home (D-23-X-metadata-placement); `StaticModelMetadataResolver`, `OpenRouterModelMetadataResolver` (wraps the Spec 22 catalog, fail-open), `ChainedModelMetadataResolver` (static-authoritative-on-overlap → OpenRouter-for-coverage).
+- **`IntelligentRoutingError`** + **`BudgetExceededError`** ([`backends/errors.py`](packages/core/src/persona/backends/errors.py)) — wrapper-layer family (D-20-16 partition).
+- **`routing.intelligent`** + **`routing.budget`** persona-YAML blocks ([`schema/persona.py`](packages/core/src/persona/schema/persona.py)) — additive, optional, **no `schema_version` bump** (D-23-9 dropped; D-01-12/`autonomy` precedent).
+
+#### Added (persona-runtime)
+- **`IntelligentRouter`** ([`routing/intelligent_router.py`](packages/runtime/src/persona_runtime/routing/intelligent_router.py)) — composes with (does not replace) the rule-based router; degrades to slot-0 on metadata miss (criterion 9); per-turn hard-cap fail-loud.
+- **`model_scorer.py`** (capability pre-gate → normalised weighted-sum → lexicographic tie-break, deterministic) + **`routing_budget.py`** (pure evaluator: hard per-turn, soft per-session/per-day re-weighting) + **`model_selection.py`** (`reorder_primary` cheap re-wrap seam + `candidate_models_for` registry accessor).
+- **`RoutingDecision`** extended additively with the model-selection audit trail (`model_candidates`, `score_vector`, `weights_used`, `model_fallback_engaged`, `model_fallback_reason`) — flows onto the JSONL `TurnLog` (criterion 10; runtime-only, no migration). `nvidia_models.py` reconciled to **derive** its `TierMetadata` from the core numbers home (no duplicated numbers).
+
+#### Added (persona-api)
+- **`RuntimeFactory`** wires one app-scoped `IntelligentRouter` (static metadata + OpenRouter when `PERSONA_OPENROUTER_API_KEY` is set) + a shared `FirstTokenLatencyTracker` into every per-request loop; per-persona `enabled` gates use.
+
+#### Changed / notes
+- **ARCHITECTURE.md §9.10** editorial enrichment (not a reopening): rule-based routing extended with deterministic metadata scoring; cites the in-tree Spec 18 precedent.
+- **Per-day budget cap is not yet enforced** (no cross-session spend store) and **fails loud at startup** rather than silently no-op (D-23-X-per-day-fail-loud). Per-turn + per-session ship functional.
+
+#### Fixed
+- **OpenRouter resolver crash on negative sentinel pricing** (found by the operator pass, D-23-X-openrouter-negative-pricing) — the live catalog returns `"-1"` (variable/not-applicable) pricing on some entries, which violated `ModelMetadata`'s `ge=0` cost bound and crashed the resolver. The resolver now skips-and-WARNs entries that fail validation (mirrors the Spec 22 catalog-parser skip pattern); a skipped entry is a metadata miss → static fallback → rule-based.
+
 ### Spec 21 — Proactive Autonomy: Question Asking + Task Auto-Dispatch (Phase 6 complete 2026-06-13, pending sign-off)
 
 > **Two coupled autonomy features, one spec:** (1) **proactive clarifying questions** (3 predefined options + 1 free-form) across chat *and* agentic-loop contexts, tuned by a new per-persona **autonomy preference** (`cautious | balanced | decisive`, YAML-default + `persona_self`-learnable); and (2) **consent-gated task auto-dispatch** — a request mapping to the persona's declared tools/skills can auto-start a Run, with a one-time per-persona consent gate. **20 decisions locked** (Phase 4) per [`docs/specs/phase2/spec_21/decisions.md`](docs/specs/phase2/spec_21/decisions.md); zero new dependencies.

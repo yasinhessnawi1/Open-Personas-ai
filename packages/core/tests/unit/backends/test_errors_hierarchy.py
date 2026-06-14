@@ -20,7 +20,9 @@ from persona.backends.errors import (
     AllModelsFailedError,
     AuthenticationError,
     BackendTimeoutError,
+    BudgetExceededError,
     IncompleteTierConfigError,
+    IntelligentRoutingError,
     LocalProviderInModelsListError,
     MalformedTierModelsError,
     ModelNotFoundError,
@@ -52,6 +54,9 @@ WRAPPER_OR_CONFIG_LAYER: list[type[PersonaError]] = [
     MalformedTierModelsError,
     ProviderCredentialMissingError,
     TierNotConfiguredError,
+    # Spec 23 D-20-16 partition: intelligent-routing failures are wrapper-layer.
+    IntelligentRoutingError,
+    BudgetExceededError,
 ]
 
 
@@ -221,3 +226,29 @@ class TestContextShape:
         assert exc.context["reason"] == "timeout"
         # Provider-layer: caught by ``except ProviderError``.
         assert isinstance(exc, ProviderError)
+
+
+class TestSpec23IntelligentRoutingErrors:
+    """Spec 23 D-20-16: intelligent-routing errors are a wrapper-layer family."""
+
+    def test_budget_exceeded_is_an_intelligent_routing_error(self) -> None:
+        # Family root: ``except IntelligentRoutingError`` catches BudgetExceededError.
+        assert issubclass(BudgetExceededError, IntelligentRoutingError)
+
+    def test_budget_exceeded_error_context_keys(self) -> None:
+        # D-23-7 canonical shape (per-turn hard cap).
+        exc = BudgetExceededError(
+            "no candidate fits the per-turn budget",
+            context={
+                "tier": "frontier",
+                "scope": "per_turn",
+                "cap_cents": "5",
+                "cheapest_candidate_cents": "7.2",
+            },
+        )
+        assert exc.context["tier"] == "frontier"
+        assert exc.context["scope"] == "per_turn"
+        assert exc.context["cap_cents"] == "5"
+        assert exc.context["cheapest_candidate_cents"] == "7.2"
+        # Wrapper-layer: NOT caught by ``except ProviderError``.
+        assert not isinstance(exc, ProviderError)

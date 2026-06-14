@@ -22,8 +22,11 @@ __all__ = [
     "CatalogueVoice",
     "EmbeddingConfig",
     "EpisodicEntry",
+    "IntelligentRoutingConfig",
+    "ModelScoringWeights",
     "Persona",
     "PersonaIdentity",
+    "RoutingBudgetConfig",
     "RoutingConfig",
     "SelfFact",
     "VoiceSpec",
@@ -173,13 +176,74 @@ class EpisodicEntry(BaseModel):
         return value
 
 
+class ModelScoringWeights(BaseModel):
+    """Per-axis weights for the Spec 23 model-within-tier scorer (D-23-1).
+
+    Weights need NOT sum to 1 — the scorer's weighted sum is relative, so any
+    non-negative vector is valid (an all-zero vector defers entirely to the
+    deterministic tie-break). Defaults mirror Spec 18's ``text_default`` profile
+    (D-23-1): quality-led, cost second, latency light. Capability-fit is NOT a
+    weight here — it is a hard pre-gate in the scorer
+    (D-23-X-capability-filter-layering).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cost: float = Field(default=0.40, ge=0.0)
+    quality: float = Field(default=0.50, ge=0.0)
+    latency: float = Field(default=0.10, ge=0.0)
+
+
+class IntelligentRoutingConfig(BaseModel):
+    """Opt-in metadata-driven model selection within a tier (Spec 23 §2.2; D-23-10).
+
+    Additive + opt-in (D-23-9 / D-23-10): personas without a ``routing.intelligent``
+    block load with ``enabled=False`` and route exactly as v0.1 (criterion 11).
+    When ``enabled``, the :class:`IntelligentRouter` scores the chosen tier's
+    candidate models and picks the best; on a metadata miss it degrades to the
+    rule-based slot-0 selection when ``fallback_to_rule_based_on_miss`` (criterion
+    9).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = False
+    weights: ModelScoringWeights = Field(default_factory=ModelScoringWeights)
+    fallback_to_rule_based_on_miss: bool = True
+
+
+class RoutingBudgetConfig(BaseModel):
+    """Optional per-persona spend caps (Spec 23 §2.4; D-23-7).
+
+    Each cap is ``None`` by default (opt-in). The per-turn cap is HARD
+    (:class:`~persona.backends.errors.BudgetExceededError` when no model fits);
+    the per-session and per-day caps are SOFT (re-weight scoring toward cost as
+    spend approaches them). The running session/day tally is owned by the runtime
+    turn loop, not the schema.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_cents_per_turn: float | None = Field(default=None, ge=0.0)
+    max_cents_per_session: float | None = Field(default=None, ge=0.0)
+    max_cents_per_day: float | None = Field(default=None, ge=0.0)
+
+
 class RoutingConfig(BaseModel):
-    """Per-persona overrides for the runtime router (spec 05)."""
+    """Per-persona overrides for the runtime router (spec 05 + Spec 23).
+
+    Spec 23 adds the additive optional ``intelligent`` and ``budget`` blocks
+    (D-23-9: NO ``schema_version`` bump — the D-01-12 / ``visual_style`` /
+    ``autonomy`` additive-optional precedent). Personas authored before Spec 23
+    omit both and load byte-identically (criterion 11).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tier_for_generation: Literal["frontier", "mid", "small", "auto"] = "auto"
     tier_for_tools: Literal["frontier", "mid", "small", "auto"] = "small"
+    intelligent: IntelligentRoutingConfig = Field(default_factory=IntelligentRoutingConfig)
+    budget: RoutingBudgetConfig = Field(default_factory=RoutingBudgetConfig)
 
 
 class EmbeddingConfig(BaseModel):

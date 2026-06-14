@@ -28,6 +28,11 @@ their NIM deployment.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+
+from persona.backends.metadata import nvidia as _nvidia_metadata
+
 from persona_runtime.tier import TierMetadata
 
 __all__ = [
@@ -38,61 +43,59 @@ __all__ = [
 
 # --- Launch set per D-20-1 ----------------------------------------------------
 #
-# Three chat / reasoning surfaces; the imagegen launch model (FLUX.2-klein-4b)
-# lives outside the chat TierRegistry path and is handled by Spec 20 T16's
-# MultiModelImageBackend.
+# Spec 23 D-23-X-metadata-placement: the per-model NUMBERS (cost / latency /
+# context / cost_verified) live in ONE authoritative home —
+# ``persona.backends.metadata.nvidia.MODELS``. This tier table DERIVES its
+# :class:`TierMetadata` from those rows plus the tier-only fields below
+# (throughput / tool_strength / reasoning_capable, which the model-layer
+# :class:`~persona.backends.model_metadata.ModelMetadata` does not carry) — there
+# is NO second hand-kept copy of any number. Three chat / reasoning surfaces; the
+# imagegen launch model (FLUX.2-klein-4b) lives outside the chat TierRegistry
+# path (Spec 20 T16's MultiModelImageBackend).
+
+
+@dataclass(frozen=True)
+class _TierOnly:
+    """Tier-layer fields not present on the model-layer ``ModelMetadata``.
+
+    ``throughput_tokens_per_sec`` and ``reasoning_capable`` are Spec 18 / D-18-5
+    tier-scoring concerns; ``tool_strength`` is the Layer 1 categorical the
+    model-layer expresses only as the boolean ``tools_supported``. These are the
+    only NVIDIA numbers kept here — everything else derives from the core table.
+    """
+
+    throughput_tokens_per_sec: float
+    tool_strength: Literal["weak", "medium", "strong"]
+    reasoning_capable: bool
+
+
+# R-20-1 throughput midpoints; reasoning_capable per D-20-1 (49b chat-primary is
+# NOT reasoning; 120b enable_thinking + nano-omni reasoning variant ARE).
+_TIER_ONLY_FIELDS: dict[str, _TierOnly] = {
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5": _TierOnly(45.0, "strong", False),
+    "nvidia/nemotron-3-super-120b-a12b": _TierOnly(30.0, "strong", True),
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": _TierOnly(55.0, "strong", True),
+}
+
+
+def _tier_metadata_for(model_id: str) -> TierMetadata:
+    """Compose a :class:`TierMetadata` from the core model row + tier-only fields."""
+    model = _nvidia_metadata.MODELS[model_id]
+    extra = _TIER_ONLY_FIELDS[model_id]
+    return TierMetadata(
+        cost_input_per_1k_tokens=model.cost_input_per_1k_tokens,
+        cost_output_per_1k_tokens=model.cost_output_per_1k_tokens,
+        first_token_latency_ms=model.latency_p50_ms,
+        throughput_tokens_per_sec=extra.throughput_tokens_per_sec,
+        context_window=model.context_length,
+        tool_strength=extra.tool_strength,
+        reasoning_capable=extra.reasoning_capable,
+        cost_verified_at_deploy=model.cost_verified_at_deploy,
+    )
+
 
 NVIDIA_LAUNCH_MODEL_METADATA: dict[str, TierMetadata] = {
-    # Chat primary — 128k confirmed context, native tool calling, NOT a
-    # dedicated reasoning model (reasoning_capable=False).
-    "nvidia/llama-3.3-nemotron-super-49b-v1.5": TierMetadata(
-        # R-20-4: NVIDIA does not publish $/Mtok; best-estimate 0.30 / 0.60
-        # cents per 1k (mid-range vs llama-3.3 hosted pricing on other
-        # providers). cost_verified_at_deploy=False signals operator override.
-        cost_input_per_1k_tokens=0.30,
-        cost_output_per_1k_tokens=0.60,
-        # R-20-1: 200-400ms first-token estimate; midpoint 300ms.
-        first_token_latency_ms=300.0,
-        # R-20-1: 30-60 tps estimate; midpoint 45.
-        throughput_tokens_per_sec=45.0,
-        # Per model card — 128k = 131072 tokens.
-        context_window=131072,
-        tool_strength="strong",
-        reasoning_capable=False,
-        cost_verified_at_deploy=False,
-    ),
-    # Chat long-context + reasoning (via enable_thinking extra_body flag) —
-    # 1M context, NVIDIA's flagship agentic-reasoning model.
-    "nvidia/nemotron-3-super-120b-a12b": TierMetadata(
-        cost_input_per_1k_tokens=1.50,
-        cost_output_per_1k_tokens=7.50,
-        # R-20-1: 400-800ms first-token estimate; midpoint 600ms.
-        first_token_latency_ms=600.0,
-        # R-20-1: 20-40 tps estimate; midpoint 30.
-        throughput_tokens_per_sec=30.0,
-        # Per model card — 1M context window (verify served context at deploy
-        # since served context may differ from advertised).
-        context_window=1_000_000,
-        tool_strength="strong",
-        reasoning_capable=True,
-        cost_verified_at_deploy=False,
-    ),
-    # Reasoning + vision (omni-modal: image/video/speech/text). Cheaper
-    # reasoning option than 120b-a12b. 30B total / 3B active MoE.
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": TierMetadata(
-        cost_input_per_1k_tokens=0.15,
-        cost_output_per_1k_tokens=0.30,
-        # R-20-1: 200-400ms first-token estimate; midpoint 300ms.
-        first_token_latency_ms=300.0,
-        # R-20-1: 40-70 tps estimate; midpoint 55.
-        throughput_tokens_per_sec=55.0,
-        # R-20-1 modelcard fetch failed — conservative 32k default; operator
-        # MUST re-measure against actual served context.
-        context_window=32768,
-        tool_strength="strong",
-        reasoning_capable=True,
-        cost_verified_at_deploy=False,
-    ),
+    model_id: _tier_metadata_for(model_id) for model_id in _TIER_ONLY_FIELDS
 }
 
 

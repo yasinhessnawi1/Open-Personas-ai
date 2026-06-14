@@ -61,7 +61,9 @@ __all__ = [
     "AuthenticationError",
     "BackendTimeoutError",
     "BackendVisionNotSupportedError",
+    "BudgetExceededError",
     "IncompleteTierConfigError",
+    "IntelligentRoutingError",
     "LocalProviderInModelsListError",
     "MalformedTierModelsError",
     "ModelNotFoundError",
@@ -348,4 +350,40 @@ class NoVisionTierConfiguredError(RoutingConstraintsUnsatisfiableError):
     The Spec 18 ``required`` field is OPTIONAL on this subclass for
     back-compat — the existing Spec 13 raise site at ``router.py:202``
     does not set it; the new Spec 18 raise sites (T09) do.
+    """
+
+
+class IntelligentRoutingError(PersonaError):
+    """Base for Spec 23 intelligent-routing (model-within-tier) failures.
+
+    Spec 23 D-20-16 partition: a **wrapper-layer** error (roots at
+    :class:`PersonaError` directly, NOT :class:`ProviderError` — intelligent
+    routing composes metadata + scoring, it has no live API call of its own).
+
+    The normal Spec 23 path is **graceful** (a metadata miss degrades to
+    rule-based slot-0 selection, never raising — criterion 9). This base class
+    therefore covers the *fail-loud* exceptions only; today the sole subclass
+    is :class:`BudgetExceededError` (a hard per-turn budget cap). It exists as a
+    family root so ``except IntelligentRoutingError`` catches every
+    intelligent-routing fail-loud case in one clause.
+    """
+
+
+class BudgetExceededError(IntelligentRoutingError):
+    """Raised when a per-turn hard budget cap admits no candidate model (D-23-7).
+
+    Fail-loud (criterion 7): when ``routing.budget.max_cents_per_turn`` is set
+    and every capability-passing candidate's estimated per-turn cost exceeds the
+    cap, the turn fails rather than silently routing to an over-budget model. The
+    per-session / per-day **soft** caps never raise — they re-weight scoring
+    toward cost (D-23-7); only the per-turn hard cap reaches this class.
+
+    Context shape:
+
+    * ``tier`` — the tier whose candidate set was budget-filtered.
+    * ``scope`` — always ``"per_turn"`` (the only hard cap).
+    * ``cap_cents`` — the configured ``max_cents_per_turn`` (string).
+    * ``cheapest_candidate_cents`` — the lowest estimated per-turn cost among
+      the capability-passing candidates (string), so the operator sees how far
+      over the cap the cheapest option was.
     """

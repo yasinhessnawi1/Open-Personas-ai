@@ -139,3 +139,36 @@ class RoutingDecision(BaseModel):
     layer2_score: float = 0.0
     fallback_triggered: bool = False
     fallback_reason: str | None = None
+
+    # ----- Spec 23 model-within-tier selection (D-23-X-routing-decision-extension) ----
+    # Additive + all defaulted: every existing construction site (Spec 05/13/18
+    # routers, override path, tests) stays valid and byte-identical. These carry
+    # the IntelligentRouter's model-selection audit trail onto the JSONL TurnLog
+    # (criterion 10) — runtime-only, NO Alembic migration (the columnar
+    # PostgresTurnLogWriter maps a fixed subset). They are NAMED distinctly from
+    # the tier-level ``fallback_triggered``/``fallback_reason`` above so the two
+    # fallback layers (Spec 18 tier vs Spec 23 model) never alias.
+
+    model_candidates: tuple[str, ...] = ()
+    """Provider-prefixed ids of the models the IntelligentRouter scored within the
+    chosen tier (capability-passing candidates). Empty when intelligent routing
+    is off or the tier has ≤1 model (nothing to choose)."""
+
+    score_vector: dict[str, float] = Field(default_factory=dict)
+    """The chosen model's normalised per-axis sub-scores (e.g.
+    ``{"cost": 0.87, "quality": 0.93, "latency": 0.65}``). Empty when the
+    heuristic/tier path answered or intelligent routing was off."""
+
+    weights_used: dict[str, float] = Field(default_factory=dict)
+    """The scoring weights applied (persona override or the profile default), so a
+    decision is reproducible from the log alone (criterion 4 / 10)."""
+
+    model_fallback_engaged: bool = False
+    """``True`` when the IntelligentRouter degraded to rule-based slot-0 model
+    selection (metadata miss / scoring error / empty capability set — criterion
+    9). Distinct from the tier-level :attr:`fallback_triggered`."""
+
+    model_fallback_reason: str | None = None
+    """One of ``"metadata_miss"`` / ``"no_candidates"`` /
+    ``"capability_filtered"`` / ``"scoring_error"`` / ``"not_a_multi_model_tier"``
+    when :attr:`model_fallback_engaged` is ``True``; ``None`` otherwise."""

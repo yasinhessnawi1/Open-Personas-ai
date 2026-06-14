@@ -23,6 +23,12 @@ else:
   per-persona-overridable) and `UnifiedRouter` (two-layer: hard-filter via
   `apply_constraint_filter` then sweet-spot scoring, with bounded fallback
   and per-tier metadata).
+- **`IntelligentRouter`** (opt-in, Spec 23): after the rule-based router picks
+  the tier, scores the candidate models in that tier's MODELS list on
+  cost / quality / latency (+ a hard capability gate) using published metadata
+  and picks the best — deterministic, no ML. Off by default
+  (`routing.intelligent.enabled` in the persona YAML); degrades to the
+  rule-based slot-0 model on a metadata miss.
 - **`TierRegistry`**: lazy-cached backend registry per tier
   (`frontier` / `mid` / `small`); configured via `PERSONA_{TIER}_*`
   env triples; small→mid→frontier fallback; cross-provider multi-model
