@@ -2998,6 +2998,7 @@ version = "0.1.0"
 source = { editable = "packages/api" }
 dependencies = [
     { name = "alembic" },
+    { name = "e2b-code-interpreter" },
     { name = "fastapi" },
     { name = "persona-core", extra = ["postgres"] },
     { name = "persona-runtime" },
@@ -3006,15 +3007,10 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
-[package.optional-dependencies]
-hosted = [
-    { name = "e2b-code-interpreter" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13,<2" },
-    { name = "e2b-code-interpreter", marker = "extra == 'hosted'", specifier = ">=1.0,<2" },
+    { name = "e2b-code-interpreter", specifier = ">=1.0,<2" },
     { name = "fastapi", specifier = ">=0.111,<1" },
     { name = "persona-core", extras = ["postgres"], editable = "packages/core" },
     { name = "persona-runtime", editable = "packages/runtime" },
@@ -3022,7 +3018,6 @@ requires-dist = [
     { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3,<4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
 ]
-provides-extras = ["hosted"]
 
 [[package]]
 name = "persona-core"
