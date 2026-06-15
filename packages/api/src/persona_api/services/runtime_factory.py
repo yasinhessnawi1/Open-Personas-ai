@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from persona.audit import JSONLAuditLogger
+from persona.backends.errors import ProviderError, TierNotConfiguredError
 from persona.backends.metadata import (
     ChainedModelMetadataResolver,
     OpenRouterModelMetadataResolver,
@@ -27,6 +28,7 @@ from persona.config import PersonaCoreConfig
 from persona.errors import PersonaNotFoundError
 from persona.history import ConversationHistoryManager
 from persona.imagegen import make_generate_image_tool
+from persona.logging import get_logger
 from persona.schema.persona import Persona
 from persona.skills import BUILTIN_ROOT, SkillInjector, SkillScanner, make_use_skill_tool
 from persona.stores import (
@@ -63,6 +65,8 @@ if TYPE_CHECKING:
     from persona_api.sandbox.pool import SandboxPool
 
 __all__ = ["RuntimeFactory"]
+
+_logger = get_logger("api.runtime_factory")
 
 
 class RuntimeFactory:
@@ -298,8 +302,27 @@ class RuntimeFactory:
         # (D-26-X-text-summarize-wiring-test-kind). The registry is always
         # present in production; the guard keeps partial test-composition paths
         # (which stub the registry) booting cleanly.
+        #
+        # Graceful absence (sandbox_pool / image_backend precedent): building the
+        # small-tier backend can fail at construction time — no API key
+        # configured (``AuthenticationError`` ⊂ ``ProviderError``) or no tier
+        # resolvable (``TierNotConfiguredError``), e.g. in keyless test/CI
+        # environments. That must NOT break loop/run CREATION, which never
+        # required a live backend at build time before Spec 26. On failure we
+        # skip text_summarize entirely: the tool is simply absent (like
+        # code_execution / generate_image when their deps are unconfigured), and
+        # the genuine missing-key error still surfaces if the model later tries
+        # to generate.
         if self._tier_registry is not None:
-            extra.append(make_text_summarize_tool(backend=self._tier_registry.get("small")))
+            try:
+                small_backend = self._tier_registry.get("small")
+            except (ProviderError, TierNotConfiguredError) as exc:
+                _logger.warning(
+                    "text_summarize not wired — small-tier backend unavailable: {error}",
+                    error=type(exc).__name__,
+                )
+            else:
+                extra.append(make_text_summarize_tool(backend=small_backend))
         toolbox, mcp_clients = await build_default_toolbox(
             self._core_config,
             persona,
