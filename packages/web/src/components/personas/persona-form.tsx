@@ -405,12 +405,12 @@ function McpToggle({
           >
             <span>{s.name}</span>
             {s.defaultEnabled ? (
-              <span className="rounded-sm bg-muted px-1 text-[0.625rem] tracking-wide uppercase">
+              <span className="type-caption rounded-sm bg-muted px-1">
                 {defaultLabel}
               </span>
             ) : null}
             {s.requiredEnv.length > 0 ? (
-              <span className="text-[0.625rem] text-muted-foreground">
+              <span className="type-caption text-muted-foreground">
                 {requiresLabel(s.requiredEnv.join(", "))}
               </span>
             ) : null}

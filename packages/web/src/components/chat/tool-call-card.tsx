@@ -80,7 +80,7 @@ export function ToolCallCard({ entry }: { entry: ToolEntry }) {
         </span>
         {badge ? (
           <span
-            className="shrink-0 rounded-sm border border-border bg-background px-1.5 py-0.5 text-[0.625rem] font-medium tracking-wide text-muted-foreground uppercase"
+            className="type-caption shrink-0 rounded-sm border border-border bg-background px-1.5 py-0.5 font-medium text-muted-foreground"
             data-slot="tool-kind-badge"
             data-kind={kind}
           >

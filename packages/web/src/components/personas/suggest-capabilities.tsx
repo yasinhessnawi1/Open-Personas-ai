@@ -97,7 +97,7 @@ export function SuggestCapabilities({
                 data-slot="suggestion"
                 data-provider={rec.provider}
               >
-                <span className="mt-0.5 shrink-0 rounded-sm border border-border bg-background px-1.5 py-0.5 font-mono text-[0.625rem] tracking-wide uppercase">
+                <span className="type-caption mt-0.5 shrink-0 rounded-sm border border-border bg-background px-1.5 py-0.5">
                   {providerGroup(rec.provider)}
                 </span>
                 <div className="min-w-0 flex-1">

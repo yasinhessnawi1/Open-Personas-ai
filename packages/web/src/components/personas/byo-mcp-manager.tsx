@@ -223,7 +223,7 @@ export function ByoMcpManager({ personaId }: { personaId: string }) {
                     {s.url}
                   </span>
                   {!s.enabled ? (
-                    <span className="rounded-sm bg-muted px-1 text-[0.625rem] uppercase">
+                    <span className="type-caption rounded-sm bg-muted px-1">
                       {t("byoDisabled")}
                     </span>
                   ) : null}
