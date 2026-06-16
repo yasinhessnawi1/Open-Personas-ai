@@ -445,6 +445,44 @@
     "back": "Back to chat",
     "enableAudio": "Tap to enable audio",
     "errorTitle": "Couldn’t start the call",
+    "droppedBody": "The connection dropped. You can reconnect.",
+    "endedBody": "The call has ended.",
+    "callAgain": "Call again",
+    "signIn": "Sign in",
+    "fail": {
+      "mic_denied": {
+        "title": "Microphone blocked",
+        "body": "Enable microphone access in your browser or system settings, then try again."
+      },
+      "mic_missing": {
+        "title": "No microphone found",
+        "body": "Connect a microphone to call with this persona."
+      },
+      "mic_busy": {
+        "title": "Microphone in use",
+        "body": "Another app is using your microphone. Close it and try again."
+      },
+      "unauthorized": {
+        "title": "Session expired",
+        "body": "Sign in again to start the call."
+      },
+      "credits_exhausted": {
+        "title": "Out of voice credits",
+        "body": "You’ve used your voice credits. Top up to keep calling."
+      },
+      "not_found": {
+        "title": "Persona unavailable",
+        "body": "This persona isn’t available for calls right now."
+      },
+      "service_unavailable": {
+        "title": "Voice service unavailable",
+        "body": "The voice service is unavailable right now. Please try again in a moment."
+      },
+      "unknown": {
+        "title": "Couldn’t start the call",
+        "body": "Something went wrong. Please try again."
+      }
+    },
     "you": "You",
     "captions": "Live captions",
     "voiceLabel": "Voice",

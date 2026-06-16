@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Spec V6 B5 — the call surface: the live-call screen that hosts the orb.
+ * Spec V6 B5 + C3 — the call surface: the live-call screen that hosts the orb.
  *
  * The full-surface "call with the persona" view (D-V6-4): the Identity Orb is
  * the hero, with the persona's identity present, honest phase/failure states
@@ -9,15 +9,20 @@
  * controls. It binds the open `conversationId` (voice + text are one thread) and
  * drives everything from the {@link useVoiceCall} hook.
  *
- * This is the minimal-but-real mount point for the eyes-on motion checkpoint —
- * captions (C1) + the richer failure/mobile polish (C3) layer on after.
+ * C3 layers the **honest failure surface** on top of B5's live view: every
+ * terminal phase (pre-connect error, dropped, clean end) renders through F2's
+ * `EmptyState` pattern with kind-specific copy + the right recovery affordance
+ * (retry / sign-in / call-again), and the layout is responsive for the mobile
+ * contexts where voice naturally lives (D-V6-5 criteria 7 + 10).
  */
 
 import { useAuth } from "@clerk/nextjs";
+import { Phone } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect } from "react";
-import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/patterns/empty-state";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { IdentityOrb } from "@/components/voice/identity-orb";
 import { VoiceCaptions } from "@/components/voice/voice-captions";
 import { usePersonaAvatarSrc } from "@/lib/voice/use-persona-avatar-src";
@@ -81,30 +86,23 @@ export function VoiceCallSurface({
         : t("listening");
 
   const live = state.phase === "connected" || state.phase === "reconnecting";
-  // Only a recovery affordance now (no initial Start button) — the call
-  // auto-starts; this lets the user re-try after a drop/error/clean end.
-  const canRetry =
-    state.phase === "ended" ||
-    state.phase === "dropped" ||
-    state.phase === "error";
 
   const statusLine =
     state.phase === "connecting"
       ? t("connecting")
       : state.phase === "reconnecting"
         ? t("reconnecting")
-        : state.phase === "dropped"
-          ? t("dropped")
-          : state.phase === "ended"
-            ? t("ended")
-            : state.phase === "error"
-              ? t("errorTitle")
-              : stateLabel;
+        : stateLabel;
+
+  // Terminal phases (D-V6-5) — render an honest EmptyState instead of a dead
+  // orb. `error` carries a typed kind so the copy + the recovery action are
+  // specific (retry vs sign-in vs nothing); `dropped`/`ended` offer reconnect.
+  const terminal = buildTerminal();
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-8 p-6">
+    <div className="flex h-full flex-col items-center justify-center gap-6 p-4 sm:gap-8 sm:p-6">
       <header className="text-center">
-        <h1 className="font-serif text-xl">
+        <h1 className="font-serif text-lg sm:text-xl">
           {t("callWith", { name: persona.name })}
         </h1>
         {persona.role ? (
@@ -112,60 +110,146 @@ export function VoiceCallSurface({
         ) : null}
       </header>
 
-      <IdentityOrb
-        persona={{ id: persona.id, name: persona.name }}
-        agentState={state.agentState}
-        bargeInSignal={state.bargeInSignal}
-        getMicLevel={getMicLevel}
-        getPersonaLevel={getPersonaLevel}
-        avatarUrl={avatarSrc}
-        label={stateLabel}
-      />
+      {terminal ? (
+        <EmptyState
+          className="w-full max-w-md"
+          icon={<Phone className="size-6" aria-hidden />}
+          title={terminal.title}
+          description={terminal.body}
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {terminal.action}
+              <Link
+                href={`/chat/${conversationId}`}
+                className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+              >
+                {t("back")}
+              </Link>
+            </div>
+          }
+        />
+      ) : (
+        <>
+          <IdentityOrb
+            persona={{ id: persona.id, name: persona.name }}
+            agentState={state.agentState}
+            bargeInSignal={state.bargeInSignal}
+            getMicLevel={getMicLevel}
+            getPersonaLevel={getPersonaLevel}
+            avatarUrl={avatarSrc}
+            label={stateLabel}
+          />
 
-      <p aria-live="polite" className="min-h-5 text-sm text-muted-foreground">
-        {statusLine}
-        {state.phase === "error" && state.error
-          ? ` — ${state.error.message}`
-          : null}
-      </p>
+          <p
+            aria-live="polite"
+            className="min-h-5 text-sm text-muted-foreground"
+          >
+            {statusLine}
+          </p>
 
-      <VoiceCaptions captions={call.captions} personaName={persona.name} />
+          <VoiceCaptions captions={call.captions} personaName={persona.name} />
 
-      {state.needsAudioGesture ? (
-        <Button variant="secondary" onClick={() => void enableAudio()}>
-          {t("enableAudio")}
-        </Button>
-      ) : null}
-
-      <div className="flex items-center gap-3">
-        {canRetry ? (
-          <Button onClick={() => void start()}>{t("retry")}</Button>
-        ) : null}
-
-        {live ? (
-          <>
-            <Button variant="secondary" onClick={() => void toggleMute()}>
-              {state.micActive ? t("mute") : t("unmute")}
+          {state.needsAudioGesture ? (
+            <Button variant="secondary" onClick={() => void enableAudio()}>
+              {t("enableAudio")}
             </Button>
-            <Button variant="destructive" onClick={() => void end()}>
-              {t("end")}
-            </Button>
-          </>
-        ) : null}
+          ) : null}
 
-        {state.phase === "connecting" ? (
-          <span className="text-sm text-muted-foreground">
-            {t("connecting")}
-          </span>
-        ) : null}
-      </div>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {live ? (
+              <>
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={() => void toggleMute()}
+                >
+                  {state.micActive ? t("mute") : t("unmute")}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="lg"
+                  onClick={() => void end()}
+                >
+                  {t("end")}
+                </Button>
+              </>
+            ) : null}
 
-      <Link
-        href={`/chat/${conversationId}`}
-        className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-      >
-        {t("back")}
-      </Link>
+            {state.phase === "connecting" ? (
+              <span className="text-sm text-muted-foreground">
+                {t("connecting")}
+              </span>
+            ) : null}
+          </div>
+
+          <Link
+            href={`/chat/${conversationId}`}
+            className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+          >
+            {t("back")}
+          </Link>
+        </>
+      )}
     </div>
   );
+
+  /** Resolve the terminal-phase copy + recovery action, or null if live. */
+  function buildTerminal(): {
+    title: string;
+    body: string;
+    action: React.ReactNode;
+  } | null {
+    if (state.phase === "error" && state.error) {
+      const kind = state.error.kind;
+      let action: React.ReactNode = null;
+      if (kind === "unauthorized") {
+        // Re-auth is the only fix — link to sign-in, styled as the primary.
+        action = (
+          <Link
+            href="/sign-in"
+            className={buttonVariants({ variant: "default", size: "lg" })}
+          >
+            {t("signIn")}
+          </Link>
+        );
+      } else if (kind !== "not_found" && kind !== "credits_exhausted") {
+        // mic_* / service_unavailable / unknown — retry is meaningful (the user
+        // can grant the mic, or the service can recover). not_found + credits
+        // can't be retried away, so they get only the back link.
+        action = (
+          <Button size="lg" onClick={() => void start()}>
+            {t("retry")}
+          </Button>
+        );
+      }
+      return {
+        title: t(`fail.${kind}.title`),
+        body: t(`fail.${kind}.body`),
+        action,
+      };
+    }
+    if (state.phase === "dropped") {
+      return {
+        title: t("dropped"),
+        body: t("droppedBody"),
+        action: (
+          <Button size="lg" onClick={() => void start()}>
+            {t("retry")}
+          </Button>
+        ),
+      };
+    }
+    if (state.phase === "ended") {
+      return {
+        title: t("ended"),
+        body: t("endedBody"),
+        action: (
+          <Button size="lg" onClick={() => void start()}>
+            {t("callAgain")}
+          </Button>
+        ),
+      };
+    }
+    return null;
+  }
 }
