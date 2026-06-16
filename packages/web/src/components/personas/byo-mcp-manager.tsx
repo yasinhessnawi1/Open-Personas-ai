@@ -5,11 +5,11 @@ import { Plug, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { createApiClient, unwrap } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";
 import { cn } from "@/lib/utils";
+import { CollapsibleSection } from "./collapsible-section";
 
 const TEMPLATE = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;
 
@@ -143,13 +143,13 @@ export function ByoMcpManager({ personaId }: { personaId: string }) {
   );
 
   return (
-    <Card className="gap-3 p-5" data-slot="byo-mcp-manager">
-      <div>
-        <h2 className="font-heading text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-          {t("byoTitle")}
-        </h2>
-        <p className="type-caption text-muted-foreground">{t("byoSubtitle")}</p>
-      </div>
+    <CollapsibleSection id="byo-mcp" title={t("byoTitle")}>
+      <p
+        className="type-caption text-muted-foreground"
+        data-slot="byo-mcp-manager"
+      >
+        {t("byoSubtitle")}
+      </p>
 
       {/* Add form */}
       <div className="flex flex-col gap-2">
@@ -284,6 +284,6 @@ export function ByoMcpManager({ personaId }: { personaId: string }) {
           })}
         </ul>
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
