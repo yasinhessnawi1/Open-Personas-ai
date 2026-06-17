@@ -11,6 +11,7 @@ layer. ``SentenceTransformerEmbedder`` is the v0.1 concrete.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from persona.logging import get_logger
@@ -72,6 +73,12 @@ class SentenceTransformerEmbedder:
         self._device = device
         self._model: object | None = None
         self._dimension: int | None = None
+        # The embedder is app-shared and now accessed from a background warm-up
+        # thread (Spec 32 A1) concurrently with the agent loop. Serialise the
+        # lazy load so two threads never construct the SentenceTransformer at
+        # once — concurrent construction corrupts torch's meta-device init and
+        # raises "Cannot copy out of meta tensor" (notably on MPS).
+        self._load_lock = threading.Lock()
 
     @property
     def dimension(self) -> int:
@@ -84,24 +91,29 @@ class SentenceTransformerEmbedder:
     def _load(self) -> object:
         if self._model is not None:
             return self._model
-        from sentence_transformers import SentenceTransformer
+        # Double-checked locking: the fast path above avoids the lock once loaded;
+        # the lock serialises the one-time construction across threads.
+        with self._load_lock:
+            if self._model is not None:
+                return self._model
+            from sentence_transformers import SentenceTransformer
 
-        _log.info(
-            "loading sentence-transformers model={model} device={device}",
-            model=self.model_name,
-            device=self._device,
-        )
-        if self._device == "auto":
-            model = SentenceTransformer(self.model_name)
-        else:
-            model = SentenceTransformer(self.model_name, device=self._device)
-        dim = model.get_sentence_embedding_dimension()
-        if dim is None:
-            msg = f"sentence-transformers model {self.model_name!r} reports no dimension"
-            raise RuntimeError(msg)
-        self._model = model
-        self._dimension = int(dim)
-        return model
+            _log.info(
+                "loading sentence-transformers model={model} device={device}",
+                model=self.model_name,
+                device=self._device,
+            )
+            if self._device == "auto":
+                model = SentenceTransformer(self.model_name)
+            else:
+                model = SentenceTransformer(self.model_name, device=self._device)
+            dim = model.get_sentence_embedding_dimension()
+            if dim is None:
+                msg = f"sentence-transformers model {self.model_name!r} reports no dimension"
+                raise RuntimeError(msg)
+            self._model = model
+            self._dimension = int(dim)
+            return model
 
     def encode(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:

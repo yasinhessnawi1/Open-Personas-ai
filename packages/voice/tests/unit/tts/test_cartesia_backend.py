@@ -205,6 +205,97 @@ async def test_synthesize_passes_declared_language_to_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_synthesize_falls_back_to_default_language_when_voice_rejects_it() -> None:
+    """Spec 32 B4 fail-soft: a voice that can't speak the declared language must
+    not crash the turn — re-synthesize in the voice's default language."""
+
+    class _ScriptedConn:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+            self._scripts = [
+                [
+                    _FakeEvent(
+                        "error",
+                        message="The language is not supported by this model.",
+                        error_code="language_not_supported",
+                        status_code="400",
+                    )
+                ],
+                [_FakeEvent("chunk", audio=b"\x01\x02" * 1200), _FakeEvent("done")],
+            ]
+            self.closed = 0
+
+        def context(self, **kwargs: Any) -> _FakeCtx:
+            ctx = _FakeCtx(self._scripts[len(self.calls)])
+            ctx.context_kwargs = kwargs
+            self.calls.append(kwargs)
+            return ctx
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    conn = _ScriptedConn()
+
+    class _ScriptedClient:
+        def __init__(self) -> None:
+            self.tts = _FakeTTS(conn)  # type: ignore[arg-type]
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    config = StreamingTTSConfig(provider="cartesia", api_key="ct-key", language="no")
+    backend = CartesiaStreamingTTS(config, client=_ScriptedClient())  # type: ignore[arg-type]
+    frames = [f async for f in backend.synthesize(_text("Hei."), _VOICE)]
+
+    assert frames  # the persona still spoke (no crash)
+    assert conn.calls[0].get("language") == "no"  # first tried the declared language
+    assert conn.calls[1].get("language") == "en"  # fail-soft retried in English
+
+
+@pytest.mark.asyncio
+async def test_synthesize_degrades_to_silence_when_voice_rejects_even_english() -> None:
+    """If the voice can't speak the reply even in English, the turn produces no
+    audio rather than crashing the call (D-32-4 — the picker filter is the cure)."""
+    err = _FakeEvent(
+        "error",
+        message="The language is not supported by this model.",
+        error_code="language_not_supported",
+        status_code="400",
+    )
+
+    class _AlwaysRejectsConn:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+            self.closed = 0
+
+        def context(self, **kwargs: Any) -> _FakeCtx:
+            ctx = _FakeCtx([err])
+            ctx.context_kwargs = kwargs
+            self.calls.append(kwargs)
+            return ctx
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    conn = _AlwaysRejectsConn()
+
+    class _Client:
+        def __init__(self) -> None:
+            self.tts = _FakeTTS(conn)  # type: ignore[arg-type]
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    config = StreamingTTSConfig(provider="cartesia", api_key="ct-key", language="no")
+    backend = CartesiaStreamingTTS(config, client=_Client())  # type: ignore[arg-type]
+    frames = [f async for f in backend.synthesize(_text("Hei."), _VOICE)]
+    assert frames == []  # no audio, but NO crash
+    assert [c.get("language") for c in conn.calls] == ["no", "en"]  # tried both
+
+
+@pytest.mark.asyncio
 async def test_synthesize_omits_language_when_unset() -> None:
     """No declared language → no language param (today's behaviour preserved)."""
     ctx = _FakeCtx([_FakeEvent("done")])

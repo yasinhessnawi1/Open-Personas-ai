@@ -121,7 +121,12 @@ class InProcessAgentLauncher:
             if self._embedder is None:
                 from persona.stores import SentenceTransformerEmbedder
 
-                self._embedder = SentenceTransformerEmbedder(model_name=_BGE_MODEL)
+                # CPU for the voice path (see runner.build_agent_session): the
+                # off-loop warm-up loads on a worker thread, which raises a
+                # meta-tensor error on Apple MPS. bge-small on CPU is fast enough.
+                self._embedder = SentenceTransformerEmbedder(
+                    model_name=_BGE_MODEL, device="cpu"
+                )
             if self._tier_registry is None:
                 self._tier_registry = tier_registry_from_env()
 

@@ -35,11 +35,12 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from persona.auth.jwt_verifier import AuthenticatedUser, make_jwt_verifier
 from persona.credits import require_credits as _require_credits_core
 from persona.errors import AuthenticationError, CreditsExhaustedError
+from persona.language_capability import default_capability_registry
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import create_engine, text
 
@@ -312,6 +313,7 @@ def build_app(config: VoiceConfig) -> FastAPI:
     async def list_voices(
         request: Request,
         _user: AuthenticatedUser = Depends(get_current_user),
+        language: str | None = Query(default=None),
     ) -> VoiceListResponse:
         """List the provider voice catalogue for the voice-selector (Spec V6 C2).
 
@@ -319,12 +321,26 @@ def build_app(config: VoiceConfig) -> FastAPI:
         (D-V6-E4). Returns an empty list when TTS is unconfigured or the provider
         fetch fails, so the selector degrades gracefully to the persona's
         existing / the global-default voice rather than erroring.
+
+        ``language`` (Spec 32) — when given, only voices that speak that language
+        are returned, so an author cannot pick a voice the persona's declared
+        language can't be spoken in (the root cause of a call-time
+        ``language_not_supported``). The raw code is normalized through the
+        capability registry (``nb`` → the served ``no``); an unrecognized
+        language falls back to English voices.
         """
         catalogue = _get_voice_catalogue(request)
         if catalogue is None:
             return VoiceListResponse(provider=None, voices=[])
+        # Normalize the declared language to the provider's voice-language code
+        # (the catalogue filters on the voice's primary language).
+        provider_language = (
+            default_capability_registry().resolve_tts(language).code
+            if language is not None and language.strip() != ""
+            else None
+        )
         try:
-            entries = await catalogue.list_voices(limit=200)
+            entries = await catalogue.list_voices(language=provider_language, limit=200)
         except Exception:  # noqa: BLE001 — a provider/network error → empty list
             return VoiceListResponse(provider=catalogue.provider_name, voices=[])
         return VoiceListResponse(provider=catalogue.provider_name, voices=list(entries))

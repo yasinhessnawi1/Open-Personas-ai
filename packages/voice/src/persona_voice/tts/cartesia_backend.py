@@ -46,6 +46,7 @@ from cartesia import (
 from cartesia import (
     RateLimitError as _CartesiaRateLimitError,
 )
+from persona.logging import get_logger
 
 from persona_voice.tts.audio import OUTBOUND_SAMPLE_RATE, PCM16Reframer
 from persona_voice.tts.catalogue import normalize_gender
@@ -68,6 +69,12 @@ if TYPE_CHECKING:
 __all__ = ["CartesiaStreamingTTS"]
 
 _PROVIDER_NAME = "cartesia"
+_logger = get_logger("tts.cartesia")
+
+# The universal fail-soft language for the synthesis fallback (Spec 32 B4): when
+# the persona's voice can't speak the declared language, re-synthesise in English
+# rather than crash the call.
+_FALLBACK_LANGUAGE = "en"
 
 # Research R-V3-1: Cartesia bills ~1 credit/char; effective ≈ $0.023/min on
 # the Startup tier (≈ 2.3 cents/min). D-V3-X-cost: assume worst-case 2×
@@ -185,7 +192,66 @@ class CartesiaStreamingTTS:
         text_stream: AsyncIterator[str],
         voice: ResolvedVoice,
     ) -> AsyncIterator[AudioChunk]:
-        """Stream synthesised audio for an incremental reply-text stream."""
+        """Stream synthesised audio for an incremental reply-text stream.
+
+        Spec 32 B4 fail-soft: a Cartesia voice supports a *fixed set* of
+        languages, so a per-persona declared language the chosen voice cannot
+        speak is rejected with ``language_not_supported``. Rather than crash the
+        turn, fall back to the voice's default language so the persona still
+        speaks (D-32-4). English (``self._language is None``) always streams
+        directly; a declared non-English language materialises the reply first so
+        the fall-back can re-synthesise the same text without losing it.
+        """
+        if self._language is None:
+            async for chunk in self._stream_once(text_stream, voice, None):
+                yield chunk
+            return
+
+        reply = [token async for token in text_stream]
+
+        async def _replay() -> AsyncIterator[str]:
+            for token in reply:
+                yield token
+
+        produced = False
+        try:
+            async for chunk in self._stream_once(_replay(), voice, self._language):
+                produced = True
+                yield chunk
+            return
+        except TTSStreamFailureError as exc:
+            if produced or exc.context.get("error_code") != "language_not_supported":
+                raise
+            _logger.warning(
+                "cartesia voice does not support language={lang}; retrying in English "
+                "so the persona still speaks (voice={voice})",
+                lang=self._language,
+                voice=voice.voice_ref,
+            )
+        # Fail-soft (D-32-4): re-synthesise in English — the universal default.
+        # If the voice cannot speak the reply even in English, degrade to no audio
+        # for this turn rather than crash the call (the author should pick a voice
+        # that supports the persona's language — the voice picker now filters for
+        # exactly that).
+        try:
+            async for chunk in self._stream_once(_replay(), voice, _FALLBACK_LANGUAGE):
+                yield chunk
+        except TTSStreamFailureError as exc:
+            if exc.context.get("error_code") != "language_not_supported":
+                raise
+            _logger.warning(
+                "cartesia voice cannot speak this reply (voice={voice}); no audio this "
+                "turn — choose a voice that supports the persona's language",
+                voice=voice.voice_ref,
+            )
+
+    async def _stream_once(
+        self,
+        text_stream: AsyncIterator[str],
+        voice: ResolvedVoice,
+        language: str | None,
+    ) -> AsyncIterator[AudioChunk]:
+        """One context's worth of synthesis at the given language (or default)."""
         if voice.provider != _PROVIDER_NAME:
             raise TTSError(
                 "resolved voice is not addressed to the cartesia provider",
@@ -213,11 +279,9 @@ class CartesiaStreamingTTS:
         except CartesiaError as exc:
             raise self._map_error(exc) from exc
 
-        # Include ``language`` only when declared (Spec 32 B4) — preserving the
-        # provider-default behaviour for an unset (English-default) call.
-        language_kwarg: dict[str, Any] = (
-            {"language": self._language} if self._language is not None else {}
-        )
+        # Include ``language`` only when given (Spec 32 B4) — preserving the
+        # provider-default behaviour for an unset (English-default / fallback) call.
+        language_kwarg: dict[str, Any] = {"language": language} if language is not None else {}
         ctx = connection.context(
             model_id=self._model,
             voice=cast("Any", voice_param),

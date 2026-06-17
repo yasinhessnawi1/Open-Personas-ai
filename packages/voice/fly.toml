@@ -1,0 +1,75 @@
+# Open Persona — persona-voice Fly.io app config (app: open-persona-voice).
+#
+# Single Machine, single uvicorn worker. With PERSONA_VOICE_AGENT_INPROCESS=true
+# the LiveKit agent worker runs IN-PROCESS in the same uvicorn app, owning
+# per-WebRTC-session state (one RLS engine + state machine each). Never
+# autoscale (in-process per-session state), never autostop (a cold start would
+# drop in-flight calls + add 10+s to token issue).
+#
+# The service connects OUT to LiveKit Cloud (PERSONA_VOICE_LIVEKIT_URL) — there
+# is no LiveKit server to deploy here.
+
+app = "open-persona-voice"
+primary_region = "fra"                  # Frankfurt — co-located with open-persona-api
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+  # fly.toml lives next to the Dockerfile (packages/voice/). The Dockerfile's
+  # `COPY packages/<member>/...` paths assume the REPO ROOT as the build
+  # context, so invoke flyctl from the repo root:
+  #   flyctl deploy -c packages/voice/fly.toml
+
+[deploy]
+  strategy = "rolling"
+
+[env]
+  PERSONA_LOG_LEVEL = "INFO"
+  # JWT verification — RS256 against the Clerk static public key
+  # (PERSONA_VOICE_JWT_PUBLIC_KEY secret). Audience matches the Clerk template
+  # `aud` the api also verifies ("persona-api").
+  PERSONA_VOICE_JWT_ALGORITHMS = "RS256"
+  PERSONA_VOICE_JWT_AUDIENCE = "persona-api"
+  # The in-process agent worker (LiveKit agent that becomes the persona on the
+  # call) runs inside this same uvicorn app.
+  PERSONA_VOICE_AGENT_INPROCESS = "true"
+
+[http_service]
+  internal_port = 8001
+  force_https = true
+  # CRITICAL: single Machine. Don't autoscale (in-process per-session state) or
+  # autostop (cold start drops calls + delays token issue).
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 100
+    hard_limit = 200
+
+# No HTTP health check: the only HTTP routes (POST /v1/voice/token,
+# GET /v1/voices) are auth-gated, so an unauthenticated probe always 401s.
+# A top-level TCP check confirms the uvicorn listener accepts connections — the
+# most honest liveness signal available without an unauthenticated route. The
+# top-level [checks] form coexists with [http_service] (unlike [[services]]).
+[checks]
+  [checks.listener]
+    type = "tcp"
+    port = 8001
+    grace_period = "30s"
+    interval = "30s"
+    timeout = "5s"
+
+# No [mounts]: the agent's JSONL audit log writes to the OS temp dir
+# (tempfile.gettempdir(), ephemeral /tmp) — nothing needs to persist across
+# deploys. The embedder warm-up + STT/TTS clients are in-memory only.
+
+[[vm]]
+  # The in-process agent loads the bge-small-en-v1.5 embedder (~150 MB),
+  # the Silero VAD model, STT/TTS streaming clients, plus per-call audio
+  # working set. 2 GB gives headroom over the api's 1 GB baseline.
+  size = "shared-cpu-1x"
+  memory = "2048mb"

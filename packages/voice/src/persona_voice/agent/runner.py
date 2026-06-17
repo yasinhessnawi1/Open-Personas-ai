@@ -293,7 +293,12 @@ async def build_agent_session(
     if embedder is None:
         from persona.stores import SentenceTransformerEmbedder
 
-        embedder = SentenceTransformerEmbedder(model_name=_BGE_MODEL)
+        # Pin to CPU: bge-small encodes in <10 ms on CPU, and the off-loop
+        # warm-up (A1) loads the model on a worker thread — on Apple MPS a
+        # threaded device-move raises "Cannot copy out of meta tensor", so the
+        # warm-up fails and turn 0 pays the cold load. CPU is robust + fast
+        # enough for one recall per turn.
+        embedder = SentenceTransformerEmbedder(model_name=_BGE_MODEL, device="cpu")
     if tier_registry is None:
         tier_registry = tier_registry_from_env()
 

@@ -221,6 +221,45 @@ def test_voices_endpoint_returns_catalogue_with_preview_url() -> None:
     assert data["voices"][0]["preview_url"] == "https://cdn.test/clara.mp3"
 
 
+class _RecordingCatalogue(_FakeCatalogue):
+    """Records the `language` the endpoint forwards to the catalogue filter."""
+
+    def __init__(self) -> None:
+        self.seen_language: object = "UNSET"
+
+    async def list_voices(
+        self,
+        *,
+        gender: object = None,  # noqa: ARG002
+        language: object = None,
+        limit: int | None = None,  # noqa: ARG002
+    ) -> tuple[VoiceCatalogueEntry, ...]:
+        self.seen_language = language
+        return ()
+
+
+def test_voices_endpoint_normalizes_and_filters_by_language() -> None:
+    """Spec 32 — `?language=nb` filters voices to the served `no` code so an
+    author can't pick a voice the persona's declared language can't speak."""
+    client = _build_test_client()
+    catalogue = _RecordingCatalogue()
+    client.app.state.voice_catalogue = catalogue
+    resp = client.get(
+        "/v1/voices", params={"language": "nb"}, headers={"Authorization": "Bearer good"}
+    )
+    assert resp.status_code == 200
+    assert catalogue.seen_language == "no"  # nb normalized to the served Norwegian code
+
+
+def test_voices_endpoint_no_language_filter_when_omitted() -> None:
+    client = _build_test_client()
+    catalogue = _RecordingCatalogue()
+    client.app.state.voice_catalogue = catalogue
+    resp = client.get("/v1/voices", headers={"Authorization": "Bearer good"})
+    assert resp.status_code == 200
+    assert catalogue.seen_language is None  # no filter → all voices
+
+
 def test_voices_endpoint_returns_empty_when_tts_unconfigured() -> None:
     client = _build_test_client()
     # Simulate the no-PERSONA_TTS_API_KEY path: catalogue resolves to None.
