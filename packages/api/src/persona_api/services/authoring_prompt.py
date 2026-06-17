@@ -32,7 +32,7 @@ __all__ = [
     "build_refinement_prompt",
 ]
 
-AUTHORING_PROMPT_VERSION = "v2"
+AUTHORING_PROMPT_VERSION = "v3"
 
 #: The canonical block separator the model is told to emit (T02 parses it
 #: leniently, with fallbacks).
@@ -161,7 +161,7 @@ identity:                      # REQUIRED
   role: <one-line role>                  # non-empty
   background: |                          # non-empty, 2-4 sentences
     <who this persona is>
-  language_default: <ISO 639-1 code>     # en, fr, nb, de — infer from the description's language
+  language_default: <ISO 639-1 code>     # the persona's spoken language (see 7)
   constraints:                           # list of constraint sentences
     - <constraint>
 self_facts:                    # list
@@ -207,8 +207,13 @@ the system assigns or defaults them. Do NOT add any field not listed above (no
    hypothesis, or contested) — real experts hold nuanced, debatable views.
 6. tools / skills: suggest only names from the AVAILABLE lists above; use [] if
    none fit.
-7. language_default: the ISO 639-1 code of the language the persona should speak
-   (infer from the description; a French description -> fr).
+7. language_default: the ISO 639-1 code of the language the persona SPEAKS TO ITS
+   USERS — NOT the language this description happens to be written in. Infer it
+   from explicit cues: a stated language ("speaks Arabic", "responds in
+   Norwegian"), the persona's target audience or culture, or description text
+   written in that language. Fall back to the description's own language only
+   when there is no such cue. E.g. an ENGLISH description of "an Arabic poetry
+   tutor" -> ar (NOT en); "a French cooking assistant" -> fr.
 
 ## Output format
 Return EXACTLY two blocks separated by a line containing only: {QUESTIONS_MARKER}
