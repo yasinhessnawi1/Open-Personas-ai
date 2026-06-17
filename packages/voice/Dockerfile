@@ -42,9 +42,14 @@ RUN uv sync --frozen --all-packages --no-dev
 #   OSError: ... silero_vad_lite.so: cannot enable executable stack ...
 # Clear the exec-stack flag on every shared object in the venv so the VAD load
 # (and the fastembed/onnxruntime warm-up path) succeeds. --clear-execstack needs
-# patchelf 0.18+ (the apt/pip builds are older), so fetch a static release binary.
-RUN curl -fsSL https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-x86_64.tar.gz \
-        | tar -xz -C /usr/local bin/patchelf \
+# patchelf 0.18+ (the apt/pip builds are older), so fetch a static release binary
+# and verify its SHA256 before invoking it against the venv (supply-chain pin).
+RUN curl -fsSL -o /tmp/patchelf.tgz \
+        https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-x86_64.tar.gz \
+    && echo 'ce84f2447fb7a8679e58bc54a20dc2b01b37b5802e12c57eece772a6f14bf3f0  /tmp/patchelf.tgz' \
+        | sha256sum -c - \
+    && tar -xzf /tmp/patchelf.tgz -C /usr/local bin/patchelf \
+    && rm /tmp/patchelf.tgz \
     && find /opt/venv \( -name '*.so' -o -name '*.so.*' \) -print0 \
         | xargs -0 -r -n1 sh -c 'patchelf --clear-execstack "$0" 2>/dev/null || true'
 
