@@ -61,6 +61,15 @@ export function VoiceSelector({
   const [playing, setPlaying] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Keep the latest `getToken` in a ref so the fetch effect does NOT depend on
+  // its identity. Clerk memoises `getToken` in production, but a host (or a
+  // test mock) that returns a fresh function each render would otherwise make
+  // `[getToken, ...]` change every render → effect re-runs → setLoad →
+  // re-render → infinite loop (heap exhaustion). The voices only need to
+  // re-fetch when the persona's `language` changes, never on token churn.
+  const getTokenRef = useRef(getToken);
+  getTokenRef.current = getToken;
+
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
@@ -69,7 +78,7 @@ export function VoiceSelector({
       try {
         const list = await fetchVoices({
           getToken: () =>
-            getToken(TEMPLATE ? { template: TEMPLATE } : undefined),
+            getTokenRef.current(TEMPLATE ? { template: TEMPLATE } : undefined),
           signal: controller.signal,
           language,
         });
@@ -83,7 +92,7 @@ export function VoiceSelector({
       controller.abort();
     };
     // Re-fetch when the persona's language changes (modular filter, Spec 32).
-  }, [getToken, language]);
+  }, [language]);
 
   // Stop any preview on unmount.
   useEffect(() => {
