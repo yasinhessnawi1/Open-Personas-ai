@@ -39,9 +39,13 @@ __all__ = ["choose_voice", "maybe_assign_voice"]
 
 _LOG = get_logger("api.voice_assignment")
 
-#: Wall-clock bound on the cross-service catalogue fetch — create latency stays
-#: bounded; a slow/absent voice service fail-softs to the global default.
-_CATALOGUE_TIMEOUT_S = 10.0
+#: Wall-clock bound on the cross-service catalogue fetch. The voice service
+#: re-fetches the full provider catalogue (with preview URLs) from Cartesia per
+#: call, which can take several seconds — and longer when its event loop is
+#: briefly busy (e.g. an agent embedder load during a concurrent call). Matches
+#: the build-time avatar budget; a slower/absent voice service fail-softs to the
+#: global default rather than timing out at 10s.
+_CATALOGUE_TIMEOUT_S = 25.0
 #: Cap on how many voices reach the model prompt — keeps the prompt bounded for
 #: a large provider catalogue while leaving a healthy gender mix to choose from.
 _MAX_CATALOGUE = 60
@@ -194,7 +198,7 @@ async def maybe_assign_voice(
         _LOG.info(
             "voice auto-pick skipped: catalogue unavailable (persona_id={pid}): {err} {body}",
             pid=persona_id,
-            err=str(exc)[:300],
+            err=repr(exc)[:300],  # repr carries the exception type (empty for timeouts)
             body=str(body)[:200],
         )
         return
