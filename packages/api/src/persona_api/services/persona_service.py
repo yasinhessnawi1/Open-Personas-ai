@@ -278,8 +278,15 @@ def delete_persona(
 
 
 def default_embedder(model_name: str) -> SentenceTransformerEmbedder:
-    """The production embedder (bge-small-en-v1.5, 384-dim)."""
-    return SentenceTransformerEmbedder(model_name=model_name)
+    """The production embedder (bge-small-en-v1.5, 384-dim).
+
+    Pinned to CPU (matching persona-voice's agent embedder): ``device="auto"``
+    selects Apple MPS on a Mac, where a lazy/threaded device-move can raise
+    "Cannot copy out of meta tensor" and the load is slower; bge-small encodes in
+    <10ms on CPU, so CPU is both robust and fast enough for the create-time
+    memory-population pass.
+    """
+    return SentenceTransformerEmbedder(model_name=model_name, device="cpu")
 
 
 def summary_of(row: dict[str, object]) -> PersonaSummary:
