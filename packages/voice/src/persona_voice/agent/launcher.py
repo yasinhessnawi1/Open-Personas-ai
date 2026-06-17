@@ -126,9 +126,7 @@ class InProcessAgentLauncher:
                 # meta-tensor error on Apple MPS. The bge-small CPU cold-load is
                 # SLOW on some machines (~27s on an M1) — :meth:`warm` pays it at
                 # server startup so no call's first turn ever blocks on it.
-                self._embedder = SentenceTransformerEmbedder(
-                    model_name=_BGE_MODEL, device="cpu"
-                )
+                self._embedder = SentenceTransformerEmbedder(model_name=_BGE_MODEL, device="cpu")
             if self._tier_registry is None:
                 self._tier_registry = tier_registry_from_env()
 

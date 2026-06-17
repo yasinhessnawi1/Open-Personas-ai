@@ -57,6 +57,11 @@ export function voiceDisplayName(voice: VoiceSummary): string {
 export interface FetchVoicesOptions {
   getToken: TokenGetter;
   signal?: AbortSignal;
+  /**
+   * Persona's declared language (Spec 32) — forwarded to GET /v1/voices so the
+   * catalogue can be scoped to voices that speak it. Omitted ⇒ full catalogue.
+   */
+  language?: string | null;
 }
 
 /**
@@ -69,7 +74,10 @@ export async function fetchVoices(
   options: FetchVoicesOptions,
 ): Promise<VoiceList> {
   const jwt = await options.getToken();
-  const response = await fetch(`${VOICE_BASE_URL}/v1/voices`, {
+  const url = options.language
+    ? `${VOICE_BASE_URL}/v1/voices?language=${encodeURIComponent(options.language)}`
+    : `${VOICE_BASE_URL}/v1/voices`;
+  const response = await fetch(url, {
     headers: jwt ? { Authorization: `Bearer ${jwt}` } : {},
     signal: options.signal,
   });

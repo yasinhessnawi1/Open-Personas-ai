@@ -10,7 +10,7 @@ vi.mock("@clerk/nextjs", () => ({
 // Keep the real `voiceDisplayName` (the name-stripping helper the selector uses)
 // and override only the network fetch.
 vi.mock("@/lib/voice/voices", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./voices")>();
+  const actual = await importOriginal<typeof import("@/lib/voice/voices")>();
   return {
     ...actual,
     fetchVoices: vi.fn(async () => ({

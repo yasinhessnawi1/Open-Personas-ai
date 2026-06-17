@@ -305,10 +305,7 @@ class ConversationalOrchestrator:
         cancelled reply is the damaging case.
         """
         confidence = event.confidence
-        return (
-            confidence is not None
-            and confidence >= self._min_authoritative_onset_confidence
-        )
+        return confidence is not None and confidence >= self._min_authoritative_onset_confidence
 
     async def on_speech_ended(self, event: SpeechEndedEvent) -> None:
         """Speech-offset — arm turn-end, or resolve a pending barge-in."""
