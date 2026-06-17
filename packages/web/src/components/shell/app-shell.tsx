@@ -21,11 +21,11 @@
  * AppShell) deprecates them; T26 close fully removes them.
  */
 
-import { UserButton } from "@clerk/nextjs";
 import type { ReactNode } from "react";
 import { ToastProvider } from "@/components/patterns/toast";
 import { Brand } from "@/components/shell/brand";
 import { SidebarBody } from "@/components/shell/sidebar-body";
+import { UserMenu } from "@/components/shell/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { MobileNav } from "./mobile-nav";
@@ -89,7 +89,7 @@ function ShellHeader() {
       <MobileNav />
       <div className="flex-1" />
       <ThemeToggle />
-      <UserButton />
+      <UserMenu />
     </header>
   );
 }
