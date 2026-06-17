@@ -36,6 +36,18 @@ COPY packages/voice/pyproject.toml packages/voice/pyproject.toml
 COPY packages/ packages/
 RUN uv sync --frozen --all-packages --no-dev
 
+# silero_vad_lite (and other prebuilt native wheels) ship .so files whose
+# PT_GNU_STACK segment is marked executable; hardened kernels (Fly's) refuse to
+# dlopen a library that requires an executable stack:
+#   OSError: ... silero_vad_lite.so: cannot enable executable stack ...
+# Clear the exec-stack flag on every shared object in the venv so the VAD load
+# (and the fastembed/onnxruntime warm-up path) succeeds. --clear-execstack needs
+# patchelf 0.18+ (the apt/pip builds are older), so fetch a static release binary.
+RUN curl -fsSL https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-x86_64.tar.gz \
+        | tar -xz -C /usr/local bin/patchelf \
+    && find /opt/venv \( -name '*.so' -o -name '*.so.*' \) -print0 \
+        | xargs -0 -r -n1 sh -c 'patchelf --clear-execstack "$0" 2>/dev/null || true'
+
 # ---------- runtime ----------
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
