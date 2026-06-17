@@ -138,6 +138,7 @@ export function PersonaForm({
         <Field label={t("voice")} hint={t("voiceDescription")}>
           <VoiceSelector
             value={currentVoiceId}
+            language={identity.language_default}
             onChange={(voice) =>
               onChange({
                 ...doc,

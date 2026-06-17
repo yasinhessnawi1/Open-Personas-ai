@@ -37,6 +37,12 @@ export interface VoiceSelectorProps {
   value?: string | null;
   /** Set the persona's voice (or clear it to use the global default). */
   onChange: (voice: VoiceValue | null) => void;
+  /**
+   * Spec 32 — the persona's declared `language_default`. Only voices that speak
+   * it are listed (so a voice that can't speak the persona's language can't be
+   * picked). The list re-fetches when this changes (modular).
+   */
+  language?: string | null;
 }
 
 type LoadState =
@@ -47,6 +53,7 @@ type LoadState =
 export function VoiceSelector({
   value,
   onChange,
+  language,
 }: VoiceSelectorProps): React.JSX.Element {
   const t = useTranslations("voice");
   const { getToken } = useAuth();
@@ -57,12 +64,14 @@ export function VoiceSelector({
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
+    setLoad({ status: "loading" });
     (async () => {
       try {
         const list = await fetchVoices({
           getToken: () =>
             getToken(TEMPLATE ? { template: TEMPLATE } : undefined),
           signal: controller.signal,
+          language,
         });
         if (!cancelled) setLoad({ status: "ready", ...list });
       } catch {
@@ -73,7 +82,8 @@ export function VoiceSelector({
       cancelled = true;
       controller.abort();
     };
-  }, [getToken]);
+    // Re-fetch when the persona's language changes (modular filter, Spec 32).
+  }, [getToken, language]);
 
   // Stop any preview on unmount.
   useEffect(() => {
