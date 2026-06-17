@@ -1,8 +1,8 @@
 "use client";
 
-import { Sparkles, Wand2 } from "lucide-react";
+import { Wand2 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Stack } from "@/components/layout";
 import { SkeletonLine } from "@/components/patterns/loading";
 import { buttonVariants } from "@/components/ui/button";
@@ -13,7 +13,9 @@ import { ApiError } from "@/lib/api/client";
 import { useAuthor } from "@/lib/hooks/use-author";
 import { createPersona } from "@/lib/persona-actions";
 import { type PersonaDoc, yamlToDoc } from "@/lib/persona-draft";
+import type { PersonaExample } from "@/lib/persona-examples";
 import { cn } from "@/lib/utils";
+import { ExampleGallery } from "./example-gallery";
 import { PersonaEditor } from "./persona-editor";
 import type { McpCatalogEntry } from "./persona-form";
 
@@ -69,6 +71,27 @@ export function AuthorWizard({
   const [refining, setRefining] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [selectedExampleId, setSelectedExampleId] = useState<string | null>(
+    null,
+  );
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+
+  // Picking a starter persona seeds the EXISTING describe flow: it writes the
+  // seed into the same textarea the user types into, then the user reviews and
+  // hits Generate exactly as for a hand-typed description. No API call here.
+  function selectExample(example: PersonaExample) {
+    setDescription(example.seed);
+    setSelectedExampleId(example.id);
+    setError(null);
+    // Bring the seeded textarea into view and focus it so the handoff is
+    // legible — the user sees their description was filled and can edit it.
+    const el = descriptionRef.current;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(example.seed.length, example.seed.length);
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
 
   function applyDraft(next: AuthoringDraft): boolean {
     try {
@@ -202,76 +225,70 @@ export function AuthorWizard({
     );
   }
 
-  const examples = [t("example1"), t("example2"), t("example3")];
-
   return (
-    <Stack gap={6} data-slot="author-wizard-describe">
+    <Stack gap={8} data-slot="author-wizard-describe">
       <header>
         <p className="type-caption font-mono text-muted-foreground uppercase">
           {t("describeByline")}
         </p>
         <h1 className="type-display mt-1" data-slot="author-wizard-title">
-          {t("describeTitle")}
+          {t("gallery.title")}
         </h1>
-        <p className="type-body mt-2 text-muted-foreground">
-          {t("describeHint")}
+        <p className="type-body mt-2 max-w-prose text-muted-foreground">
+          {t("gallery.subtitle")}
         </p>
       </header>
 
-      <Textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        rows={5}
-        placeholder={t("describePlaceholder")}
-        className="resize-none"
-        data-slot="author-wizard-description"
-      />
+      <ExampleGallery onSelect={selectExample} selectedId={selectedExampleId} />
 
-      <Stack gap={2}>
-        <span className="type-ui font-medium text-muted-foreground">
-          {t("examplesTitle")}
-        </span>
-        <Stack gap={2}>
-          {examples.map((ex) => (
-            <button
-              key={ex}
-              type="button"
-              onClick={() => setDescription(ex)}
-              className="type-body flex items-start gap-2 rounded-md border px-3 py-2 text-left text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
-              data-slot="author-wizard-example"
-            >
-              <Sparkles
-                className="mt-0.5 size-3.5 shrink-0 text-primary"
-                aria-hidden="true"
-              />
-              {ex}
-            </button>
-          ))}
-        </Stack>
+      <Stack gap={4} data-slot="author-wizard-own">
+        <div className="flex items-center gap-3" aria-hidden="true">
+          <span className="h-px flex-1 bg-border" />
+          <span className="type-caption font-mono text-muted-foreground uppercase">
+            {t("gallery.ownPathLabel")}
+          </span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+
+        <p className="type-body text-muted-foreground">{t("describeHint")}</p>
+
+        <Textarea
+          ref={descriptionRef}
+          value={description}
+          onChange={(e) => {
+            setDescription(e.target.value);
+            // Editing away from a picked seed drops the "selected" affordance.
+            if (selectedExampleId) setSelectedExampleId(null);
+          }}
+          rows={5}
+          placeholder={t("describePlaceholder")}
+          className="resize-none"
+          data-slot="author-wizard-description"
+        />
+
+        {error ? (
+          <p
+            className="type-ui text-destructive"
+            role="alert"
+            data-slot="author-wizard-error"
+          >
+            {error}
+          </p>
+        ) : null}
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => void generate()}
+            disabled={!description.trim()}
+            className={cn(buttonVariants(), "gap-2")}
+            data-slot="author-wizard-generate"
+          >
+            <Wand2 className="size-4" aria-hidden="true" />
+            {t("generate")}
+          </button>
+        </div>
       </Stack>
-
-      {error ? (
-        <p
-          className="type-ui text-destructive"
-          role="alert"
-          data-slot="author-wizard-error"
-        >
-          {error}
-        </p>
-      ) : null}
-
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => void generate()}
-          disabled={!description.trim()}
-          className={cn(buttonVariants(), "gap-2")}
-          data-slot="author-wizard-generate"
-        >
-          <Wand2 className="size-4" aria-hidden="true" />
-          {t("generate")}
-        </button>
-      </div>
     </Stack>
   );
 }
