@@ -239,17 +239,9 @@ export function AuthorWizard({
         </p>
       </header>
 
-      <ExampleGallery onSelect={selectExample} selectedId={selectedExampleId} />
-
+      {/* Describe-your-own leads: the free-text path is primary, the gallery
+          below it is the "or start from an example" fallback. */}
       <Stack gap={4} data-slot="author-wizard-own">
-        <div className="flex items-center gap-3" aria-hidden="true">
-          <span className="h-px flex-1 bg-border" />
-          <span className="type-caption font-mono text-muted-foreground uppercase">
-            {t("gallery.ownPathLabel")}
-          </span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
-
         <p className="type-body text-muted-foreground">{t("describeHint")}</p>
 
         <Textarea
@@ -289,6 +281,16 @@ export function AuthorWizard({
           </button>
         </div>
       </Stack>
+
+      <div className="flex items-center gap-3" aria-hidden="true">
+        <span className="h-px flex-1 bg-border" />
+        <span className="type-caption font-mono text-muted-foreground uppercase">
+          {t("gallery.ownPathLabel")}
+        </span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+
+      <ExampleGallery onSelect={selectExample} selectedId={selectedExampleId} />
     </Stack>
   );
 }

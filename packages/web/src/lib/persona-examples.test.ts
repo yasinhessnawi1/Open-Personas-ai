@@ -64,4 +64,49 @@ describe("persona-examples dataset", () => {
       expect(visible).not.toMatch(/[—–]/);
     }
   });
+
+  it("only references MCP servers that exist in the core catalog", () => {
+    // Seeds may name an MCP server inline as `mcp:<name>`; every such name must
+    // map to a real server in packages/core's BUILTIN_MCP_CATALOG. Keeps the
+    // showcase honest — no invented capabilities. (catalog.toml, Spec 27.)
+    const KNOWN_MCP_SERVERS = new Set([
+      "time",
+      "calculator",
+      "filesystem",
+      "weather",
+      "fetch",
+      "github",
+    ]);
+    for (const example of ALL_EXAMPLES) {
+      for (const match of example.seed.matchAll(/\bmcp:([a-z_]+)\b/g)) {
+        expect(KNOWN_MCP_SERVERS).toContain(match[1]);
+      }
+    }
+  });
+
+  it("collectively exercises a broad spread of real platform capabilities", () => {
+    // The starter set should showcase what the platform can actually do, not
+    // read as generic chatbots. Each phrase below maps to a shipped capability
+    // (tool / skill / MCP / voice / typed memory) verified against the core
+    // catalogs; assert the corpus touches every capability family at least once.
+    const corpus = ALL_EXAMPLES.map((e) => e.seed.toLowerCase()).join("\n");
+    const capabilityFamilies: Record<string, RegExp> = {
+      webResearch: /\bresearch|searches?\b|\bweb\b/,
+      codeExecution: /code sandbox|run(s)? (in a code|it in)|\bcode\b/,
+      codeReview: /review(s|ed)?/,
+      documentGeneration: /download(able)?|workbook|document|planner|\bbrief\b/,
+      dataAnalysis: /analys(e|es)|\bchart\b|upload(s|ed)?/,
+      diagram: /\bdiagram\b/,
+      imageGeneration: /\bimage\b|moodboard|concept art/,
+      currency: /currenc(y|ies)/,
+      voice: /\bvoice\b|out loud/,
+      mcp: /\bmcp:/,
+      typedMemory: /remember(s|ed)?/,
+    };
+    for (const [family, pattern] of Object.entries(capabilityFamilies)) {
+      expect(corpus, `no example exercises capability: ${family}`).toMatch(
+        pattern,
+      );
+    }
+  });
 });

@@ -68,7 +68,7 @@ export function ExampleGallery({
   const t = useTranslations("author");
 
   return (
-    <section data-slot="example-gallery" aria-label={t("gallery.title")}>
+    <section data-slot="example-gallery" aria-label={t("gallery.ownPathLabel")}>
       <Stack gap={8}>
         {PERSONA_EXAMPLE_CATEGORIES.map((category, categoryIndex) => (
           <CategorySection
