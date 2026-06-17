@@ -223,9 +223,7 @@ def set_voice(*, rls_engine: Engine, persona_id: str, provider: str, voice_id: s
             return
         raw["identity"]["voice"] = f"{provider}:{voice_id}"
         new_yaml = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
-        conn.execute(
-            update(personas_t).where(personas_t.c.id == persona_id).values(yaml=new_yaml)
-        )
+        conn.execute(update(personas_t).where(personas_t.c.id == persona_id).values(yaml=new_yaml))
 
 
 def get_persona(*, rls_engine: Engine, persona_id: str) -> dict[str, object]:
