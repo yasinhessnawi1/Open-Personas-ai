@@ -156,6 +156,36 @@ def test_token_endpoint_rejects_body_with_extra_fields() -> None:
     assert resp.status_code == 422
 
 
+def test_community_edition_mints_token_with_no_auth() -> None:
+    """Spec 33 (D-33-X-voice-edition): community voice is no-auth, no-credits.
+
+    No bearer header, no JWT secret, no ownership/credits overrides — the token
+    is minted for the fixed local owner. Note: no ``app.state.verify_token``
+    override is set, so the community no-auth path is exercised end-to-end.
+    """
+    cfg = VoiceConfig(
+        edition="community",
+        livekit_url="ws://localhost:7880",
+        livekit_api_key=SecretStr("lk_key_test"),
+        livekit_api_secret=SecretStr("very-very-long-test-secret-for-hs256-signing"),
+    )
+    client = TestClient(build_app(cfg))
+    resp = client.post(
+        "/v1/voice/token",
+        json={"persona_id": "p_astrid", "conversation_id": "c_42"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body) == {"token", "room_name", "livekit_url"}
+    decoded = jwt.decode(
+        body["token"],
+        "very-very-long-test-secret-for-hs256-signing",
+        algorithms=["HS256"],
+        options={"verify_aud": False},
+    )
+    assert decoded["sub"] == "local-owner"
+
+
 def test_voice_config_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PERSONA_VOICE_LIVEKIT_URL", "wss://lk.test")
     monkeypatch.setenv("PERSONA_VOICE_LIVEKIT_API_KEY", "ak_env")

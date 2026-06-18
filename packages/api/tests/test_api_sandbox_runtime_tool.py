@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path  # noqa: TC003 — runtime use in copy_produced_file_to tests
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -226,15 +226,15 @@ async def test_pool_tool_without_request_context_skips_pool_acquire_and_credits(
     """CLI / one-shot path: no contextvar → no pool acquire, no credits."""
     pool, fake = pool_with_fake
     # Stub the engine — we won't actually touch the DB because no context is bound.
-    with patch("persona_api.sandbox.runtime_tool.credits_service.deduct") as mock_deduct:
-        tool = make_pool_code_execution_tool(pool=pool, rls_engine=object())  # type: ignore[arg-type]
-        # No context set → contextvar returns None → no acquire, no deduct.
-        result = await tool.execute(code="print('hi')")
-        assert not result.is_error
-        # Pool didn't acquire (no session created in the fake substrate via pool).
-        assert pool._user_counts == {}  # noqa: SLF001 — verify internal invariant
-        # Credits never deducted.
-        mock_deduct.assert_not_called()
+    mock_policy = MagicMock()
+    tool = make_pool_code_execution_tool(pool=pool, rls_engine=object(), credits_policy=mock_policy)  # type: ignore[arg-type]
+    # No context set → contextvar returns None → no acquire, no deduct.
+    result = await tool.execute(code="print('hi')")
+    assert not result.is_error
+    # Pool didn't acquire (no session created in the fake substrate via pool).
+    assert pool._user_counts == {}  # noqa: SLF001 — verify internal invariant
+    # Credits never deducted.
+    mock_policy.deduct.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -243,28 +243,32 @@ async def test_pool_tool_with_context_acquires_pool_and_deducts_credits(
 ) -> None:
     """End-to-end: context bound → pool acquire fires + credits deducted on ok."""
     pool, fake = pool_with_fake
-    fake_engine = object()  # never touched because credits_service is mocked
+    fake_engine = object()  # never touched because the credits policy is mocked
+    mock_policy = MagicMock()
+    mock_policy.deduct.return_value = 99  # arbitrary post-deduction balance
     token = set_sandbox_request_context(
         SandboxRequestContext(owner_id="alice", conversation_id="c1")
     )
     try:
-        with patch("persona_api.sandbox.runtime_tool.credits_service.deduct") as mock_deduct:
-            mock_deduct.return_value = 99  # arbitrary post-deduction balance
-            tool = make_pool_code_execution_tool(pool=pool, rls_engine=fake_engine)  # type: ignore[arg-type]
-            result = await tool.execute(code="print('hi')")
-            assert not result.is_error
-            # Pool acquired: session_id "alice:c1" in pool.
-            assert "alice:c1" in pool._sessions  # noqa: SLF001 — verify integration
-            # Substrate execute called with the right session_id.
-            assert fake.execute_calls == [
-                {"code": "print('hi')", "session_id": "alice:c1", "input_files": []}
-            ]
-            # Credits deducted exactly once with the right shape.
-            mock_deduct.assert_called_once()
-            kwargs = mock_deduct.call_args.kwargs
-            assert kwargs["user_id"] == "alice"
-            assert kwargs["amount"] == 1
-            assert kwargs["reason"] == "code_execution"
+        tool = make_pool_code_execution_tool(
+            pool=pool,
+            rls_engine=fake_engine,  # type: ignore[arg-type]
+            credits_policy=mock_policy,
+        )
+        result = await tool.execute(code="print('hi')")
+        assert not result.is_error
+        # Pool acquired: session_id "alice:c1" in pool.
+        assert "alice:c1" in pool._sessions  # noqa: SLF001 — verify integration
+        # Substrate execute called with the right session_id.
+        assert fake.execute_calls == [
+            {"code": "print('hi')", "session_id": "alice:c1", "input_files": []}
+        ]
+        # Credits deducted exactly once with the right shape.
+        mock_policy.deduct.assert_called_once()
+        kwargs = mock_policy.deduct.call_args.kwargs
+        assert kwargs["user_id"] == "alice"
+        assert kwargs["amount"] == 1
+        assert kwargs["reason"] == "code_execution"
     finally:
         reset_sandbox_request_context(token)
 
@@ -279,12 +283,16 @@ async def test_pool_tool_does_not_deduct_credits_on_substrate_error(
     token = set_sandbox_request_context(
         SandboxRequestContext(owner_id="alice", conversation_id="c1")
     )
+    mock_policy = MagicMock()
     try:
-        with patch("persona_api.sandbox.runtime_tool.credits_service.deduct") as mock_deduct:
-            tool = make_pool_code_execution_tool(pool=pool, rls_engine=object())  # type: ignore[arg-type]
-            result = await tool.execute(code="boom")
-            assert result.is_error
-            mock_deduct.assert_not_called()
+        tool = make_pool_code_execution_tool(
+            pool=pool,
+            rls_engine=object(),  # type: ignore[arg-type]
+            credits_policy=mock_policy,
+        )
+        result = await tool.execute(code="boom")
+        assert result.is_error
+        mock_policy.deduct.assert_not_called()
     finally:
         reset_sandbox_request_context(token)
 
@@ -309,16 +317,20 @@ async def test_pool_tool_quota_rejection_surfaces_as_tool_error(
     token = set_sandbox_request_context(
         SandboxRequestContext(owner_id="alice", conversation_id="c3")
     )
+    mock_policy = MagicMock()
     try:
-        with patch("persona_api.sandbox.runtime_tool.credits_service.deduct") as mock_deduct:
-            tool = make_pool_code_execution_tool(pool=pool, rls_engine=object())  # type: ignore[arg-type]
-            result = await tool.execute(code="print('hi')")
-            assert result.is_error
-            assert "SandboxQuotaExceededError" in result.content
-            # Substrate never called for the rejected acquire.
-            assert all(c["session_id"] != "alice:c3" for c in fake.execute_calls)
-            # No credits charged for a quota-rejected attempt.
-            mock_deduct.assert_not_called()
+        tool = make_pool_code_execution_tool(
+            pool=pool,
+            rls_engine=object(),  # type: ignore[arg-type]
+            credits_policy=mock_policy,
+        )
+        result = await tool.execute(code="print('hi')")
+        assert result.is_error
+        assert "SandboxQuotaExceededError" in result.content
+        # Substrate never called for the rejected acquire.
+        assert all(c["session_id"] != "alice:c3" for c in fake.execute_calls)
+        # No credits charged for a quota-rejected attempt.
+        mock_policy.deduct.assert_not_called()
     finally:
         reset_sandbox_request_context(token)
 
@@ -335,13 +347,17 @@ async def test_pool_tool_substrate_unavailable_surfaces_as_tool_error(
     token = set_sandbox_request_context(
         SandboxRequestContext(owner_id="alice", conversation_id="c1")
     )
+    mock_policy = MagicMock()
     try:
-        with patch("persona_api.sandbox.runtime_tool.credits_service.deduct") as mock_deduct:
-            tool = make_pool_code_execution_tool(pool=pool, rls_engine=object())  # type: ignore[arg-type]
-            result = await tool.execute(code="print('hi')")
-            assert result.is_error
-            assert "SandboxUnavailableError" in result.content
-            mock_deduct.assert_not_called()
+        tool = make_pool_code_execution_tool(
+            pool=pool,
+            rls_engine=object(),  # type: ignore[arg-type]
+            credits_policy=mock_policy,
+        )
+        result = await tool.execute(code="print('hi')")
+        assert result.is_error
+        assert "SandboxUnavailableError" in result.content
+        mock_policy.deduct.assert_not_called()
     finally:
         reset_sandbox_request_context(token)
 

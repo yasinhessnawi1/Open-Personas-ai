@@ -1,5 +1,5 @@
-import { SignIn } from "@clerk/nextjs";
 import Image from "next/image";
+import { SignIn } from "@/auth";
 
 export default function SignInPage() {
   return (

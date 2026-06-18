@@ -2190,13 +2190,36 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "last_message_preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message Preview"
+          },
+          "last_message_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["user", "assistant", "system", "tool"]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message Role"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": ["id", "persona_id", "title", "created_at", "updated_at"],
         "title": "ConversationSummary",
-        "description": "A conversation in a list view."
+        "description": "A conversation in a list view.\n\nThe two ``last_message_*`` fields let the sidebar render a real preview of\nthe most recent turn instead of falling back to the title. They are\npopulated in a single set-based LIST query (a ``ROW_NUMBER()`` window over\nthe RLS-scoped ``messages`` rows \u2014 no per-row fan-out) and are ``None`` for\na conversation that has no messages yet.\n\nAttributes:\n    id: The conversation id.\n    persona_id: The persona this conversation belongs to.\n    title: The conversation's display title.\n    created_at: Creation timestamp (UTC-aware).\n    updated_at: Last-activity timestamp (UTC-aware); list order is by this\n        field descending.\n    last_message_preview: The most recent message's text, trimmed and\n        truncated server-side to :data:`LAST_MESSAGE_PREVIEW_MAX_LEN`\n        characters (an ellipsis replaces the tail when it overflows).\n        ``None`` when the conversation has no messages.\n    last_message_role: Speaker role of the most recent message, using the\n        existing message-role vocabulary (``user`` is the human; every\n        other role is the persona/assistant side). ``None`` when the\n        conversation has no messages. The UI switches on this to attribute\n        the preview (\"You: \u2026\" vs the persona)."
       },
       "CreateConversationRequest": {
         "properties": {

@@ -3,6 +3,12 @@ name = "persona-api"
 version = "0.1.0"
 description = "Hosted FastAPI service for Persona"
 requires-python = ">=3.11"
+# Source-available, noncommercial use only. NOT OSI-approved (Spec 33). See
+# LICENSE for full terms; commercial use requires a separate license from the
+# rights holder. The engine (persona-core / persona-runtime / persona-voice) is
+# separately MIT-licensed.
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
 dependencies = [
     "persona-core[postgres]",
     "persona-runtime",

@@ -1,7 +1,7 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@/auth";
 import type { RunStatusResponse } from "@/lib/api";
 import { createApiClient, unwrap } from "@/lib/api/client";
 import {

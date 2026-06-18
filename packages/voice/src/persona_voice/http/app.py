@@ -172,12 +172,29 @@ def _bearer_token(request: Request) -> str:
     return token
 
 
+async def _disabled_verify(_token: str) -> AuthenticatedUser:
+    """Community has no auth wall; this stand-in is never actually called.
+
+    It exists only so the ``get_verify_token`` dependency resolves without
+    building a JWT verifier (which would require a configured secret).
+    Fail-closed if ever invoked.
+    """
+    raise AuthenticationError("token verification is disabled in the community edition")
+
+
 def get_verify_token(request: Request) -> Callable[[str], Awaitable[AuthenticatedUser]]:
-    """Active token verifier — overridable on ``app.state.verify_token`` for tests."""
+    """Active token verifier — overridable on ``app.state.verify_token`` for tests.
+
+    Spec 33 (D-33-X-voice-edition): the community edition is no-auth, so we return
+    a disabled stand-in rather than building a JWT verifier that would demand a
+    secret (``get_current_user`` returns a fixed local owner instead).
+    """
     verifier = getattr(request.app.state, "verify_token", None)
     if verifier is not None:
         return verifier  # type: ignore[no-any-return]
     cfg = get_voice_config(request)
+    if not cfg.is_cloud:
+        return _disabled_verify
     return make_jwt_verifier(cfg)
 
 
@@ -185,7 +202,15 @@ async def get_current_user(
     request: Request,
     verify: Callable[[str], Awaitable[AuthenticatedUser]] = Depends(get_verify_token),
 ) -> AuthenticatedUser:
-    """Authenticate the request; return the user or raise ``AuthenticationError``."""
+    """Authenticate the request; return the user or raise ``AuthenticationError``.
+
+    Spec 33: community is no-auth — return the fixed local owner with no bearer
+    token (mirrors persona-api's ``CommunityOwnerResolver``). Cloud verifies the
+    bearer JWT, unchanged. A test-injected ``app.state.verify_token`` always wins.
+    """
+    cfg = get_voice_config(request)
+    if not cfg.is_cloud and getattr(request.app.state, "verify_token", None) is None:
+        return AuthenticatedUser(id=cfg.community_owner_id, email=cfg.community_owner_email)
     return await verify(_bearer_token(request))
 
 
@@ -199,6 +224,9 @@ def _require_credits(request: Request, *, user_id: str) -> None:
     concern. Tests can override via ``app.state.require_credits`` to skip the
     DB hop entirely (same pattern as ``owns_persona``).
     """
+    # Spec 33 (D-33-X-voice-edition): community is unmetered — no credit gate.
+    if not get_voice_config(request).is_cloud:
+        return
     override = getattr(request.app.state, "require_credits", None)
     if override is not None:
         override(user_id=user_id)
@@ -223,6 +251,10 @@ def _check_persona_ownership(
     tenants. In tests the app state can expose an ``owns_persona`` override
     so the DB hop is skipped entirely.
     """
+    # Spec 33 (D-33-X-voice-edition): community is single-owner — the one local
+    # owner owns every persona, so there is nothing to cross-tenant-check.
+    if not get_voice_config(request).is_cloud:
+        return
     override = getattr(request.app.state, "owns_persona", None)
     if override is not None:
         if not override(persona_id=persona_id, user_id=user_id):

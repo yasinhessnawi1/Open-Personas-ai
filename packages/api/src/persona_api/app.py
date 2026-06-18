@@ -27,6 +27,7 @@ from persona.imagegen import (
     load_image_backend_from_env,
 )
 from persona.logging import get_logger
+from persona.stores.chroma import ChromaBackend
 from persona.stores.document_store import DocumentStore
 from persona.stores.postgres import PostgresBackend
 from persona_runtime.errors import TierNotConfiguredError
@@ -34,8 +35,18 @@ from persona_runtime.openrouter_subscription import resolve_openrouter_subscript
 from persona_runtime.tier import tier_registry_from_env
 
 from persona_api.background.run_worker import RunRegistry
-from persona_api.config import APIConfig
+from persona_api.config import APIConfig, Edition
+from persona_api.db.community import (
+    create_community_schema,
+    ensure_owner,
+    make_community_engine,
+)
 from persona_api.db.engine import create_db_engine
+from persona_api.editions import (
+    build_credits_policy,
+    build_owner_resolver,
+    check_public_noauth_guard,
+)
 from persona_api.errors import register_exception_handlers
 from persona_api.middleware.rate_limit import (
     InMemoryRateLimitStore,
@@ -66,6 +77,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from persona.backends.openrouter_catalog import OpenRouterSubscriptionMode
+    from persona.stores.backend import Backend
     from sqlalchemy import Engine
 
 __all__ = ["create_app"]
@@ -181,23 +193,44 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     client, D-05-4 / spec-06 handoff).
     """
     config: APIConfig = app.state.config
-    rls_engine: Engine | None = None
-    if config.effective_app_database_url:
-        rls_engine = make_rls_engine(
-            config.effective_app_database_url, pool_size=config.db_pool_size
-        )
-    app.state.rls_engine = rls_engine
-    # Superuser engine for JIT user provisioning (spec-09 integration): a freshly
-    # authenticated Clerk user has no `users` row (webhook mirroring deferred,
-    # spec 08), yet everything FKs users.id. The auth dep upserts it via this
-    # RLS-bypassing engine. None when no superuser DSN is set.
-    admin_engine: Engine | None = (
-        create_db_engine(config.database_url) if config.database_url else None
-    )
-    app.state.admin_engine = admin_engine
     # The embedder for persona memory population (D-08-8). Lazy: weights load on
-    # first encode, not at startup. Shared (thread-safe read path).
+    # first encode, not at startup. Shared (thread-safe read path). Built early so
+    # the community Chroma memory backend can compose it.
     app.state.embedder = persona_service.default_embedder(config.embedder_model)
+
+    # Spec 33 (Cluster B): the persistence backends are edition-selected.
+    rls_engine: Engine | None = None
+    admin_engine: Engine | None = None
+    memory_backend: Backend | None = None
+    if config.edition is Edition.community:
+        # Zero-infra: a single SQLite file (no RLS — single owner) + Chroma for
+        # typed-memory vectors. No superuser/admin engine; the fixed owner is
+        # seeded so the app-table FKs hold (D-33-7 / D-33-8 / D-33-X-owner-seed).
+        rls_engine = make_community_engine(config.community_db_path)
+        create_community_schema(rls_engine)
+        ensure_owner(
+            rls_engine, owner_id=config.community_owner_id, email=config.community_owner_email
+        )
+        community_memory_dir = Path(config.community_memory_path)
+        community_memory_dir.mkdir(parents=True, exist_ok=True)
+        memory_backend = ChromaBackend(
+            persist_path=community_memory_dir, embedder=app.state.embedder
+        )
+    else:
+        # Cloud: Postgres + RLS (today's behavior, unchanged).
+        if config.effective_app_database_url:
+            rls_engine = make_rls_engine(
+                config.effective_app_database_url, pool_size=config.db_pool_size
+            )
+        # Superuser engine for JIT user provisioning (spec-09 integration): a
+        # freshly authenticated Clerk user has no `users` row (webhook mirroring
+        # deferred, spec 08), yet everything FKs users.id. The auth dep upserts it
+        # via this RLS-bypassing engine. None when no superuser DSN is set.
+        admin_engine = create_db_engine(config.database_url) if config.database_url else None
+        if rls_engine is not None:
+            memory_backend = PostgresBackend(engine=rls_engine, embedder=app.state.embedder)
+    app.state.rls_engine = rls_engine
+    app.state.admin_engine = admin_engine
     app.state.audit_root = Path(config.audit_root)
     # Spec 13 D-13-4: workspace root for image uploads + (later) per-persona
     # tool artefacts. Resolved up front so routes/services can rely on it.
@@ -218,8 +251,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # listener; the builder is just the composition wiring. None when no DB
     # engine is configured (test paths override `app.state.build_document_store`
     # with an in-memory fake; see routes/documents.py).
-    if rls_engine is not None:
-        _document_backend = PostgresBackend(engine=rls_engine, embedder=app.state.embedder)
+    if memory_backend is not None:
+        _document_backend = memory_backend
         app.state.build_document_store = lambda: DocumentStore(backend=_document_backend)
     # Sibling alias for routes/documents.py which reads `sandbox_root` (legacy
     # name from the spec-03 sandbox-path resolver). Same value as
@@ -296,6 +329,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # MCP — the factory resolves a persona's assigned BYO servers and
                 # connects them SSRF-pinned with the decrypted auth header.
                 api_config=config,
+                # Spec 33 (D-33-X-creditspolicy-di): the edition's credits policy
+                # (metered for cloud, unlimited no-op for community) drives the
+                # code_execution deduction.
+                credits_policy=app.state.credits_policy,
+                # Spec 33 (D-33-X-memory-chroma-community): the edition's typed-
+                # memory backend (Chroma for community, Postgres for cloud).
+                memory_backend=memory_backend,
             )
             app.state.tier_registry = tier_registry
             app.state.authoring_tier = config.authoring_tier
@@ -329,6 +369,10 @@ def create_app(config: APIConfig | None = None) -> FastAPI:
     """
     config = config or APIConfig()
 
+    # Spec 33 D-33-4: refuse to start a community/no-auth process on a public
+    # bind unless explicitly opted in — fail-safe before any collaborator wiring.
+    check_public_noauth_guard(config)
+
     app = FastAPI(
         title="Persona API",
         version="0.8.0",
@@ -336,6 +380,12 @@ def create_app(config: APIConfig | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
     app.state.config = config
+
+    # Spec 33 (D-33-1): the edition seams, selected once here. Stateless, so set
+    # at factory time (available even when the lifespan hasn't run, e.g. unit
+    # tests that hit the app without TestClient's lifespan).
+    app.state.owner_resolver = build_owner_resolver(config)
+    app.state.credits_policy = build_credits_policy(config)
 
     register_exception_handlers(app)
 

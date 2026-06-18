@@ -1,10 +1,10 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { Download, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useAuth } from "@/auth";
 
 import { AuthedImage } from "@/components/chat/authed-image";
 import { cn } from "@/lib/utils";

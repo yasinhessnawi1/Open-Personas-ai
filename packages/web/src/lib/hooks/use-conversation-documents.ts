@@ -1,7 +1,7 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@/auth";
 import { ApiError, createApiClient, unwrap } from "@/lib/api/client";
 import type { DocumentRef } from "@/lib/upload";
 

@@ -11,6 +11,32 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Open-Core Editions — community / cloud + per-package relicense (code-complete 2026-06-18)
+
+> The monorepo becomes a clean open-core project: an **MIT engine**
+> (`persona-core` / `persona-runtime` / `persona-voice`) + a **source-available
+> app** (`persona-api` / `persona-web`, PolyForm Noncommercial 1.0.0), where the
+> commercial layer (auth, credits, multi-tenant RLS) is **edition-gated off by
+> default**. A single `PERSONA_EDITION` switch selects the runtime layer.
+> **community** (the default) is a clone-and-run local self-host — no auth, no
+> credits, no Postgres/Docker (SQLite + Chroma). **cloud** reproduces today's
+> hosted behavior exactly (Clerk auth, Postgres RLS, metered credits). **No
+> product feature change; no DB migration; no cloud regression.**
+
+#### Added
+- **`PERSONA_EDITION=community|cloud`** (default `community`) — one switch read by api, web, and voice, driving every commercial seam.
+- **`OwnerResolver` seam (api)** — `CommunityOwnerResolver` (a fixed local owner, no JWT) / `CloudOwnerResolver` (the existing Clerk-JWT path). Downstream RLS scoping + the persona-ownership pre-flight consume `owner_id` unchanged.
+- **`CreditsPolicy` seam (api)** — `UnlimitedCreditsPolicy` (community no-op) / `MeteredCreditsPolicy` (the existing ledger). Injected via `app.state`; every metered call site consumes the interface.
+- **Community persistence** — a SQLite relational store (no RLS — single owner) built from a dialect-aware variant of the canonical schema, with `metadata.create_all` schema-create (no Alembic), `PRAGMA foreign_keys=ON`, and an idempotent fixed-owner seed; typed-memory vectors go to Chroma (the `memory_chunks` pgvector table is cloud-only).
+- **Safety guard** — a community/no-auth process refuses to start on a non-loopback bind unless `PERSONA_ALLOW_PUBLIC_NOAUTH=1` (fail-safe against an accidentally-exposed open instance).
+- **Web `@/auth` seam** — all Clerk usage isolated behind `@/auth` + `/server` + `/provider` + `/middleware`, selected at build by `turbopack.resolveAlias`; a community build is provably Clerk-free (a module-graph gate + a build-artifact grep + scoped import isolation; `pnpm check:clerk-free`). Sign-in/up isolated as thin cloud components.
+- **Voice edition stance** — the voice token endpoint is no-auth/no-credits in community (fixed local owner), Clerk-verified in cloud.
+- **License boundary CI gate** — an `import-linter` contract proving the MIT engine never imports the PolyForm-NC app (`uv run lint-imports`).
+
+#### Changed
+- **Relicensed per package:** `persona-core` / `persona-runtime` / `persona-voice` → **MIT**; `persona-api` / `persona-web` → **PolyForm Noncommercial 1.0.0** (added the previously-missing `LICENSE` files + license metadata). Root README carries the honest per-package licensing table + open-core framing.
+- **`models.py` JSONB columns** now use `JSON().with_variant(JSONB, "postgresql")` — byte-identical JSONB DDL on Postgres (a test asserts the empty cloud-DDL diff), generic JSON on SQLite.
+
 ### Voice Experience Enhancements — Persona-Initiated Greeting · Per-Persona Language Routing (Spec 32; code-complete 2026-06-16, operator pass runs jointly with V6's deferred live pass)
 
 > A V6 fast-follow built on the V6 branch: two findings from V6's live bring-up that the frontend alone can't fix. **(A) Ring-until-greeting** — the persona *answers the phone*: the call rings while it generates turn 0 (its opening line) with the cold path warmed off-loop, then it speaks first; the mic stays gated until the greeting finishes. **(B) Per-persona declared-language routing** — each call runs in the persona's `identity.language_default`: STT pinned to the right Deepgram model+code, TTS spoken with the right Cartesia language, and the LLM instructed to reply in that language; English is the fail-soft default. **No schema change, no migration**; additive throughout.

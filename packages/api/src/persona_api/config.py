@@ -14,12 +14,28 @@ already use.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = ["APIConfig"]
+__all__ = ["APIConfig", "Edition"]
+
+
+class Edition(StrEnum):
+    """The open-core edition this process runs as (Spec 33, D-33-1).
+
+    A single ``PERSONA_EDITION`` switch drives every commercial seam
+    (``OwnerResolver``, ``CreditsPolicy``, the persistence backend). ``community``
+    (the default) is the zero-infra, single-local-owner, no-auth/no-credits
+    self-host; ``cloud`` is the owner's commercial hosting — Clerk auth,
+    multi-tenant RLS over Postgres, metered credits — reproducing today's
+    behavior exactly.
+    """
+
+    community = "community"
+    cloud = "cloud"
 
 
 class APIConfig(BaseSettings):
@@ -53,6 +69,36 @@ class APIConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="PERSONA_API_", extra="ignore", populate_by_name=True
     )
+
+    # Open-core edition (Spec 33, D-33-1). Default `community` — the safe,
+    # zero-infra self-host. Read from ``PERSONA_EDITION`` (no prefix, so web/api/
+    # voice all read the SAME var). `cloud` is the explicit commercial opt-in.
+    edition: Edition = Field(default=Edition.community, validation_alias="PERSONA_EDITION")
+
+    # Safety guard (Spec 33, D-33-4 / D-33-X-public-bind-detection): community is
+    # no-auth single-user-local by intent. When auth is disabled (community) the
+    # API refuses to start on a non-loopback bind unless this is set — a
+    # fail-safe against an accidentally-exposed open, unauthenticated instance.
+    allow_public_noauth: bool = Field(default=False, validation_alias="PERSONA_ALLOW_PUBLIC_NOAUTH")
+
+    # The bind host the server listens on. Read by the safety guard (D-33-4) to
+    # detect a non-loopback (public) bind under community/no-auth. Loopback by
+    # default; a community deploy that sets a public host must also set
+    # ``PERSONA_ALLOW_PUBLIC_NOAUTH=1`` or the API refuses to start.
+    host: str = "127.0.0.1"
+
+    # The community single-owner identity (D-33-3). All app-table rows belong to
+    # this constant owner; seeded as a `users` row at startup (D-33-X-owner-seed).
+    community_owner_id: str = "local-owner"
+    community_owner_email: str = "local@localhost"
+
+    # Community relational store path (D-33-7): a single SQLite file, zero-setup.
+    # Read from ``PERSONA_API_COMMUNITY_DB_PATH``; defaults under the cwd.
+    community_db_path: Path = Field(default_factory=lambda: Path.cwd() / ".persona_community.db")
+
+    # Community typed-memory store dir (D-33-X-memory-chroma-community): the
+    # file-based Chroma persist path. Read from ``PERSONA_API_COMMUNITY_MEMORY_PATH``.
+    community_memory_path: Path = Field(default_factory=lambda: Path.cwd() / ".persona_chroma")
 
     # DB DSNs — read WITHOUT the prefix (spec-07 convention: DATABASE_URL /
     # APP_DATABASE_URL). validation_alias overrides the env_prefix per field.

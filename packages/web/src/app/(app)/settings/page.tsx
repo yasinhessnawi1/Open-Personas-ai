@@ -1,5 +1,5 @@
-import { currentUser } from "@clerk/nextjs/server";
 import { getTranslations } from "next-intl/server";
+import { currentUser } from "@/auth/server";
 import { PageBody, PageHeader, Stack } from "@/components/layout";
 import { ErrorState } from "@/components/patterns/error-state";
 import { LowBalanceWarningCard } from "@/components/settings/low-balance-warning-card";

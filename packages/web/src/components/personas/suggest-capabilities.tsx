@@ -1,9 +1,9 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useState } from "react";
+import { useAuth } from "@/auth";
 import { buttonVariants } from "@/components/ui/button";
 import { createApiClient, unwrap } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";

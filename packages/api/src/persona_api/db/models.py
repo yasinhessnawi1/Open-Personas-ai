@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -44,6 +45,17 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+
+
+def _json() -> JSON:
+    """A dialect-neutral JSON column type (Spec 33, D-33-X-json-variant).
+
+    Emits ``JSONB`` on PostgreSQL (cloud — byte-identical to the pre-Spec-33
+    DDL, so no migration) and the generic ``JSON`` type on SQLite (community).
+    A fresh instance per column keeps each ``Table`` definition independent.
+    """
+    return JSON().with_variant(JSONB(), "postgresql")
+
 
 __all__ = [
     "EMBEDDING_DIM",
@@ -146,18 +158,18 @@ messages = Table(
     ),
     Column("role", Text, nullable=False),
     Column("content", Text, nullable=False),
-    Column("tool_calls", JSONB),
+    Column("tool_calls", _json()),
     # Connector passthrough (spec 08, D-08-3, migration 002). Nullable: the web
     # UI sends no channel. The API stores it opaquely and never branches on
     # `platform` — all connector logic is the future spec 12's.
-    Column("channel", JSONB),
+    Column("channel", _json()),
     # Spec 13 D-13-X-now option (c) / migration 004: per-message image refs as
     # JSONB. Each entry is ``{"workspace_path": str, "media_type": str}``. The
     # row holds REFERENCES only — image bytes live exactly once under the Spec
     # 03 workspace (D-13-4). Nullable: text-only messages and every assistant
     # message persist with images = NULL (byte-for-byte unchanged for the
     # text-only path).
-    Column("images", JSONB),
+    Column("images", _json()),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("role IN ('system', 'user', 'assistant', 'tool')", name="messages_role_check"),
     Index("idx_messages_conversation", "conversation_id"),
@@ -172,7 +184,7 @@ runs = Table(
     Column("persona_id", Text, nullable=False),
     Column("task", Text, nullable=False),
     Column("status", Text, nullable=False, server_default=text("'running'")),
-    Column("steps", JSONB, nullable=False, server_default=text("'[]'")),
+    Column("steps", _json(), nullable=False, server_default=text("'[]'")),
     Column("output", Text),
     Column("error", Text),
     Column("started_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
@@ -216,7 +228,7 @@ memory_chunks = Table(
     ),
     Column("content_hash", Text, nullable=False),
     # User-supplied PersonaChunk.metadata (string-valued) — NOT provenance.
-    Column("metadata", JSONB, nullable=False, server_default=text("'{}'")),
+    Column("metadata", _json(), nullable=False, server_default=text("'{}'")),
     # Promoted ChunkProvenance (NULL for identity chunks, which never version).
     Column("logical_id", Text),
     Column("version", Integer),
@@ -323,7 +335,7 @@ audit_log = Table(
     Column("user_id", Text, nullable=False),
     Column("action", Text, nullable=False),
     Column("target", Text, nullable=False),
-    Column("metadata", JSONB, nullable=False, server_default=text("'{}'")),
+    Column("metadata", _json(), nullable=False, server_default=text("'{}'")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Index("idx_audit_user", "user_id"),
     Index("idx_audit_created", "created_at"),
@@ -347,7 +359,7 @@ user_mcp_servers = Table(
     Column("credentials_encrypted", Text),
     Column("enabled", Boolean, nullable=False, server_default=text("true")),
     # Cached tool list from eager discovery on add/test (D-30-5); refreshed lazily.
-    Column("discovered_tools", JSONB),
+    Column("discovered_tools", _json()),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # No duplicate server names per user (the name keys the mcp:<name>: prefix).

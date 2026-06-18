@@ -60,7 +60,24 @@ dev = [
     # fails on a clean clone even though the module's lazy-import discipline
     # at the use-site is correct.
     "e2b-code-interpreter>=1.0,<2",
+    # Spec 33 (D-33-X-import-linter) — enforce the open-core license boundary:
+    # the MIT engine packages must never import the PolyForm-NC app packages.
+    "import-linter>=2.0,<3",
 ]
+
+# Spec 33 (D-33-X-import-linter): the MIT engine (persona-core / persona-runtime
+# / persona-voice) must not import the source-available PolyForm-NC app
+# (persona-api) — otherwise the permissive code would be encumbered. Direction is
+# already clean (R-33-3); this contract is the regression guard. Run via
+# `uv run lint-imports`. (persona-web is TypeScript — not in the Python graph.)
+[tool.importlinter]
+root_packages = ["persona", "persona_runtime", "persona_voice", "persona_api"]
+
+[[tool.importlinter.contracts]]
+name = "MIT engine must not import the PolyForm-NC app"
+type = "forbidden"
+source_modules = ["persona", "persona_runtime", "persona_voice"]
+forbidden_modules = ["persona_api"]
 
 [tool.ruff]
 target-version = "py311"

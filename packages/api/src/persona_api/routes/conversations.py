@@ -22,7 +22,7 @@ from persona_api.schemas import (
     MessageView,
     PostMessageRequest,
 )
-from persona_api.services import audit_service, chat_service, credits_service, document_service
+from persona_api.services import audit_service, chat_service, document_service
 
 router = APIRouter(prefix="/v1", tags=["conversations"])
 
@@ -187,7 +187,9 @@ async def post_message(
         rls_engine=request.app.state.rls_engine, conversation_id=conversation_id
     )
     # Pre-flight credit guard: 402 BEFORE streaming starts (D-11-12 / spec 11 §5).
-    credits_service.require_credits(rls_engine=request.app.state.rls_engine, user_id=user.id)
+    request.app.state.credits_policy.require_credits(
+        rls_engine=request.app.state.rls_engine, user_id=user.id
+    )
 
     # The text-only path's ``user_message`` is BYTE-FOR-BYTE unchanged (T03/T13
     # regression invariant); image-bearing turns thread ``images`` + the
@@ -231,6 +233,7 @@ async def post_message(
         conversation_id=conversation_id,
         user_message=body.content,
         channel=body.channel,
+        credits_policy=request.app.state.credits_policy,
         credits_per_turn=request.app.state.config.credits_per_turn,
         title_builder=getattr(request.app.state, "title_builder", None),
         images=list(body.images) if body.images else None,

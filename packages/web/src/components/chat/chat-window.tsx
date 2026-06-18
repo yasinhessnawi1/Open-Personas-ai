@@ -1,9 +1,9 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { ArrowUp } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuth } from "@/auth";
 import { useToast } from "@/components/patterns/toast";
 import type { AvatarPersona } from "@/components/persona/persona-avatar";
 import { buttonVariants } from "@/components/ui/button";

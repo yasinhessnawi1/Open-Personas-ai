@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import {
   Download,
   FileSpreadsheet,
@@ -10,6 +9,7 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { type ComponentType, type ReactNode, useState } from "react";
+import { useAuth } from "@/auth";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 

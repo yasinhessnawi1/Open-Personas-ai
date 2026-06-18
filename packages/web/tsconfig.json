@@ -19,6 +19,10 @@
       }
     ],
     "paths": {
+      "@/auth": ["./src/auth/index.cloud.ts"],
+      "@/auth/server": ["./src/auth/server.cloud.ts"],
+      "@/auth/provider": ["./src/auth/provider.cloud.tsx"],
+      "@/auth/middleware": ["./src/auth/middleware.cloud.ts"],
       "@/*": ["./src/*"]
     }
   },

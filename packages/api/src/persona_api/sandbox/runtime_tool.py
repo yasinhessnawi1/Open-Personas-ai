@@ -35,8 +35,8 @@ from persona.logging import get_logger
 from persona.sandbox.result import SandboxFile
 from persona.sandbox.tool import make_code_execution_tool
 
+from persona_api.editions import MeteredCreditsPolicy
 from persona_api.sandbox.context import get_sandbox_request_context
-from persona_api.services import credits_service
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from persona.tools.protocol import AsyncTool
     from sqlalchemy import Engine
 
+    from persona_api.editions import CreditsPolicy
     from persona_api.sandbox.pool import SandboxPool
 
 __all__ = ["make_pool_code_execution_tool"]
@@ -65,6 +66,7 @@ def make_pool_code_execution_tool(
     *,
     pool: SandboxPool,
     rls_engine: Engine,
+    credits_policy: CreditsPolicy | None = None,
     network_policy: NetworkPolicy | None = None,
     resource_limits: ResourceLimits | None = None,
     audit_logger: ToolAuditLogger | None = None,
@@ -126,6 +128,9 @@ def make_pool_code_execution_tool(
         An :class:`AsyncTool` named ``code_execution`` ready to register in
         the toolbox via :func:`build_default_toolbox`'s ``extra_tools`` slot.
     """
+    # Spec 33 (D-33-X-creditspolicy-di): production (RuntimeFactory) passes the
+    # edition's policy; default to metered so a direct call keeps today's behavior.
+    policy: CreditsPolicy = credits_policy or MeteredCreditsPolicy()
 
     def _session_id_provider() -> str | None:
         ctx = get_sandbox_request_context()
@@ -151,7 +156,7 @@ def make_pool_code_execution_tool(
             # No request context → CLI / one-shot path; no billing.
             return
         await asyncio.to_thread(
-            credits_service.deduct,
+            policy.deduct,
             rls_engine=rls_engine,
             user_id=ctx.owner_id,
             amount=credit_cost,

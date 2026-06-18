@@ -51,6 +51,7 @@ from persona_runtime.routing import FirstTokenLatencyTracker, IntelligentRouter
 from sqlalchemy import select
 
 from persona_api.db.models import personas as personas_t
+from persona_api.editions import MeteredCreditsPolicy
 from persona_api.mcp import BuiltinMCPSupervisor
 from persona_api.sandbox import make_pool_code_execution_tool
 from persona_api.services.workspace_persister import WorkspaceDirPersister
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
 
     from persona.imagegen import ImageBackend
     from persona.sandbox.result import SandboxFile
+    from persona.stores.backend import Backend
     from persona.stores.embedder import Embedder
     from persona.stores.protocol import MemoryStore
     from persona.tools.mcp.client import MCPClient
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
     from persona_api.config import APIConfig
+    from persona_api.editions import CreditsPolicy
     from persona_api.sandbox.pool import SandboxPool
 
 __all__ = ["RuntimeFactory"]
@@ -97,6 +100,8 @@ class RuntimeFactory:
         workspace_root: Path | None = None,
         image_backend: ImageBackend | None = None,
         api_config: APIConfig | None = None,
+        credits_policy: CreditsPolicy | None = None,
+        memory_backend: Backend | None = None,
     ) -> None:
         """Composition root for per-request loops.
 
@@ -123,6 +128,13 @@ class RuntimeFactory:
         """
         self._engine = rls_engine
         self._embedder = embedder
+        # Spec 33 (D-33-X-creditspolicy-di): the code_execution credit deduction
+        # flows through the injected policy. Defaults to the metered policy so a
+        # RuntimeFactory built without an explicit policy keeps today's behavior.
+        self._credits_policy: CreditsPolicy = credits_policy or MeteredCreditsPolicy()
+        # Spec 33 (D-33-X-memory-chroma-community): the edition's typed-memory
+        # transport. None ⇒ PostgresBackend built per-request (today's behavior).
+        self._memory_backend = memory_backend
         self._tier_registry = tier_registry
         self._turn_log_writer = turn_log_writer
         self._audit_root = audit_root
@@ -225,8 +237,16 @@ class RuntimeFactory:
         return Persona.model_validate(raw)
 
     def _build_stores(self) -> dict[str, MemoryStore]:
-        """The four typed stores over PostgresBackend (RLS-scoped engine)."""
-        backend = PostgresBackend(engine=self._engine, embedder=self._embedder)
+        """The four typed stores over the edition's memory backend.
+
+        Cloud uses ``PostgresBackend`` (RLS-scoped engine); community injects a
+        ``ChromaBackend`` (file-based) — Spec 33 D-33-X-memory-chroma-community.
+        When no backend is injected, defaults to ``PostgresBackend`` (today's
+        behavior) so existing callers are unaffected.
+        """
+        backend = self._memory_backend or PostgresBackend(
+            engine=self._engine, embedder=self._embedder
+        )
         audit = JSONLAuditLogger(self._audit_root)
         return {
             "identity": IdentityStore(backend=backend, audit_logger=audit),
@@ -304,6 +324,7 @@ class RuntimeFactory:
                 make_pool_code_execution_tool(
                     pool=self._sandbox_pool,
                     rls_engine=self._engine,
+                    credits_policy=self._credits_policy,
                     persona_id=persona.persona_id,
                     deferred_input_files_provider=provider,
                     workspace_root=self._workspace_root,

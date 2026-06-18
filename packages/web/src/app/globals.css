@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@clerk/ui/themes/shadcn.css";
+/* Clerk UI theme CSS (Spec 33): imported only by `@/auth/provider` (cloud), so
+ * the community build's CSS graph never references @clerk/ui. */
 
 @custom-variant dark (&:is(.dark *));
 

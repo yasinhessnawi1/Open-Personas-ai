@@ -1,23 +1,19 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+// Next 16 renamed `middleware.ts` → `proxy.ts`. Spec 33: the proxy HANDLER is
+// edition-selected behind `@/auth/middleware` (Clerk in cloud, a passthrough in
+// community), wired by the `turbopack.resolveAlias` in next.config.ts.
+//
+// Two Next 16 proxy-file constraints shape this file:
+//   1. `config` (the matcher) must be a statically-analyzable literal HERE — Next
+//      refuses a re-exported `config`. The matcher only decides which routes the
+//      proxy RUNS on; the community handler is a no-op passthrough, so the cloud
+//      matcher is a harmless superset for community and preserves cloud exactly.
+//   2. The proxy function must be a local binding Next can statically see — a bare
+//      `export { default } from …` re-export is not recognized as the proxy
+//      function at build (page-data collection). So we import the edition handler
+//      and re-export it as a concrete default binding.
+import editionProxy from "@/auth/middleware";
 
-// Next 16 renamed `middleware.ts` → `proxy.ts`. Clerk's clerkMiddleware is the
-// default export. Protected routes are the authenticated (app) group; the
-// auth pages stay public. The root `/` is intentionally NOT force-protected:
-// it is auth-aware and handles the signed-out case itself (redirect to the
-// marketing site), so the middleware leaves it alone.
-const isProtected = createRouteMatcher([
-  "/personas(.*)",
-  "/chat(.*)",
-  "/runs(.*)",
-  "/conversations(.*)",
-  "/settings(.*)",
-]);
-
-export default clerkMiddleware(async (auth, req) => {
-  if (isProtected(req)) {
-    await auth.protect(); // unauthenticated → redirect to sign-in
-  }
-});
+export default editionProxy;
 
 export const config = {
   matcher: [

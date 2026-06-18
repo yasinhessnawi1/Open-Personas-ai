@@ -41,7 +41,7 @@ layers sub-second-latency real-time conversation onto the same persona surface.
    └──────────────────────────────┬──────────────────────────────────────┘
                                   │
    ┌──────────────────────────────▼──────────────────────────────────────┐
-   │           persona-core (Python library, source-available)           │
+   │              persona-core (Python library, MIT licensed)            │
    │  · YAML schema · validation · registry                              │
    │  · four typed memory stores (Chroma + Postgres/pgvector)            │
    │  · model backend abstraction (frontier APIs + local HF + Ollama)    │
@@ -111,27 +111,52 @@ two-way conversation completes when V6 (the frontend voice client) lands.
 
 ## Quick start
 
-You need Python 3.11+, [uv](https://docs.astral.sh/uv/), and Docker (for
-Postgres + pgvector).
+### Run the whole product locally — community edition (zero infra)
+
+The default edition (`PERSONA_EDITION=community`) is a **clone-and-run** local
+self-host: **no auth, no credits, no Postgres, no Docker**. Persistence is a
+SQLite file + a local Chroma directory. You only need Python 3.11+,
+[uv](https://docs.astral.sh/uv/), [pnpm](https://pnpm.io/), and a model API key.
 
 ```bash
-# 1. clone + install the workspace
+# 1. clone + install
 git clone https://github.com/yasinhessnawi1/Open-Persona.git
 cd open-persona
 uv sync
 
-# 2. spin up Postgres + pgvector for the hosted-path integration tests
-docker compose up -d postgres
+# 2. set ONE model API key (community needs nothing else)
+export PERSONA_PROVIDER=anthropic
+export PERSONA_API_KEY=sk-ant-...
+export PERSONA_MODEL=claude-sonnet-4-6
 
-# 3. run the default test suite (unit + contract; integration + external skip)
-uv run pytest
+# 3. run the API (SQLite + Chroma created on first boot; a fixed local owner is
+#    seeded; no sign-in wall). PERSONA_EDITION defaults to community.
+uv run uvicorn persona_api.app:create_app --factory --port 8000
 
-# 4. (optional) run the integration suite
-uv run pytest -m integration
+# 4. run the web app (community build is Clerk-free)
+cd packages/web && pnpm install && pnpm dev
+```
 
-# 5. (optional) type-check + lint
-uv run mypy packages/core/src --strict
-uv run ruff check
+For **noncommercial** use under clear per-package licenses (MIT engine,
+source-available app — see [License](#license)).
+
+### Cloud edition (the owner's commercial hosting)
+
+`PERSONA_EDITION=cloud` reproduces the hosted behavior — Clerk auth, multi-tenant
+Postgres RLS, metered credits. It needs `DATABASE_URL` / `APP_DATABASE_URL`, the
+JWT/Clerk vars, and `docker compose up -d postgres`. Both the API process and the
+web build must set `PERSONA_EDITION=cloud`.
+
+### Developing / testing
+
+```bash
+docker compose up -d postgres          # for the hosted-path integration tests
+uv run pytest                          # default suite (integration + external skip)
+uv run pytest -m integration           # integration suite (needs Postgres)
+uv run mypy packages/core/src --strict # type-check
+uv run ruff check                      # lint
+uv run lint-imports                    # the MIT-engine ↛ PolyForm-app license boundary
+cd packages/web && pnpm check:clerk-free   # community bundle is Clerk-free
 ```
 
 Per-package quickstarts (install one package standalone, run the CLI, embed
@@ -149,11 +174,11 @@ documents the minimum set needed for that package to run.
 
 | Package | Description | License | Status |
 | --- | --- | --- | --- |
-| [`packages/core/`](packages/core/README.md) | Typed memory stores, persona schema, model backends, image-gen, sandbox, CLI. The library you `pip install persona-core` to get. | PolyForm-NC 1.0.0 (source-available, noncommercial) | Shipped (v0.1) |
-| [`packages/runtime/`](packages/runtime/README.md) | Conversation loop, tier router, prompt builder, history manager, agentic loop, tool dispatch. | PolyForm-NC 1.0.0 (source-available, noncommercial) | Shipped (v0.1) |
-| [`packages/voice/`](packages/voice/README.md) | LiveKit-based voice trunk: streaming STT, streaming TTS, turn-taking, real-time persona conversation. | PolyForm-NC 1.0.0 (source-available, noncommercial) | V1-V3 shipped, V4-V6 in development |
-| [`packages/api/`](packages/api/) | Hosted FastAPI service: auth, persona CRUD, SSE-streaming chat, agentic run, LLM-assisted authoring. | Private | In development (license posture TBD) |
-| [`packages/web/`](packages/web/README.md) | Next.js web app: persona authoring, chat UI, billing dashboard. | Private | In development |
+| [`packages/core/`](packages/core/README.md) | Typed memory stores, persona schema, model backends, image-gen, sandbox, CLI. The library you `pip install persona-core` to get. | **MIT** | Shipped (v0.1) |
+| [`packages/runtime/`](packages/runtime/README.md) | Conversation loop, tier router, prompt builder, history manager, agentic loop, tool dispatch. | **MIT** | Shipped (v0.1) |
+| [`packages/voice/`](packages/voice/README.md) | LiveKit-based voice trunk: streaming STT, streaming TTS, turn-taking, real-time persona conversation. | **MIT** | V1-V3 shipped, V4-V6 in development |
+| [`packages/api/`](packages/api/) | Hosted FastAPI service: auth, persona CRUD, SSE-streaming chat, agentic run, LLM-assisted authoring. | PolyForm-NC 1.0.0 (source-available, noncommercial) | In development |
+| [`packages/web/`](packages/web/README.md) | Next.js web app: persona authoring, chat UI, billing dashboard. | PolyForm-NC 1.0.0 (source-available, noncommercial) | In development |
 
 Each package has its own `CHANGELOG.md`, `pyproject.toml`, and version line.
 The workspace `pyproject.toml` at the repo root pins them together via uv
@@ -163,24 +188,36 @@ workspace.
 
 ## License
 
-**Source-available subset (noncommercial use only):** `packages/core/`,
-`packages/runtime/`, `packages/voice/` are licensed under
-[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0).
-Free for personal, research, evaluation, educational, and noncommercial
-production use. Commercial use requires a separate license from the rights
-holder.
+Open Persona is an **open-core** project — a permissively-licensed engine plus a
+source-available application. There is no single repo-wide license; each package
+declares its own (SPDX expression in its `pyproject.toml` / `package.json`, with
+a `LICENSE` file alongside).
 
-**Private packages:** `packages/api/`, `packages/web/` are not currently
-licensed for external use; their public license posture is to-be-determined
-when the work matures.
+**Engine — MIT (true OSI open source):** `packages/core/`, `packages/runtime/`,
+`packages/voice/` are licensed under the [MIT License](https://opensource.org/license/mit).
+Free for **any** use, including commercial.
+
+**Application — PolyForm Noncommercial 1.0.0 (source-available, NOT OSI open
+source):** `packages/api/` and `packages/web/` are licensed under
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0).
+The source is public — you may read, modify, and self-host it for personal,
+research, evaluation, educational, and **noncommercial** use — but **commercial
+use requires a separate license** from the rights holder.
+
+| Package | SPDX |
+| --- | --- |
+| `persona-core`, `persona-runtime`, `persona-voice` | `MIT` |
+| `persona-api`, `persona-web` | `PolyForm-Noncommercial-1.0.0` |
+
+The MIT engine never imports the PolyForm-NC app (enforced in CI by an
+`import-linter` contract), so the permissive packages stay genuinely permissive.
 
 ---
 
 ## Contributing
 
-Contributions are welcome on the three source-available packages (`core`,
-`runtime`, `voice`) under the same PolyForm Noncommercial 1.0.0 license.
-Please:
+Contributions are welcome on the three MIT engine packages (`core`,
+`runtime`, `voice`) under the MIT License. Please:
 
 1. Open an issue first if the change is non-trivial. A quick design check
    saves both sides a round-trip.
@@ -216,8 +253,6 @@ releases work toward (in rough order):
   in the wild becomes a persona-callable tool.
 - **Rich output delivery**: inline rendering of images, files, diagrams,
   and other non-text artifacts in the chat surface.
-- **Public license posture for `persona-api` + `persona-web`**, once the
-  public-facing surfaces are stable.
 
 Watch the [CHANGELOG](CHANGELOG.md) for what actually shipped, and the
 per-package `CHANGELOG.md` files for per-surface detail.

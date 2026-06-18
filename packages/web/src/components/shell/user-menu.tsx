@@ -1,7 +1,7 @@
 "use client";
 
-import { UserButton } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
+import { UserButton } from "@/auth";
 
 /**
  * Client-only Clerk `<UserButton />`.

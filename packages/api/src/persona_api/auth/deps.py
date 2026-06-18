@@ -39,6 +39,7 @@ from persona.auth.jwt_verifier import (
     make_jwt_verifier,
 )
 
+from persona_api.config import Edition
 from persona_api.errors import AuthenticationError
 from persona_api.middleware.rls_context import current_user_id
 
@@ -51,15 +52,14 @@ __all__ = [
 ]
 
 
-def _bearer_token(request: Request) -> str:
-    """Extract the bearer token from the Authorization header, or 401."""
-    header = request.headers.get("Authorization", "")
-    if not header.startswith("Bearer "):
-        raise AuthenticationError("missing or malformed Authorization header")
-    token = header.removeprefix("Bearer ").strip()
-    if not token:
-        raise AuthenticationError("empty bearer token")
-    return token
+async def _disabled_verify(_token: str) -> AuthenticatedUser:
+    """Community has no auth wall; the CommunityOwnerResolver never calls verify.
+
+    This stand-in exists only so the ``get_verify_token`` dependency resolves
+    without building a JWT verifier (which would require a configured secret).
+    Fail-closed if ever invoked.
+    """
+    raise AuthenticationError("token verification is disabled in the community edition")
 
 
 def get_verify_token(request: Request) -> Callable[[str], Awaitable[AuthenticatedUser]]:
@@ -69,11 +69,18 @@ def get_verify_token(request: Request) -> Callable[[str], Awaitable[Authenticate
     ``app.state.config`` by the factory). Tests override THIS dependency to
     inject a fake-JWT verifier (no provider call). Kept as a dependency (not a
     bare import) precisely so it is overridable.
+
+    Spec 33: in the community edition the request path has no auth wall and the
+    ``CommunityOwnerResolver`` ignores the verifier, so we return a disabled
+    stand-in rather than building a JWT verifier (which would demand a secret).
     """
     verifier = getattr(request.app.state, "verify_token", None)
     if verifier is not None:
         return verifier  # type: ignore[no-any-return]
-    return make_jwt_verifier(request.app.state.config)
+    config = request.app.state.config
+    if config.edition is Edition.community:
+        return _disabled_verify
+    return make_jwt_verifier(config)
 
 
 async def get_current_user(
@@ -83,24 +90,18 @@ async def get_current_user(
     """Authenticate the request and bind the RLS user-id for its duration (D-08-1).
 
     A ``yield`` dependency so the :data:`current_user_id` ``ContextVar`` lifetime
-    is exactly the request scope: extract + verify the bearer token, **set** the
-    contextvar (so the RLS pool listener scopes every connection this request
-    touches — route queries AND the runtime store's), yield the user, then
-    **reset** the contextvar on teardown so nothing leaks to a later request on
-    the same worker. On auth failure the contextvar is never set (fail-closed —
-    an unscoped connection sees zero rows).
+    is exactly the request scope: resolve the owner via the edition's
+    :class:`~persona_api.editions.owner_resolver.OwnerResolver` (Spec 33 — cloud
+    verifies the bearer JWT + JIT-provisions the users row; community returns the
+    fixed local owner), **set** the contextvar (so the RLS pool listener scopes
+    every connection this request touches — route queries AND the runtime
+    store's; community's listener-less SQLite engine simply ignores it), yield
+    the user, then **reset** the contextvar on teardown so nothing leaks to a
+    later request on the same worker. On auth failure the contextvar is never set
+    (fail-closed — an unscoped connection sees zero rows).
     """
-    token = _bearer_token(request)
-    user = await verify(token)
-    # JIT-provision the users row: the provider (Clerk) issues JWTs but the API
-    # has no signup, and persona/conversation/run/credits all FK users.id
-    # (webhook mirroring deferred in spec 08). A system action on the superuser
-    # engine; idempotent. None in unit tests without a superuser DSN.
-    admin_engine = getattr(request.app.state, "admin_engine", None)
-    if admin_engine is not None:
-        from persona_api.services.user_service import ensure_user
-
-        ensure_user(admin_engine, user_id=user.id, email=user.email)
+    resolver = request.app.state.owner_resolver
+    user = await resolver.resolve(request, verify)
     reset_token = current_user_id.set(user.id)
     try:
         yield user

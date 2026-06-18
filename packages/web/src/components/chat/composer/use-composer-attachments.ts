@@ -1,7 +1,7 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@/auth";
 import { ApiError, type TokenGetter } from "@/lib/api/client";
 import { type DocumentRef, uploadDocument, uploadImage } from "@/lib/upload";
 import type { ImageAttachment } from "./attach-state";

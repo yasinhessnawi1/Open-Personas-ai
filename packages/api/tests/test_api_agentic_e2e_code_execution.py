@@ -317,7 +317,9 @@ async def test_agentic_loop_dispatches_code_execution_end_to_end(
         SandboxRequestContext(owner_id="e2e-user", conversation_id="e2e-conv")
     )
     try:
-        with patch("persona_api.sandbox.runtime_tool.credits_service.deduct") as mock_deduct:
+        # Spec 33: the default (metered) CreditsPolicy delegates to
+        # persona.credits.deduct (aliased _deduct in the policy module).
+        with patch("persona_api.editions.credits_policy._deduct") as mock_deduct:
             mock_deduct.return_value = 99  # arbitrary post-deduct balance
             run = await loop.run("Compute two plus two and tell me the answer.")
     finally:

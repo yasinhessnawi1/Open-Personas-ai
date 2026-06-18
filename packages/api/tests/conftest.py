@@ -28,6 +28,25 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _default_cloud_edition() -> Iterator[None]:
+    """Run the existing api suite as the CLOUD edition (Spec 33).
+
+    The pre-Spec-33 behavior — Clerk auth, multi-tenant RLS, metered credits — is
+    now the ``cloud`` edition; ``community`` (the product default) has no auth
+    wall. The existing suite asserts the cloud behavior, so default every
+    ``APIConfig()`` built without an explicit edition to ``cloud`` here (an
+    explicit ``edition=`` kwarg still wins — community-specific tests pass it).
+    """
+    prior = os.environ.get("PERSONA_EDITION")
+    os.environ["PERSONA_EDITION"] = "cloud"
+    yield
+    if prior is None:
+        os.environ.pop("PERSONA_EDITION", None)
+    else:
+        os.environ["PERSONA_EDITION"] = prior
+
+
 class HashEmbedder384:
     """Deterministic 384-dim L2-normalised embedder for Postgres tests.
 

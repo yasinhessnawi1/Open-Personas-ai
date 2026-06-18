@@ -1,7 +1,7 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useCallback, useRef, useState } from "react";
+import { useAuth } from "@/auth";
 import type { ChatMessageView } from "@/components/chat/message-element";
 import { ApiError, createApiClient, unwrap } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";

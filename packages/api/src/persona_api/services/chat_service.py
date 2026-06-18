@@ -38,7 +38,6 @@ from persona_api.sandbox import (
     reset_sandbox_request_context,
     set_sandbox_request_context,
 )
-from persona_api.services import credits_service  # sibling module (no back-import)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -49,6 +48,7 @@ if TYPE_CHECKING:
     from persona_runtime.prompt import DocumentContext
     from sqlalchemy import Connection, Engine
 
+    from persona_api.editions import CreditsPolicy
     from persona_api.schemas import ChannelContext
     from persona_api.schemas import ImageRef as ImageRefSchema
 
@@ -284,6 +284,7 @@ async def stream_chat(
     conversation_id: str,
     user_message: str,
     channel: ChannelContext | None,
+    credits_policy: CreditsPolicy,
     credits_per_turn: int = 1,
     title_builder: Callable[[str], Awaitable[str]] | None = None,
     images: list[ImageRefSchema] | None = None,
@@ -387,7 +388,7 @@ async def stream_chat(
         if is_first_turn and title_builder is not None:
             await _maybe_set_title(rls_engine, conversation_id, user_message, title_builder)
         # Deduct credits per successful turn (after the stream completes — D-08-6).
-        credits_service.deduct(
+        credits_policy.deduct(
             rls_engine=rls_engine, user_id=owner_id, amount=credits_per_turn, reason="chat_turn"
         )
         done: dict[str, object] = {

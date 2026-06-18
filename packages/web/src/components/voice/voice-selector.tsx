@@ -12,10 +12,10 @@
  * unconfigured TTS deployment shows a calm message, never a broken control.
  */
 
-import { useAuth } from "@clerk/nextjs";
 import { Pause, Play } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {

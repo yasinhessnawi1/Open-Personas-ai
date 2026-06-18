@@ -17,8 +17,8 @@
  *   - null/empty → null, and NO fetch happens (the no-avatar case stays inert).
  */
 
-import { useAuth } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/auth";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const TEMPLATE = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;

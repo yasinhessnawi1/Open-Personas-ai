@@ -45,6 +45,7 @@ __all__ = [
     "MCPCredentialError",
     "MCPServerNotFoundError",
     "MCPServerValidationError",
+    "PublicNoAuthRefusedError",
     "RateLimitExceededError",
     "RefinementLimitError",
     "RunNotFoundError",
@@ -66,6 +67,16 @@ from persona.errors import AuthenticationError  # noqa: E402, F401
 # dependency. Imported above (``from persona.errors import ...``) and listed
 # in ``__all__`` for back-compat with the existing persona-api import sites
 # (``from persona_api.errors import CreditsExhaustedError``).
+
+
+class PublicNoAuthRefusedError(PersonaError):
+    """Raised at startup when community/no-auth detects a public bind (Spec 33, D-33-4).
+
+    The fail-safe against an accidentally-exposed open, unauthenticated instance
+    that would burn the operator's model keys. ``context`` carries the offending
+    ``host``. Set ``PERSONA_ALLOW_PUBLIC_NOAUTH=1`` to override, or run the
+    ``cloud`` edition for a public/shared deploy.
+    """
 
 
 class ConversationNotFoundError(PersonaError):

@@ -1,5 +1,5 @@
-import { SignUp } from "@clerk/nextjs";
 import Image from "next/image";
+import { SignUp } from "@/auth";
 
 export default function SignUpPage() {
   return (

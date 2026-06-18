@@ -24,7 +24,9 @@ async def get_credits(
     ``low_balance`` is surfaced inline so the web app shows the under-limit
     warning without a second round-trip (D-11-12).
     """
-    balance = credits_service.get_balance(rls_engine=request.app.state.rls_engine, user_id=user.id)
+    balance = request.app.state.credits_policy.get_balance(
+        rls_engine=request.app.state.rls_engine, user_id=user.id
+    )
     low = balance < credits_service.LOW_BALANCE_THRESHOLD
     return CreditsResponse(balance=balance, low_balance=low)
 
@@ -37,7 +39,7 @@ async def get_usage(
     offset: int = 0,
 ) -> list[UsageEntry]:
     """The caller's per-turn token usage (§5.5; turn_logs, RLS-scoped)."""
-    rows = credits_service.list_turn_usage(
+    rows = request.app.state.credits_policy.list_turn_usage(
         rls_engine=request.app.state.rls_engine,
         limit=min(limit, 200),
         offset=offset,

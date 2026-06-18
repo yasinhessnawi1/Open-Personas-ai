@@ -1,9 +1,8 @@
-import { ClerkProvider } from "@clerk/nextjs";
-import { shadcn } from "@clerk/ui/themes";
 import type { Metadata } from "next";
 import { Fraunces, Geist, Geist_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale } from "next-intl/server";
+import { AuthProvider } from "@/auth/provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
@@ -65,7 +64,7 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        <ClerkProvider appearance={{ theme: shadcn }}>
+        <AuthProvider>
           <ThemeProvider
             attribute="class"
             defaultTheme="system"
@@ -74,7 +73,7 @@ export default async function RootLayout({
           >
             <NextIntlClientProvider>{children}</NextIntlClientProvider>
           </ThemeProvider>
-        </ClerkProvider>
+        </AuthProvider>
       </body>
     </html>
   );

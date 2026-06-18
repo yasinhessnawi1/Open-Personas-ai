@@ -85,7 +85,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from persona_api.auth import AuthenticatedUser, get_current_user
 from persona_api.imagegen import service as imagegen_service
 from persona_api.middleware.rate_limit import rate_limit
-from persona_api.services import audit_service, credits_service, persona_service
+from persona_api.services import audit_service, persona_service
 
 if TYPE_CHECKING:
     from persona.imagegen.protocol import ImageBackend
@@ -229,7 +229,9 @@ async def post_imagegen(
     # 3. Credits pre-flight (402 if exhausted). Distinct from the service-
     #    layer pre-deduct: this gate catches the "user is broke" case
     #    BEFORE any deduct/refund pair is written to the ledger.
-    credits_service.require_credits(rls_engine=request.app.state.rls_engine, user_id=user.id)
+    request.app.state.credits_policy.require_credits(
+        rls_engine=request.app.state.rls_engine, user_id=user.id
+    )
 
     # 4. Extract the persona's visual_style (optional Pydantic field, T10).
     persona_visual_style = _extract_visual_style(persona_row)
@@ -248,6 +250,7 @@ async def post_imagegen(
     try:
         result = await imagegen_service.generate(
             rls_engine=request.app.state.rls_engine,
+            credits_policy=request.app.state.credits_policy,
             workspace_root=request.app.state.workspace_root,
             backend=backend,
             user_id=user.id,

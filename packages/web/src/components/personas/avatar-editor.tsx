@@ -1,9 +1,9 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { ImageUp } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useId, useState } from "react";
+import { useAuth } from "@/auth";
 import { PersonaAvatar } from "@/components/persona/persona-avatar";
 import { buttonVariants } from "@/components/ui/button";
 import { uploadImage } from "@/lib/upload";

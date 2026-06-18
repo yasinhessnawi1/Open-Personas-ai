@@ -28,7 +28,26 @@ class VoiceConfig(BaseSettings):
         env_file=None,
         case_sensitive=False,
         extra="ignore",
+        # So an explicit ``VoiceConfig(edition=...)`` kwarg (the field name) is
+        # honored alongside the ``PERSONA_EDITION`` validation_alias (Spec 33).
+        populate_by_name=True,
     )
+
+    # --- Open-core edition (Spec 33, D-33-X-voice-edition) ---
+    # Reads the SAME ``PERSONA_EDITION`` var as persona-api / persona-web (no
+    # prefix). ``community`` (default): no-auth local voice — no JWT, a fixed
+    # local owner, no credit metering. ``cloud``: verify the Clerk JWT + persona
+    # ownership + credits (today's behavior, unchanged). persona-voice is MIT and
+    # cannot import persona-api's ``Edition`` enum (the import-direction contract
+    # forbids it), so the flag lives here as a plain string.
+    edition: str = Field(default="community", validation_alias="PERSONA_EDITION")
+    community_owner_id: str = Field(default="local-owner")
+    community_owner_email: str = Field(default="local@localhost")
+
+    @property
+    def is_cloud(self) -> bool:
+        """Whether this process runs the commercial cloud edition."""
+        return self.edition.strip().lower() == "cloud"
 
     # --- LiveKit substrate (D-V1-1 branch (A), D-V1-X-livekit-server-deployment) ---
     # `LIVEKIT_URL` is the WebSocket URL the client uses to connect to the

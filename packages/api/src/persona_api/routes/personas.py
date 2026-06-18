@@ -39,7 +39,6 @@ from persona_api.services import (
     authoring_service,
     catalog_service,
     consent_service,
-    credits_service,
     persona_service,
     tool_consent_service,
     voice_assignment_service,
@@ -281,7 +280,9 @@ async def author_persona(
     cost is the frontier-model call, not a row; D-10-8).
     """
     # Pre-flight credit guard (D-11-12 / spec 11 §5).
-    credits_service.require_credits(rls_engine=request.app.state.rls_engine, user_id=user.id)
+    request.app.state.credits_policy.require_credits(
+        rls_engine=request.app.state.rls_engine, user_id=user.id
+    )
     backend = request.app.state.tier_registry.get(request.app.state.authoring_tier)
     draft = await authoring_service.generate_authoring_draft(
         backend,
@@ -315,7 +316,9 @@ async def refine_persona(
             context={"round": str(body.round), "max_rounds": str(_MAX_REFINE_ROUNDS)},
         )
     # Pre-flight credit guard (D-11-12 / spec 11 §5).
-    credits_service.require_credits(rls_engine=request.app.state.rls_engine, user_id=user.id)
+    request.app.state.credits_policy.require_credits(
+        rls_engine=request.app.state.rls_engine, user_id=user.id
+    )
     backend = request.app.state.tier_registry.get(request.app.state.authoring_tier)
     draft = await authoring_service.refine_authoring_draft(
         backend,
@@ -352,7 +355,9 @@ async def recommend_tools(
     highest-confidence first. Reuses the description-only ``AuthorPersonaRequest``
     body. Deducts the flat authoring credit (a mid-tier LLM call).
     """
-    credits_service.require_credits(rls_engine=request.app.state.rls_engine, user_id=user.id)
+    request.app.state.credits_policy.require_credits(
+        rls_engine=request.app.state.rls_engine, user_id=user.id
+    )
     backend = request.app.state.tier_registry.get("mid")
     recommendations = await authoring_service.recommend_tools_for_persona(backend, body.description)
     _deduct_and_audit(
@@ -387,7 +392,9 @@ async def recommend_capabilities(
     """
     from persona.skills.catalog import BUILTIN_CATALOG
 
-    credits_service.require_credits(rls_engine=request.app.state.rls_engine, user_id=user.id)
+    request.app.state.credits_policy.require_credits(
+        rls_engine=request.app.state.rls_engine, user_id=user.id
+    )
     backend = request.app.state.tier_registry.get("mid")
     recommendations = await authoring_service.recommend_capabilities_for_persona(
         backend,
@@ -465,7 +472,7 @@ def _deduct_and_audit(
     Author/refine create no persona row, so the audit ``target`` is empty; the
     eventual ``POST /v1/personas`` audits ``persona.create`` against the real id.
     """
-    credits_service.deduct(
+    request.app.state.credits_policy.deduct(
         rls_engine=request.app.state.rls_engine,
         user_id=user.id,
         amount=request.app.state.config.authoring_credit_cost,

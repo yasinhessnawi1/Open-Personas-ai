@@ -4,10 +4,10 @@ version = "0.1.0"
 description = "Generation loop, router, and agentic engine for persona-core."
 readme = "README.md"
 requires-python = ">=3.11"
-# Source-available, noncommercial use only. NOT OSI-approved.
-# See LICENSE for full terms. Commercial use requires a separate license
-# negotiated with the rights holder.
-license = "PolyForm-Noncommercial-1.0.0"
+# MIT — the open-source engine (Spec 33). Free for any use, including
+# commercial. The application layer (persona-api / persona-web) is separately
+# licensed PolyForm-Noncommercial-1.0.0 (source-available, noncommercial).
+license = "MIT"
 license-files = ["LICENSE"]
 authors = [
     { name = "Yasin Hessnawi", email = "yasinhessnawi1@gmail.com" },
@@ -24,7 +24,7 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: Other/Proprietary License",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
@@ -52,7 +52,7 @@ Issues = "https://github.com/yasinhessnawi1/Open-Persona/issues"
 Changelog = "https://github.com/yasinhessnawi1/Open-Persona/blob/main/CHANGELOG.md"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

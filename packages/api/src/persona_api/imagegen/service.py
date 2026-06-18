@@ -78,9 +78,9 @@ from persona.logging import get_logger
 from persona.tools._sandbox import resolve_sandbox_path
 from persona.tools.audit import ToolAuditEvent
 
+from persona_api.editions import MeteredCreditsPolicy
 from persona_api.errors import ConcurrencyCappedError
 from persona_api.imagegen.concurrency import acquire_user_concurrency
-from persona_api.services import credits_service
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -89,6 +89,8 @@ if TYPE_CHECKING:
     from persona.imagegen.result import ImageMediaType
     from persona.tools.audit import ToolAuditLogger
     from sqlalchemy import Engine
+
+    from persona_api.editions import CreditsPolicy
 
 __all__ = ["DEFAULT_COST_PER_IMAGE_CREDITS", "generate", "generate_avatar"]
 
@@ -146,6 +148,7 @@ _UPLOAD_DIR_NAME: str = "uploads"
 async def generate(
     *,
     rls_engine: Engine,
+    credits_policy: CreditsPolicy | None = None,
     workspace_root: Path,
     backend: ImageBackend,
     user_id: str,
@@ -240,6 +243,9 @@ async def generate(
             transient, timeout, unsupported option). Credits are refunded
             before the exception propagates.
     """
+    # Spec 33 (D-33-X-creditspolicy-di): production passes the edition's policy;
+    # default to the metered policy so a direct call keeps today's behavior.
+    credits_policy = credits_policy or MeteredCreditsPolicy()
     total_cost = options.count * cost_per_image_credits
     merged_prompt = merge_visual_style(prompt, persona_visual_style)
 
@@ -272,7 +278,7 @@ async def generate(
             # TWO transactions share the same engine + the same RLS
             # scope; if the backend call later raises, we manually
             # refund (the deduct's transaction already committed).
-            credits_service.deduct(
+            credits_policy.deduct(
                 rls_engine=rls_engine,
                 user_id=user_id,
                 amount=total_cost,
@@ -299,7 +305,7 @@ async def generate(
         # a fresh transaction so the ledger captures both legs of the
         # round trip.
         if deduct_succeeded:
-            credits_service.refund(
+            credits_policy.refund(
                 rls_engine=rls_engine,
                 user_id=user_id,
                 amount=total_cost,

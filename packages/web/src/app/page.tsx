@@ -1,8 +1,8 @@
-import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
+import { auth } from "@/auth/server";
 import { Onboarding } from "@/components/home/onboarding";
 import {
   QuickLaunchItem,

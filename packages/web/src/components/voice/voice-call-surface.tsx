@@ -16,11 +16,11 @@
  * contexts where voice naturally lives (D-V6-5 criteria 7 + 10).
  */
 
-import { useAuth } from "@clerk/nextjs";
 import { ArrowLeft, Phone } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect } from "react";
+import { useAuth } from "@/auth";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { IdentityOrb } from "@/components/voice/identity-orb";

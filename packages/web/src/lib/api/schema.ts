@@ -1022,6 +1022,29 @@ export interface components {
     /**
      * ConversationSummary
      * @description A conversation in a list view.
+     *
+     *     The two ``last_message_*`` fields let the sidebar render a real preview of
+     *     the most recent turn instead of falling back to the title. They are
+     *     populated in a single set-based LIST query (a ``ROW_NUMBER()`` window over
+     *     the RLS-scoped ``messages`` rows — no per-row fan-out) and are ``None`` for
+     *     a conversation that has no messages yet.
+     *
+     *     Attributes:
+     *         id: The conversation id.
+     *         persona_id: The persona this conversation belongs to.
+     *         title: The conversation's display title.
+     *         created_at: Creation timestamp (UTC-aware).
+     *         updated_at: Last-activity timestamp (UTC-aware); list order is by this
+     *             field descending.
+     *         last_message_preview: The most recent message's text, trimmed and
+     *             truncated server-side to :data:`LAST_MESSAGE_PREVIEW_MAX_LEN`
+     *             characters (an ellipsis replaces the tail when it overflows).
+     *             ``None`` when the conversation has no messages.
+     *         last_message_role: Speaker role of the most recent message, using the
+     *             existing message-role vocabulary (``user`` is the human; every
+     *             other role is the persona/assistant side). ``None`` when the
+     *             conversation has no messages. The UI switches on this to attribute
+     *             the preview ("You: …" vs the persona).
      */
     ConversationSummary: {
       /** Id */
@@ -1040,6 +1063,10 @@ export interface components {
        * Format: date-time
        */
       updated_at: string;
+      /** Last Message Preview */
+      last_message_preview?: string | null;
+      /** Last Message Role */
+      last_message_role?: ("user" | "assistant" | "system" | "tool") | null;
     };
     /**
      * CreateConversationRequest

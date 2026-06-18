@@ -21,6 +21,7 @@ from persona_api.auth import (
     make_jwt_verifier,
 )
 from persona_api.config import APIConfig
+from persona_api.editions import CloudOwnerResolver
 from persona_api.errors import register_exception_handlers
 
 
@@ -36,6 +37,9 @@ def _app_with_fake_verifier() -> FastAPI:
         raise AuthenticationError("bad token")
 
     app.state.verify_token = _fake_verify
+    # Spec 33: get_current_user delegates to the edition's OwnerResolver. This
+    # suite exercises the cloud path (verify the bearer JWT → owner).
+    app.state.owner_resolver = CloudOwnerResolver()
 
     @app.get("/me")
     async def _me(user: AuthenticatedUser = Depends(get_current_user)) -> dict[str, str | None]:
