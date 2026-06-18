@@ -1,31 +1,13 @@
-import Image from "next/image";
 import { SignIn } from "@/auth";
 
+/**
+ * Sign-in route. The cloud edition renders the branded Clerk flow; community
+ * redirects home. The branded shell is a self-contained split card with its own
+ * brand panel + logo lockup, so the page only centres it on the canvas.
+ */
 export default function SignInPage() {
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-8 p-6">
-      {/* Brand lockup above the auth card. Theme-aware stacked lockup: the
-       * -light variant (dark ink wordmark) on light surfaces, the -dark variant
-       * (warm-paper wordmark) on dark surfaces; swapped via the `dark:`
-       * variant. Linked to the product root. */}
-      <a href="/" aria-label="Open Persona">
-        <Image
-          src="/brand/logo-lockup-stacked-light.svg"
-          alt="Open Persona"
-          width={156}
-          height={101}
-          className="h-auto w-[140px] dark:hidden"
-          priority
-        />
-        <Image
-          src="/brand/logo-lockup-stacked-dark.svg"
-          alt="Open Persona"
-          width={156}
-          height={101}
-          className="hidden h-auto w-[140px] dark:block"
-          priority
-        />
-      </a>
+    <main className="flex flex-1 items-center justify-center p-6">
       <SignIn />
     </main>
   );

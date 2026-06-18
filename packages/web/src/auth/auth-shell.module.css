@@ -1,0 +1,580 @@
+/*
+ * Branded auth styles (Spec 34, Cluster A) — cloud-only.
+ *
+ * A self-contained CSS Module ported from the design prototype
+ * (docs/specs/phase2/spec_34/auth/index.html). EVERY value resolves through a
+ * production design token defined in `src/app/globals.css` (`var(--token)`), so
+ * both themes re-skin automatically when next-themes toggles `.dark` on <html>;
+ * no new design tokens are introduced. The handful of auth-local surface names
+ * the prototype used (`--brand-canvas`, `--focus-ring`, …) are expressed here
+ * as compositions of the real tokens — not new tokens, just local shorthands.
+ *
+ * Scoping: this is a *.module.css under src/auth/, imported only by the cloud
+ * (Clerk) auth components — it never enters the community module graph.
+ */
+
+/* ------------------------------- auth split ------------------------------- */
+.auth {
+  display: grid;
+  grid-template-columns: 1.04fr 1fr;
+  width: 100%;
+  max-width: 940px;
+  min-height: 560px;
+  margin: 0 auto;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  overflow: hidden;
+  box-shadow:
+    0 1px 2px oklch(0 0 0 / 0.04),
+    0 18px 40px -12px oklch(0.3 0.02 60 / 0.18);
+}
+
+/* brand panel (left) */
+.brand {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 44px 40px;
+  background: var(--sidebar);
+  color: var(--sidebar-foreground);
+}
+
+/* slow core-glow — decorative; silenced under prefers-reduced-motion below */
+.brand::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      42% 38% at 32% 30%,
+      oklch(0.66 0.19 33 / 0.22),
+      transparent 72%
+    ),
+    radial-gradient(
+      38% 40% at 86% 88%,
+      oklch(0.62 0.13 270 / 0.14),
+      transparent 70%
+    );
+  animation: glow 7s ease-in-out infinite;
+}
+
+@keyframes glow {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.brandTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brandLockup {
+  width: auto;
+  height: 44px;
+}
+
+.spacer {
+  flex: 1;
+  min-height: 8px;
+}
+
+.kicker {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--primary);
+  margin: 0;
+}
+
+.tagline {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 1.6875rem;
+  line-height: 1.22;
+  letter-spacing: -0.015em;
+  max-width: 16ch;
+  margin: 10px 0 0;
+  text-wrap: balance;
+  color: var(--sidebar-foreground);
+}
+
+.note {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  max-width: 34ch;
+  margin: 0;
+}
+
+.stores {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.stores span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.brandCompact {
+  display: none;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+/* form panel (right) */
+.form {
+  padding: 44px 44px 36px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.head h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.5rem;
+  letter-spacing: -0.015em;
+  margin: 0;
+  color: var(--foreground);
+}
+
+.head p {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  margin: 7px 0 0;
+}
+
+.body {
+  margin-top: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* oauth */
+.oauth {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.btnOauth {
+  background: transparent;
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.btnOauth:hover {
+  background: var(--muted);
+}
+
+.btnPrimary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.btnPrimary:hover {
+  background: color-mix(in oklab, var(--primary) 88%, black);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.62;
+  pointer-events: none;
+}
+
+/* divider */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+}
+
+/* fields — also used as a <fieldset> for the OTP group, so reset its chrome */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);
+}
+
+.controlPw .input {
+  padding-right: 46px;
+}
+
+.pwToggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+
+.pwToggle:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.pwToggle svg {
+  width: 17px;
+  height: 17px;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  margin: 0;
+}
+
+.link {
+  color: var(--primary);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.8125rem;
+}
+
+.link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link[aria-disabled="true"] {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* identifier chip (sign-in password step) */
+.idchip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  font-size: 0.84rem;
+  color: var(--foreground);
+}
+
+.idchip .who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.idchipMark {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+/* error surfacing */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--destructive) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--destructive) 30%, transparent);
+  color: var(--destructive);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.alert svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.fieldError .input {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive) 18%, transparent);
+}
+
+.fieldErr {
+  font-size: 0.78rem;
+  color: var(--destructive);
+  margin: 0;
+}
+
+/* otp */
+.otp {
+  display: flex;
+  gap: 9px;
+}
+
+.otp input {
+  width: 100%;
+  height: 52px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.otp input:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);
+}
+
+/* error override placed after the base .otp input rule to keep specificity descending */
+.fieldError .otp input {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive) 18%, transparent);
+}
+
+.resend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+  margin: 0;
+}
+
+.resend svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+}
+
+.resendStrong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+/* actions + footer */
+.actions {
+  margin-top: 4px;
+}
+
+.foot {
+  margin-top: auto;
+  padding-top: 26px;
+  font-size: 0.84rem;
+  color: var(--muted-foreground);
+}
+
+.legal {
+  margin-top: 18px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.legal a {
+  color: var(--muted-foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* spinner */
+.spinner {
+  width: 17px;
+  height: 17px;
+  border-radius: 9999px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  opacity: 0.9;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* focus-visible on bare interactive elements */
+.auth a:focus-visible,
+.auth button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* responsive: collapse the split below ~720px */
+@media (max-width: 720px) {
+  .auth {
+    grid-template-columns: 1fr;
+    max-width: 440px;
+    min-height: 0;
+  }
+  .brand {
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
+    padding: 22px 24px;
+  }
+  .spacer,
+  .tagline,
+  .note,
+  .stores,
+  .kicker {
+    display: none;
+  }
+  .brandCompact {
+    display: block;
+  }
+  .form {
+    padding: 30px 26px 28px;
+  }
+}
+
+/* reduced motion: drop decorative glow + spin */
+@media (prefers-reduced-motion: reduce) {
+  .brand::before {
+    animation: none;
+  }
+  .spinner {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.5;
+  }
+}

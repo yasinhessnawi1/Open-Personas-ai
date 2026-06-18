@@ -5,6 +5,7 @@
  * home / render nothing. Selected for `PERSONA_EDITION=community` builds.
  */
 
+export { ResetPassword } from "./reset-password.community";
 export { SignIn } from "./sign-in.community";
 export { SignUp } from "./sign-up.community";
 export { useAuth } from "./use-auth.community";

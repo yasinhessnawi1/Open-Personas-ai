@@ -1,12 +1,261 @@
+"use client";
+
 /**
- * `SignIn` — cloud (Clerk) sign-in component (Spec 33).
+ * `SignIn` — cloud (Clerk) branded sign-in (Spec 34, Cluster B).
  *
- * The cloud sign-in surface. Kept as a clean seam so Spec 34's branded
- * Clerk-Elements page drops straight in here (rebrand this component body)
- * without touching the route page or the community variant.
+ * A custom email + password sign-in flow built on Clerk's Core-3 signal hook
+ * `useSignIn()` (`@clerk/react@6`, re-exported by `@clerk/nextjs`). The hook
+ * returns `{ signIn, errors, fetchStatus }`; the flow drives the `SignInFuture`
+ * resource:
+ *
+ *   1. start (email)     → signIn.create({ identifier: email })
+ *   2. password          → signIn.password({ password })  (status -> 'complete')
+ *   3. finalize          → signIn.finalize({ navigate })   (sets the active session)
+ *
+ * OAuth (gated OFF for v1 via OAUTH_PROVIDERS) is wired through
+ * signIn.sso({ strategy, redirectUrl, redirectCallbackUrl }). Errors are read
+ * from the returned `{ error }` and the hook's `errors` projection, then mapped
+ * to themed copy; `fetchStatus === 'fetching'` drives the loading state.
+ *
+ * Verified against the installed Core-3 types and Clerk's custom-flow docs.
+ * Hook-driven branches need the user's real-browser pass; the pure logic
+ * (error mapping, OAuth gate) is unit-tested separately.
  */
-import { SignIn as ClerkSignIn } from "@clerk/nextjs";
+import { useSignIn } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import {
+  ErrorAlert,
+  Field,
+  OAuthRow,
+  PasswordInput,
+} from "./auth-fields.cloud";
+import { type ClerkErrorLike, clerkErrorToMessage } from "./auth-flow.cloud";
+import { ArrowIcon } from "./auth-icons.cloud";
+import { AuthShell, authStyles as s } from "./auth-shell.cloud";
+
+const SIGN_IN_BRAND = {
+  kicker: "Typed-memory AI",
+  tagline: "The persona you talk to is the one you type to.",
+  note: "Sign in to personas that remember you — across voice and text.",
+  compact: "Sign in to personas that remember you.",
+} as const;
+
+/** The two steps of the email→password sign-in flow. */
+type Step = "start" | "password";
 
 export function SignIn() {
-  return <ClerkSignIn />;
+  const { signIn, errors, fetchStatus } = useSignIn();
+  const router = useRouter();
+
+  const [step, setStep] = useState<Step>("start");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const busy = fetchStatus === "fetching";
+  const fieldErrors = errors.fields;
+
+  /** Navigate after a completed sign-in, honouring any pending session task. */
+  const finishSession: Parameters<typeof signIn.finalize>[0] = {
+    navigate: ({ session, decorateUrl }) => {
+      if (session?.currentTask) return;
+      const url = decorateUrl("/");
+      if (url.startsWith("http")) window.location.href = url;
+      else router.push(url);
+    },
+  };
+
+  /** Step 1: bind the identifier so the password step has context + a userData chip. */
+  const handleEmail = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setFormError(null);
+    const { error } = await signIn.create({ identifier: email.trim() });
+    if (error) {
+      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+      return;
+    }
+    setStep("password");
+  };
+
+  /** Step 2: submit the password, then finalize on completion. */
+  const handlePassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setFormError(null);
+    const { error } = await signIn.password({ password });
+    if (error) {
+      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+      return;
+    }
+    if (signIn.status === "complete") {
+      await signIn.finalize(finishSession);
+    } else {
+      // needs_second_factor / needs_client_trust etc. are not part of the v1
+      // email+password config; surface a calm prompt rather than silently stall.
+      setFormError(clerkErrorToMessage(null));
+    }
+  };
+
+  /** Reset to the email step so the user can correct the identifier. */
+  const changeIdentifier = async () => {
+    await signIn.reset();
+    setPassword("");
+    setFormError(null);
+    setStep("start");
+  };
+
+  /** OAuth (only reachable when OAUTH_PROVIDERS is non-empty). */
+  const handleOAuth = async (strategy: string) => {
+    setFormError(null);
+    // `strategy` originates from the controlled OAUTH_PROVIDERS list; narrow to
+    // the SDK's exact sso() strategy param type at the boundary.
+    type SsoStrategy = Parameters<typeof signIn.sso>[0]["strategy"];
+    const { error } = await signIn.sso({
+      strategy: strategy as SsoStrategy,
+      redirectUrl: "/sign-in/sso-callback",
+      redirectCallbackUrl: "/",
+    });
+    if (error) setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+  };
+
+  const startForgot = () => router.push("/reset-password");
+
+  return (
+    <AuthShell brand={SIGN_IN_BRAND}>
+      <div className={s.head}>
+        <h1>Welcome back</h1>
+        <p>
+          {step === "start"
+            ? "Sign in to continue to Open Persona."
+            : "Enter your password to continue."}
+        </p>
+      </div>
+
+      {step === "start" ? (
+        <form
+          className={s.body}
+          onSubmit={handleEmail}
+          aria-busy={busy}
+          noValidate
+        >
+          <ErrorAlert message={formError} />
+          <OAuthRow onSelect={handleOAuth} disabled={busy} />
+          <Field
+            id="si-email"
+            label="Email"
+            error={fieldErrors.identifier?.message ?? null}
+          >
+            <div className={s.control}>
+              <input
+                className={s.input}
+                id="si-email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                inputMode="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                disabled={busy}
+                required
+              />
+            </div>
+          </Field>
+          <div className={s.actions}>
+            <button
+              className={`${s.btn} ${s.btnPrimary}`}
+              type="submit"
+              disabled={busy}
+              aria-disabled={busy}
+            >
+              {busy ? (
+                <>
+                  <span className={s.spinner} aria-hidden="true" />
+                  Continuing…
+                </>
+              ) : (
+                <>
+                  Continue
+                  <ArrowIcon />
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <form
+          className={s.body}
+          onSubmit={handlePassword}
+          aria-busy={busy}
+          noValidate
+        >
+          <ErrorAlert message={formError} />
+          <div className={s.idchip}>
+            <span className={s.who}>{signIn.identifier ?? email}</span>
+            <button
+              type="button"
+              className={s.link}
+              onClick={changeIdentifier}
+              aria-disabled={busy}
+              disabled={busy}
+            >
+              Change
+            </button>
+          </div>
+          <Field
+            id="si-pw"
+            label="Password"
+            error={fieldErrors.password?.message ?? null}
+            rowExtra={
+              <button
+                type="button"
+                className={s.link}
+                onClick={startForgot}
+                disabled={busy}
+              >
+                Forgot password?
+              </button>
+            }
+          >
+            <PasswordInput
+              id="si-pw"
+              value={password}
+              onChange={setPassword}
+              autoComplete="current-password"
+              placeholder="Enter your password"
+              invalid={Boolean(fieldErrors.password)}
+              disabled={busy}
+            />
+          </Field>
+          <div className={s.actions}>
+            <button
+              className={`${s.btn} ${s.btnPrimary}`}
+              type="submit"
+              disabled={busy}
+              aria-disabled={busy}
+            >
+              {busy ? (
+                <>
+                  <span className={s.spinner} aria-hidden="true" />
+                  Signing in…
+                </>
+              ) : (
+                <>
+                  Sign in
+                  <ArrowIcon />
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <p className={s.foot}>
+        New to Open Persona?{" "}
+        <a className={s.link} href="/sign-up">
+          Create an account
+        </a>
+      </p>
+    </AuthShell>
+  );
 }
