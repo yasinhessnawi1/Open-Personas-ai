@@ -93,6 +93,8 @@ async def get_conversation(
                 content=str(m["content"]),
                 created_at=m["created_at"],
                 channel=m.get("channel"),
+                # Spec 35 D-35-2: persisted routing tier for the per-message chip.
+                tier_used=cast("str | None", m.get("tier_used")),
             )
             for m in messages
         ],

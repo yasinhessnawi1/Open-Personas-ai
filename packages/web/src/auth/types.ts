@@ -48,3 +48,29 @@ export interface CurrentUser {
 
 /** Wraps the app tree (ClerkProvider in cloud; passthrough in community). */
 export type AuthProviderComponent = ComponentType<{ children: ReactNode }>;
+
+/**
+ * The client-side account surface the custom sidebar account menu reads
+ * (Spec 35 D-35-16). Cloud feeds it from Clerk (`useUser` + `useClerk`);
+ * community returns a degraded shape (fixed local owner — no name/avatar, no
+ * sign-out / manage-account actions). The presentational `<AccountMenu>` is
+ * edition-agnostic: it imports this hook from `@/auth`, never `@clerk/*`, so it
+ * stays in the community-reachable graph and `check:clerk-free` stays green.
+ */
+export interface Account {
+  /** Display name (full name in cloud; empty in community → menu falls back to a label). */
+  name: string;
+  /** Primary email if known (cloud); null in community. */
+  email: string | null;
+  /** Avatar image URL if any (Clerk `imageUrl` in cloud); null otherwise. */
+  imageUrl: string | null;
+  /** Whether account actions (sign-out / manage) are available — cloud only. */
+  available: boolean;
+  /** Sign the user out (cloud); undefined in community. */
+  signOut?: () => void;
+  /** Open the account-management UI (cloud); undefined in community. */
+  manageAccount?: () => void;
+}
+
+/** The client account hook both editions implement behind `@/auth`. */
+export type UseAccount = () => Account;

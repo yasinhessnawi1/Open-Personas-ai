@@ -37,9 +37,9 @@ class RunEvent(BaseModel):
 
     Attributes:
         type: The event kind — one of ``started``, ``tier``, ``thinking``,
-            ``tool_calling``, ``tool_result``, ``asking_user``,
-            ``user_responded``, ``reasoning``, ``completed``, ``cancelled``,
-            ``max_steps``, ``error``, ``finished``.
+            ``memory_recall``, ``tool_calling``, ``tool_result``,
+            ``asking_user``, ``user_responded``, ``reasoning``, ``completed``,
+            ``cancelled``, ``max_steps``, ``error``, ``finished``.
         step: The zero-based step index the event belongs to (``-1`` for
             run-level events that precede the first step, e.g. ``started``).
         data: Event-type-specific JSON-safe payload built by the constructor.
@@ -94,6 +94,35 @@ class RunEvent(BaseModel):
     def thinking(cls, step: int) -> RunEvent:
         """The model is generating the next action for ``step``."""
         return cls(type="thinking", step=step, data={}, timestamp=datetime.now(UTC))
+
+    @classmethod
+    def memory_recall(cls, step: int, store: str, count: int | None = None) -> RunEvent:
+        """A typed-memory store was consulted while composing this turn/step.
+
+        Spec 35 (D-35-4): the chat surface stages a "Recalling from <store>
+        memory" state that *names* the store being recalled, with a
+        store-coloured pulse — the typed-memory architecture made felt in
+        context. One event per store consulted (≤4/turn, ordered).
+
+        Emitted from the shared conditioning-retrieval path (``retrieve_context``)
+        so the chat SSE stream and the run stream share one vocabulary. It is a
+        dedicated type (not an overload of ``thinking``, which stays an
+        empty-payload signal). Absent on streams whose retrieval passes no
+        ``on_event`` callback — e.g. the voice turn (D-35-5), which reuses the
+        same retrieval path but opts out of emitting.
+
+        Args:
+            step: The step index (``-1`` for the run-level chat turn, mirroring
+                ``tier``; a real step index inside the agentic loop).
+            store: The typed store consulted — one of ``identity`` /
+                ``self_facts`` / ``worldview`` / ``episodic``.
+            count: The number of chunks retrieved from the store, or ``None``
+                when not reported (omitted from the payload).
+        """
+        data: dict[str, Any] = {"store": store}
+        if count is not None:
+            data["count"] = count
+        return cls(type="memory_recall", step=step, data=data, timestamp=datetime.now(UTC))
 
     @classmethod
     def tool_calling(

@@ -178,6 +178,13 @@ export function personaIdentityStyle(persona: {
     "--identity-h": String(c.h),
     "--identity-l": String(c.l),
     "--identity-c": String(c.c),
+    // Spec 35: the `.v-*` chrome layer reads `--v-id` for the identity spine.
+    // Emit it here, composed from the triple set on THIS element, so every
+    // `.v-*` consumer under a persona-styled element resolves the persona
+    // colour (CSS custom props inherit their computed value, so the :root
+    // `--v-id` fallback would otherwise stay primary). Additive — does not
+    // touch the locked palette/derivation (D-F1-1).
+    "--v-id": "oklch(var(--identity-l) var(--identity-c) var(--identity-h))",
   };
 }
 

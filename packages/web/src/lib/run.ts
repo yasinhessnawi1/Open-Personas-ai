@@ -131,6 +131,11 @@ export function runViewFromEvents(
       case "thinking":
         ensure(ev.step).thinking = true;
         break;
+      case "memory_recall":
+        // Spec 35 (D-35-4): the typed-memory recall state is a chat surface for
+        // v1 (the agentic loop does not emit it yet). The run viewer accepts the
+        // frame for vocabulary parity but renders nothing — no-op.
+        break;
       case "tool_calling": {
         const st = ensure(ev.step);
         st.thinking = false;

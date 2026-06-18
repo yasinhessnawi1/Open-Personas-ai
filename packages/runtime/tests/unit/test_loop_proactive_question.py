@@ -235,3 +235,41 @@ class TestSuppressors:
 
         assert not [e for e in events if e.type == "asking_user"]
         assert backend.chat_stream_calls == 1
+
+
+class TestMemoryRecallEmission:
+    """Spec 35 D-35-4 — the chat 'thinking / remembering' state.
+
+    When the turn composes, one ``memory_recall`` frame per typed store is
+    emitted in store order, ahead of the tier chip + the answer stream. When a
+    proactive question short-circuits the turn, no recall state is shown.
+    """
+
+    @pytest.mark.asyncio
+    async def test_recall_frames_emitted_in_store_order_before_tier(self) -> None:
+        backend = ScriptedBackend([ScriptedRound(text="Here is the answer.")])
+        loop, _ = _make_loop(backend, persona=_persona("decisive"))
+
+        _chunks, events = await _collect(loop, _conv(), "draft a complaint")
+
+        recall = [e for e in events if e.type == "memory_recall"]
+        assert [e.data["store"] for e in recall] == [
+            "identity",
+            "self_facts",
+            "worldview",
+            "episodic",
+        ]
+        # The 'remembering' state precedes the tier chip (and the answer).
+        first_recall = next(i for i, e in enumerate(events) if e.type == "memory_recall")
+        tier_idx = next(i for i, e in enumerate(events) if e.type == "tier")
+        assert first_recall < tier_idx
+
+    @pytest.mark.asyncio
+    async def test_no_recall_when_proactive_question_short_circuits(self) -> None:
+        backend = ScriptedBackend([ScriptedRound(text="unused")])
+        loop, _ = _make_loop(backend, persona=_persona("cautious"))
+
+        _chunks, events = await _collect(loop, _conv(), "delete everything")
+
+        assert [e for e in events if e.type == "asking_user"]
+        assert not [e for e in events if e.type == "memory_recall"]

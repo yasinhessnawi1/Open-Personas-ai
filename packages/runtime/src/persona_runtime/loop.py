@@ -368,7 +368,23 @@ class ConversationLoop:
         started = time.perf_counter()
         self.deferred_input_files.clear()  # M1a per-turn reset (D-16-2)
 
-        context = self._retrieve(persona_id, user_message, history_turns=conversation.turn_count)
+        # Spec 35 (D-35-4/D-35-5): collect a per-store recall trace during
+        # retrieval so the chat can name each typed store consulted ("Recalling
+        # from episodic memory"). Emitted later — only once we commit to
+        # composing (past the proactive-question gate) — so a turn that ends in a
+        # clarifying question shows no spurious recall state. `on_event is None`
+        # (and the voice turn, which never reaches this loop) collects nothing.
+        recall_trace: list[tuple[str, int]] = []
+
+        def _note_recall(store: str, count: int) -> None:
+            recall_trace.append((store, count))
+
+        context = self._retrieve(
+            persona_id,
+            user_message,
+            history_turns=conversation.turn_count,
+            on_recall=(_note_recall if on_event is not None else None),
+        )
         history, compacted = await self._manage_history(conversation)
 
         # Spec 21 T06 (D-21-1): proactive clarifying question decision point —
@@ -405,6 +421,15 @@ class ConversationLoop:
             if proactive is not None and proactive.assumption_nudge is not None
             else []
         )
+
+        # Spec 35 (D-35-4): now that we are committing to compose (past the
+        # proactive-question gate), surface the typed-memory recall trace as
+        # ``memory_recall`` SSE frames — one per store consulted, in order —
+        # ahead of the tier event and the answer stream. The chat renders the
+        # named "Recalling from <store> memory" staged state from these.
+        if on_event is not None:
+            for store, count in recall_trace:
+                await on_event(RunEvent.memory_recall(-1, store, count))
 
         skill_index = render_skill_index(self._scanned_skills)
         # Spec 18 T12: measure the router's OWN decision latency (distinct
@@ -907,7 +932,12 @@ class ConversationLoop:
         return _ComposedSkill(merged, None, record)
 
     def _retrieve(
-        self, persona_id: str, user_message: str, *, history_turns: int
+        self,
+        persona_id: str,
+        user_message: str,
+        *,
+        history_turns: int,
+        on_recall: Callable[[str, int], None] | None = None,
     ) -> RetrievedContext:
         """Retrieve per-turn context using the real store signatures (§4.1).
 
@@ -915,9 +945,17 @@ class ConversationLoop:
         (extracted spec V5 D-V5-6 so the voice turn shares the *same*
         conditioning retrieval — never reimplemented). ``history_turns`` is the
         conversation-progression signal that drives the dynamic per-turn budget
-        and recency-augmented episodic recall.
+        and recency-augmented episodic recall. ``on_recall`` (Spec 35 D-35-4) is
+        forwarded so the chat turn can surface the per-store "thinking /
+        remembering" state; ``None`` (the voice turn) keeps retrieval silent.
         """
-        return retrieve_context(self._stores, persona_id, user_message, history_turns=history_turns)
+        return retrieve_context(
+            self._stores,
+            persona_id,
+            user_message,
+            history_turns=history_turns,
+            on_recall=on_recall,
+        )
 
     async def _manage_history(
         self, conversation: Conversation

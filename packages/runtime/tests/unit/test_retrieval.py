@@ -72,6 +72,36 @@ class TestRetrieveContext:
         assert len(ctx.self_facts) == 2
 
 
+class TestRecallHook:
+    """Spec 35 D-35-4/D-35-5 — the optional per-store `on_recall` hook."""
+
+    def test_reports_each_store_in_order_with_counts(self) -> None:
+        seen: list[tuple[str, int]] = []
+        retrieve_context(
+            _stores(), "astrid", "What are my rights?", on_recall=lambda s, c: seen.append((s, c))
+        )
+        assert seen == [
+            ("identity", 1),
+            ("self_facts", 1),
+            ("worldview", 1),
+            ("episodic", 1),
+        ]
+
+    def test_count_matches_chunks_returned(self) -> None:
+        seen: dict[str, int] = {}
+        stores = _stores()
+        stores["self_facts"] = FakeStore(query_results=[_chunk(f"f{i}") for i in range(3)])
+        retrieve_context(
+            stores, "astrid", "q", top_k=5, on_recall=lambda s, c: seen.__setitem__(s, c)
+        )
+        assert seen["self_facts"] == 3
+
+    def test_none_is_silent_and_retrieval_unchanged(self) -> None:
+        # The voice-turn path (D-35-5): no callback → no emission, no error.
+        ctx = retrieve_context(_stores(), "astrid", "hi")
+        assert [c.text for c in ctx.identity] == ["I am Astrid."]
+
+
 class TestDynamicTopK:
     def test_fresh_conversation_uses_high_budget(self) -> None:
         assert dynamic_top_k(0) == EARLY_RETRIEVE_TOP_K

@@ -422,3 +422,29 @@ class TestToolResultArtifactsForwarding:
         event = RunEvent.tool_result(step=2, tool_name="render_diagram", result=result)
         restored = RunEvent.model_validate_json(event.model_dump_json())
         assert restored.data["artifacts"][0]["mime_type"] == "text/vnd.mermaid"
+
+
+class TestMemoryRecall:
+    """Spec 35 D-35-4 — the typed-memory recall event (chat 'remembering' state)."""
+
+    def test_shape_with_count(self) -> None:
+        event = RunEvent.memory_recall(step=-1, store="episodic", count=3)
+        assert event.type == "memory_recall"
+        assert event.step == -1
+        assert event.data == {"store": "episodic", "count": 3}
+
+    def test_count_omitted_when_none(self) -> None:
+        event = RunEvent.memory_recall(step=-1, store="identity")
+        assert event.data == {"store": "identity"}
+        assert "count" not in event.data
+
+    def test_zero_count_is_kept(self) -> None:
+        # count=0 ("consulted, nothing returned") is meaningful, not absence.
+        event = RunEvent.memory_recall(step=0, store="self_facts", count=0)
+        assert event.data == {"store": "self_facts", "count": 0}
+
+    def test_json_round_trip(self) -> None:
+        event = RunEvent.memory_recall(step=-1, store="worldview", count=2)
+        restored = RunEvent.model_validate_json(event.model_dump_json())
+        assert restored.type == "memory_recall"
+        assert restored.data == {"store": "worldview", "count": 2}

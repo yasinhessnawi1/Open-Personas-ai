@@ -12,9 +12,8 @@
 
 import type { ReactNode } from "react";
 import { ToastProvider } from "@/components/patterns/toast";
+import { CommandPalette } from "@/components/shell/command-palette";
 import { Sidebar } from "@/components/shell/sidebar";
-import { UserMenu } from "@/components/shell/user-menu";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { MobileNav } from "./mobile-nav";
 import type { SidebarData } from "./sidebar-data";
@@ -40,25 +39,27 @@ export async function AppShell({
       </div>
       {/* F2 T23: single toast surface for the auth'd app. */}
       <ToastProvider />
+      {/* Spec 35 D-35-14: the ⌘K command palette, mounted once for the app. */}
+      <CommandPalette data={data} />
     </div>
   );
 }
 
 /**
- * Sticky header — mobile-nav trigger + theme toggle + Clerk UserButton.
- * The backdrop-blur + bg-background/85 reads as the F1 paper-on-paper lift;
- * `shadow-[var(--elevation-1)]` is the explicit resting elevation token.
+ * Sticky header — the mobile-nav trigger (the account + theme controls moved
+ * into the sidebar account footer, Spec 35 D-35-16). The backdrop-blur +
+ * bg-background/85 reads as the F1 paper-on-paper lift; `shadow-[var(--elevation-1)]`
+ * is the explicit resting elevation token. On desktop the rail owns navigation,
+ * so the header is a thin sticky bar reserved for future breadcrumb/actions.
  */
 function ShellHeader({ data }: { data: SidebarData }) {
   return (
     <header
-      className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/85 px-4 shadow-[var(--elevation-1)] backdrop-blur"
+      className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/85 px-4 shadow-[var(--elevation-1)] backdrop-blur md:hidden"
       data-slot="app-shell-header"
     >
       <MobileNav data={data} />
       <div className="flex-1" />
-      <ThemeToggle />
-      <UserMenu />
     </header>
   );
 }

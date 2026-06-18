@@ -6,6 +6,7 @@
  * `turbopack.resolveAlias` in next.config.ts.
  */
 export { useAuth } from "@clerk/nextjs";
+export { useAccount } from "./account.cloud";
 export { ResetPassword } from "./reset-password.cloud";
 export { SignIn } from "./sign-in.cloud";
 export { SignUp } from "./sign-up.cloud";

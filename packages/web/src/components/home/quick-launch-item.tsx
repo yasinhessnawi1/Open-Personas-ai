@@ -6,18 +6,21 @@ import {
   PersonaAvatar,
 } from "@/components/persona/persona-avatar";
 import { buttonVariants } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { personaIdentityStyle } from "@/lib/persona-identity";
 import { cn } from "@/lib/utils";
 
 /**
- * Root-dashboard fast launcher: a COMPACT row (avatar + name/role + one-click
- * Chat / Call), NOT the full management `<PersonaCard>` grid card. The point of
- * the dashboard is "get back to a persona and start talking fast" — so this is
- * deliberately distinct from `/personas` (which stays the management grid).
+ * Root-dashboard fast launcher: a COMPACT identity card (real avatar + the
+ * identity-underlined name + role + one-click Chat / Call), NOT the full
+ * management `<PersonaCard>` grid card. Spec 35 (D-35-1): restyled onto the
+ * editorial `.v-card` chrome + identity spine (the derived persona colour drives
+ * the name underline + the card's identity accent), so three launchers read as
+ * three people. Keeps the real avatar (D-35-9) and the Chat/Call server actions
+ * unchanged. The mockup's per-persona conversation/run count chips are omitted —
+ * the persona summary carries no such counts and the spec forbids faking.
  *
- * Chat + Call mint a fresh conversation via the relocated co-located server
- * actions (voice has no standalone route; it hangs off a conversation). Server
- * component — actions are bound per persona, so no client hydration is needed.
+ * Chat + Call mint a fresh conversation via the co-located server actions (voice
+ * has no standalone route; it hangs off a conversation). Server component.
  */
 export interface QuickLaunchPersona extends AvatarPersona {
   readonly role: string;
@@ -31,21 +34,23 @@ export async function QuickLaunchItem({
   const t = await getTranslations("home");
 
   return (
-    <Card
-      size="sm"
-      className="flex flex-row items-center gap-4 p-4"
+    <div
+      className="v-card v-card--pad"
+      style={personaIdentityStyle(persona)}
       data-slot="quick-launch-item"
     >
-      <PersonaAvatar persona={persona} size="md" />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="type-body truncate font-heading font-medium">
-          {persona.name}
-        </span>
-        <span className="type-caption truncate text-muted-foreground">
-          {persona.role}
-        </span>
+      <div className="flex items-center gap-3.5">
+        <PersonaAvatar persona={persona} size="lg" />
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="type-body font-heading font-semibold leading-tight">
+            <span className="v-id-underline">{persona.name}</span>
+          </span>
+          <span className="truncate type-ui text-muted-foreground">
+            {persona.role}
+          </span>
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="mt-3.5 flex items-center gap-2">
         <form action={startChat.bind(null, persona.id)}>
           <button
             type="submit"
@@ -68,6 +73,6 @@ export async function QuickLaunchItem({
           </button>
         </form>
       </div>
-    </Card>
+    </div>
   );
 }

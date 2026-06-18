@@ -382,6 +382,7 @@ async def stream_chat(
             prior_msg_count=prior_msg_count,
             channel=channel,
             images=images,
+            tier=tier,
         )
         # Auto-title the conversation from its first user message (best-effort, small
         # tier). Failure leaves the default title — never breaks the turn.
@@ -423,6 +424,7 @@ def _persist_turn(
     prior_msg_count: int,
     channel: ChannelContext | None,
     images: list[ImageRefSchema] | None = None,
+    tier: str | None = None,
 ) -> None:
     """Insert the new messages + update compaction state (one RLS-scoped txn).
 
@@ -432,6 +434,10 @@ def _persist_turn(
     if the inbound POST carried image refs (spec 13 T20, D-13-X-now option c) —
     the ``images`` JSONB column as ``[{"workspace_path", "media_type"}, ...]``
     in caller order (criterion #11).
+
+    Spec 35 (D-35-2): the router's ``tier`` for this turn is written onto the
+    ASSISTANT row(s) only (``tier_used``), so the per-message tier chip survives
+    a reload. Non-assistant rows persist ``tier_used=NULL``.
     """
     new_messages = conversation.messages[prior_msg_count:]
     channel_json = channel.model_dump() if channel is not None else None
@@ -465,6 +471,9 @@ def _persist_turn(
                     # (assistant + tool messages persist images=NULL — the response
                     # itself never carries inbound image refs).
                     images=images_json if is_first_user_msg else None,
+                    # Spec 35 D-35-2: the routing tier rides the assistant row(s)
+                    # only; user/tool rows persist NULL.
+                    tier_used=tier if msg.role == "assistant" else None,
                 )
             )
         conn.execute(

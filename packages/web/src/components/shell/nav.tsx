@@ -11,27 +11,41 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-// Primary nav links. Settings is NOT here — it is pinned to the bottom of the
-// desktop sidebar (and rendered in the mobile sheet's pinned footer).
+// Primary nav links. Settings is NOT here — it lives in the account footer
+// menu (Spec 35 D-35-16). Each item may carry a live count (Spec 35 D-35-13).
 const ITEMS = [
-  { href: "/", key: "home", icon: Home },
-  { href: "/personas", key: "personas", icon: Sparkles },
-  { href: "/conversations", key: "conversations", icon: MessagesSquare },
+  { href: "/", key: "home", icon: Home, count: undefined },
+  { href: "/personas", key: "personas", icon: Sparkles, count: "personas" },
+  {
+    href: "/conversations",
+    key: "conversations",
+    icon: MessagesSquare,
+    count: "conversations",
+  },
 ] as const;
+
+/** Live counts shown on nav rows (Spec 35 D-35-13) — derived from sidebar data. */
+export interface NavCounts {
+  readonly personas?: number;
+  readonly conversations?: number;
+}
 
 export function Nav({
   onNavigate,
   collapsed = false,
+  counts,
 }: {
   onNavigate?: () => void;
   collapsed?: boolean;
+  counts?: NavCounts;
 }) {
   const pathname = usePathname();
   const t = useTranslations("nav");
   return (
     <nav aria-label={t("primary")} className="flex flex-col gap-1">
-      {ITEMS.map(({ href, key, icon: Icon }) => {
+      {ITEMS.map(({ href, key, icon: Icon, count }) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
+        const countValue = count ? counts?.[count] : undefined;
         const link = (
           <Link
             href={href}
@@ -48,6 +62,11 @@ export function Nav({
           >
             <Icon className="size-4 shrink-0" />
             {collapsed ? null : t(key)}
+            {!collapsed && countValue !== undefined && countValue > 0 ? (
+              <span className="ml-auto type-caption normal-case tracking-normal text-muted-foreground tabular-nums">
+                {countValue}
+              </span>
+            ) : null}
           </Link>
         );
 

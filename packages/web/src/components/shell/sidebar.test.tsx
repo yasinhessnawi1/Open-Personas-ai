@@ -15,6 +15,8 @@ import type { SidebarConversation, SidebarData } from "./sidebar-data";
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: async () => null }),
+  useUser: () => ({ user: null }),
+  useClerk: () => ({ signOut: vi.fn(), openUserProfile: vi.fn() }),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -39,7 +41,10 @@ const messages = {
       untitled: "Untitled conversation",
       unknownPersona: "Unknown persona",
     },
+    command: { open: "Search and commands" },
+    account: { menu: "Account", plan: "Account" },
   },
+  theme: { light: "Light", dark: "Dark", system: "System" },
 };
 
 /** A long conversation list — the case that used to push Settings off-screen. */
@@ -90,12 +95,13 @@ describe("Sidebar layout contract", () => {
     expect(scrollArea?.className).toContain("flex-1");
   });
 
-  it("pins Settings in a non-shrinking footer that stays present with a long list", () => {
+  it("pins the account footer (non-shrinking) so it stays present with a long list", () => {
+    // Spec 35 D-35-16: the footer is now the custom account menu, not a bare
+    // Settings link (settings moved inside the account menu).
     wrap(<Sidebar data={data} />);
-    const settings = screen.getByRole("link", { name: "Settings" });
-    expect(settings).toHaveAttribute("href", "/settings");
+    const account = screen.getByRole("button", { name: "Account" });
     // The footer wrapper is non-shrinking and bottom-pinned.
-    const footer = settings.closest<HTMLElement>(".shrink-0");
+    const footer = account.closest<HTMLElement>(".shrink-0");
     expect(footer).not.toBeNull();
     expect(footer?.className).toContain("mt-auto");
   });

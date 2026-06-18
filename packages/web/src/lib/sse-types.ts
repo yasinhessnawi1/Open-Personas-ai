@@ -115,6 +115,18 @@ export interface ChatChunkData {
 }
 
 /**
+ * Spec 35 (D-35-4) — the chat "thinking / remembering" state. One frame per
+ * typed-memory store consulted while composing, naming the store + how many
+ * chunks it contributed this turn. The chat stages a store-coloured
+ * "Recalling from <store> memory" pulse from these; the run stream carries the
+ * same vocabulary. Shared by the chat and run transports.
+ */
+export interface MemoryRecallData {
+  store: "identity" | "self_facts" | "worldview" | "episodic";
+  count?: number;
+}
+
+/**
  * Spec 31 (D-31-1) — the concise model-decision summary on the `done` event.
  * Mirrors the API `RoutingSummary` (responses.py). Structured/enum fields only:
  * the web templates the localized "why" phrase from `dominant_factor` +
@@ -160,6 +172,8 @@ export type ChatEvent =
   // emits `asking_user` to the chat stream (tool-gap / MCP-gap offers); the web
   // now parses it (previously dropped) so the rail can render inline.
   | { event: "asking_user"; data: AskingUserData }
+  // Spec 35 (D-35-4): the typed-memory recall state, named per store.
+  | { event: "memory_recall"; data: MemoryRecallData }
   | { event: "done"; data: ChatDoneData };
 
 const CHAT_EVENTS = new Set([
@@ -167,6 +181,7 @@ const CHAT_EVENTS = new Set([
   "tool_calling",
   "tool_result",
   "asking_user",
+  "memory_recall",
   "done",
 ]);
 
@@ -187,6 +202,7 @@ export type RunEventType =
   | "started"
   | "tier"
   | "thinking"
+  | "memory_recall"
   | "tool_calling"
   | "tool_result"
   | "asking_user"
@@ -271,6 +287,7 @@ export type RunEvent =
   | (RunEventBase & { type: "started"; data: StartedData })
   | (RunEventBase & { type: "tier"; data: TierData })
   | (RunEventBase & { type: "thinking"; data: EmptyData })
+  | (RunEventBase & { type: "memory_recall"; data: MemoryRecallData })
   | (RunEventBase & { type: "tool_calling"; data: ToolCallingData })
   | (RunEventBase & { type: "tool_result"; data: ToolResultData })
   | (RunEventBase & { type: "asking_user"; data: AskingUserData })

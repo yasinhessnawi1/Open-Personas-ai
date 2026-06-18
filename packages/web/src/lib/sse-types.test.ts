@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { type ChatDoneData, parseChatEvent } from "./sse-types";
+import {
+  type ChatDoneData,
+  type MemoryRecallData,
+  parseChatEvent,
+} from "./sse-types";
 
 /**
  * Spec 31 (D-31-1/2) — the chat `done` frame carries the SEPARATE, additive
@@ -45,5 +49,34 @@ describe("parseChatEvent — done routing + budget (Spec 31)", () => {
     expect(data.tier).toBe("mid");
     expect(data.routing).toBeUndefined();
     expect(data.budget).toBeUndefined();
+  });
+});
+
+/**
+ * Spec 35 (D-35-4) — the chat stream now parses the `memory_recall` frame (it
+ * was previously dropped by the CHAT_EVENTS whitelist), naming the typed store.
+ */
+describe("parseChatEvent — memory_recall (Spec 35)", () => {
+  it("parses a memory_recall frame naming the store + count", () => {
+    const raw = {
+      event: "memory_recall",
+      data: JSON.stringify({ store: "episodic", count: 3 }),
+    };
+    const ev = parseChatEvent(raw);
+    expect(ev?.event).toBe("memory_recall");
+    const data = ev?.data as MemoryRecallData;
+    expect(data.store).toBe("episodic");
+    expect(data.count).toBe(3);
+  });
+
+  it("count is optional (omitted on the wire)", () => {
+    const raw = {
+      event: "memory_recall",
+      data: JSON.stringify({ store: "identity" }),
+    };
+    const ev = parseChatEvent(raw);
+    const data = ev?.data as MemoryRecallData;
+    expect(data.store).toBe("identity");
+    expect(data.count).toBeUndefined();
   });
 });

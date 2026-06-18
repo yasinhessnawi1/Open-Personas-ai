@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { auth } from "@/auth/server";
+import { InstrumentStats } from "@/components/home/instrument-stats";
 import { Onboarding } from "@/components/home/onboarding";
 import {
   QuickLaunchItem,
@@ -64,14 +65,22 @@ export default async function RootPage() {
 
   const t = await getTranslations("home");
   const api = await serverApi();
-  const [personas, conversations] = await Promise.all([
+  // Spec 35 D-35-1: the dashboard instrument stats are wired to real data.
+  // Credits is fetched DEFENSIVELY (`.data`, not `unwrap`) so a credits-fetch
+  // failure (e.g. the 402 exhausted cliff) degrades the stat tile rather than
+  // breaking the whole dashboard.
+  const [personas, conversations, creditsRes] = await Promise.all([
     unwrap(await api.GET("/v1/personas")),
     unwrap(
       await api.GET("/v1/conversations", {
         params: { query: { limit: 50, offset: 0 } },
       }),
     ),
+    api.GET("/v1/me/credits"),
   ]);
+  const credits = creditsRes.data?.balance ?? null;
+  const edition =
+    process.env.PERSONA_EDITION === "cloud" ? "cloud" : "community";
 
   if (personas.length === 0) {
     return (
@@ -143,6 +152,13 @@ export default async function RootPage() {
         />
 
         <Stack gap={8}>
+          <InstrumentStats
+            credits={credits}
+            personaCount={personas.length}
+            conversationCount={conversations.length}
+            edition={edition}
+          />
+
           <Section heading={t("jumpBackIn")}>
             <Grid cols={{ base: 1, lg: 2 }} gap={4}>
               {topPersonas.map((p) => (

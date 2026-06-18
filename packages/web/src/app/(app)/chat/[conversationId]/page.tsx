@@ -63,6 +63,10 @@ export default async function ChatPage({
     id: m.id,
     role: m.role,
     content: m.content,
+    // Spec 35 D-35-2: the persisted routing tier, so the per-message tier chip
+    // renders on a reloaded conversation (not just the live turn). Null on
+    // historical / non-assistant rows ⇒ no chip (clean degrade).
+    tier: m.tier_used ?? undefined,
   }));
 
   return (

@@ -21,6 +21,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { personaIdentityStyle } from "@/lib/persona-identity";
 import { cn } from "@/lib/utils";
 import type { SidebarConversation, SidebarPersona } from "./sidebar-data";
 
@@ -151,8 +152,16 @@ export function MessagesList({
               onClick={onNavigate}
               aria-current={active ? "page" : undefined}
               title={brief}
+              // Spec 35 D-35-13: the active conversation row carries the
+              // persona's identity colour as a 2px left border (the identity
+              // spine). personaIdentityStyle sets --v-id on the row; inactive
+              // rows keep a transparent border so layout doesn't shift.
+              style={{
+                ...(c.persona ? personaIdentityStyle(c.persona) : {}),
+                borderLeftColor: active ? "var(--v-id)" : "transparent",
+              }}
               className={cn(
-                "group/msg flex items-center gap-2.5 rounded-md px-2 py-1.5 outline-none transition-colors duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                "group/msg flex items-center gap-2.5 rounded-md border-l-2 px-2 py-1.5 outline-none transition-colors duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                 active
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "hover:bg-sidebar-accent/60",

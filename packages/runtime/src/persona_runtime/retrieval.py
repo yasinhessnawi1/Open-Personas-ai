@@ -24,10 +24,15 @@ from typing import TYPE_CHECKING
 from persona_runtime.prompt import RetrievedContext
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from persona.schema.chunks import PersonaChunk
     from persona.stores.protocol import MemoryStore
+
+#: The four typed stores, in the fixed order they are consulted each turn — the
+#: order ``retrieve_context`` reports them through the ``on_recall`` hook (Spec
+#: 35 D-35-4, the chat "thinking / remembering" staged state).
+_RECALL_ORDER = ("identity", "self_facts", "worldview", "episodic")
 
 __all__ = [
     "DEFAULT_RETRIEVE_TOP_K",
@@ -119,6 +124,7 @@ def retrieve_context(
     top_k: int = DEFAULT_RETRIEVE_TOP_K,
     identity: list[PersonaChunk] | None = None,
     history_turns: int | None = None,
+    on_recall: Callable[[str, int], None] | None = None,
 ) -> RetrievedContext:
     """Retrieve this turn's conditioning context from the typed stores.
 
@@ -142,6 +148,15 @@ def retrieve_context(
             episodic recall is recency-augmented so the previous session's tail
             surfaces regardless of semantic match. ``None`` (the default)
             preserves the historical fixed-``top_k`` similarity-only behaviour.
+        on_recall: Spec 35 (D-35-4/D-35-5) optional hook called once per store,
+            in ``_RECALL_ORDER``, as ``on_recall(store, count)`` where ``count``
+            is the number of chunks that store contributed this turn. The text
+            loop passes a collector that maps each call to a
+            ``RunEvent.memory_recall`` SSE frame (the chat "thinking /
+            remembering" state). ``None`` (the default, and the voice turn's
+            path — D-35-5) emits nothing: retrieval stays silent, behaviour
+            unchanged. The hook is invoked *after* all stores are read, so it
+            never reorders or perturbs retrieval itself.
 
     Returns:
         The :class:`RetrievedContext` the prompt builder conditions on.
@@ -149,9 +164,19 @@ def retrieve_context(
     resolved_identity = identity if identity is not None else stores["identity"].get_all(persona_id)
     dynamic = history_turns is not None
     k = dynamic_top_k(history_turns) if history_turns is not None else top_k
-    return RetrievedContext(
+    context = RetrievedContext(
         identity=resolved_identity,
         self_facts=stores["self_facts"].query(persona_id, user_message, k),
         worldview=stores["worldview"].query(persona_id, user_message, k),
         episodic=_recall_episodic(stores["episodic"], persona_id, user_message, k, recency=dynamic),
     )
+    if on_recall is not None:
+        counts = {
+            "identity": len(context.identity),
+            "self_facts": len(context.self_facts),
+            "worldview": len(context.worldview),
+            "episodic": len(context.episodic),
+        }
+        for store in _RECALL_ORDER:
+            on_recall(store, counts[store])
+    return context

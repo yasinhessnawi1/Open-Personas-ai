@@ -19,6 +19,12 @@
       "chat": "Chat",
       "call": "Call"
     },
+    "stats": {
+      "credits": "Credits",
+      "creditsUnlimited": "Unlimited",
+      "personas": "Active personas",
+      "conversations": "Conversations"
+    },
     "recent": {
       "heading": "Recent conversations",
       "untitled": "Untitled conversation",
@@ -69,6 +75,24 @@
       "resize": "Resize sidebar",
       "untitled": "Untitled conversation",
       "unknownPersona": "Unknown persona"
+    },
+    "command": {
+      "open": "Search and commands",
+      "placeholder": "Search personas, conversations, or jump to…",
+      "empty": "No matches",
+      "groupActions": "Actions",
+      "groupNavigate": "Go to",
+      "groupPersonas": "Personas",
+      "groupConversations": "Conversations",
+      "newPersona": "New persona",
+      "hint": "to open"
+    },
+    "account": {
+      "menu": "Account",
+      "manageAccount": "Manage account",
+      "appearance": "Appearance",
+      "signOut": "Sign out",
+      "plan": "Account"
     }
   },
   "theme": {

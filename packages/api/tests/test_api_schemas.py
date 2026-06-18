@@ -7,10 +7,13 @@ format_hints to {}, and unknown fields are rejected (extra='forbid').
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from persona_api.schemas import (
     ChannelContext,
     DoneEvent,
+    MessageView,
     PostMessageRequest,
     ToolResultEvent,
 )
@@ -55,6 +58,26 @@ def test_message_request_rejects_unknown_field() -> None:
 def test_message_request_rejects_empty_content() -> None:
     with pytest.raises(ValidationError):
         PostMessageRequest(content="")
+
+
+def test_message_view_defaults_tier_used_none() -> None:
+    # Spec 35 D-35-2: historical / non-assistant rows carry no tier → None
+    # (the per-message chip degrades to "no chip", never a wrong tier).
+    view = MessageView(id="m1", role="user", content="hi", created_at=datetime.now(UTC))
+    assert view.tier_used is None
+
+
+def test_message_view_carries_and_serialises_tier_used() -> None:
+    view = MessageView(
+        id="m2",
+        role="assistant",
+        content="ok",
+        created_at=datetime.now(UTC),
+        tier_used="frontier",
+    )
+    assert view.tier_used == "frontier"
+    restored = MessageView.model_validate_json(view.model_dump_json())
+    assert restored.tier_used == "frontier"
 
 
 def test_done_event_defaults_format_hints_empty() -> None:

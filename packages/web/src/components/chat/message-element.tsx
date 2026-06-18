@@ -143,6 +143,13 @@ export interface MessageElementView {
     allowFreeForm?: boolean;
     proposal?: ProactiveProposal;
   };
+  /**
+   * Spec 35 (D-35-4): the typed-memory recall trace for this turn — one entry
+   * per store consulted while composing, in order. Drives the staged
+   * "Recalling from <store> memory" state on the streaming assistant turn (the
+   * store-coloured pulse). Absent on historical / non-streaming turns.
+   */
+  recall?: { store: string; count?: number }[];
 }
 
 /**

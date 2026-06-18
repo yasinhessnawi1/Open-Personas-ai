@@ -223,6 +223,11 @@ class MessageView(_Output):
     created_at: datetime
     # Opaque connector passthrough (D-08-3); null for web-UI messages.
     channel: dict[str, object] | None = None
+    # Spec 35 D-35-2: the routing tier this assistant turn used, persisted so the
+    # per-message tier chip renders on a reloaded conversation. Null on
+    # user/system/tool rows and on assistant rows written before migration 010
+    # (the chip degrades to "no chip" — never a wrong tier).
+    tier_used: str | None = None
 
 
 class ConversationDetail(_Output):

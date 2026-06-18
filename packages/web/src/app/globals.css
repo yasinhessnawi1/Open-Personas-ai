@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* Spec 35 — the ".v-*" production chrome layer (mockup kit.css ported onto F1
+ * tokens). Imported after the token definitions; var() resolves at use-time so
+ * declaration order is irrelevant. */
+@import "./v-layer.css";
 /* Clerk UI theme CSS (Spec 33): imported only by `@/auth/provider` (cloud), so
  * the community build's CSS graph never references @clerk/ui. */
 
@@ -29,6 +33,22 @@
   --color-tier-frontier: var(--tier-frontier);
   --color-tier-mid: var(--tier-mid);
   --color-tier-small: var(--tier-small);
+  /*
+   * Memory-store hues (Spec 35 D-35-X-store-token-f1-amendment; additive-only
+   * per D-F1-7 — enters the additive-precedent chain at "next available",
+   * R-19-1 numbers it at audit; no self-numbering). The four typed-memory
+   * stores get a fixed app-wide colour vocabulary, derived on the SAME
+   * identity-palette formula as persona identity colours (L≈0.60–0.62,
+   * C=0.13, hue-varied; cf. persona-identity.ts IDENTITY_PALETTE). Consumed
+   * by persona-detail (four stores visible), the author "stores forming"
+   * step, and the chat memory-recall pulse. Theme-independent — like the
+   * identity palette itself (the values clear contrast on both the L0.985
+   * paper and L0.19 ink backgrounds), so no dark override is needed.
+   */
+  --color-store-identity: var(--store-identity);
+  --color-store-self-facts: var(--store-self-facts);
+  --color-store-worldview: var(--store-worldview);
+  --color-store-episodic: var(--store-episodic);
 
   /*
    * Motion tokens (Spec F1 T02). Durations + easings consumed by the design
@@ -204,6 +224,18 @@
    */
   --tier-mid: oklch(0.6 0.135 70);
   --tier-small: oklch(0.6 0.045 232);
+  /*
+   * Memory-store hues (Spec 35 D-35-X). Identity-palette formula (L0.62
+   * C0.13, hue-varied); hues match the four typed stores — identity=teal,
+   * self_facts=forest-green, worldview=indigo-violet, episodic=rose — chosen
+   * outside the brand-vermilion / tier exclusion bands so a store colour
+   * never reads as a tier or brand signal. Theme-independent (no .dark
+   * override) per the identity-palette precedent.
+   */
+  --store-identity: oklch(0.62 0.13 180);
+  --store-self-facts: oklch(0.62 0.13 135);
+  --store-worldview: oklch(0.62 0.13 270);
+  --store-episodic: oklch(0.62 0.13 340);
   --chart-1: oklch(0.585 0.196 30);
   --chart-2: oklch(0.7 0.13 73);
   --chart-3: oklch(0.6 0.045 232);

@@ -223,6 +223,18 @@ export function useChat(
                 proposal: ev.data.proposal,
               },
             }));
+          } else if (ev.event === "memory_recall") {
+            // Spec 35 (D-35-4): the "thinking / remembering" state — one frame
+            // per typed store consulted while composing. Accumulate in order so
+            // the streaming turn renders the staged "Recalling from <store>
+            // memory" pulse ahead of the answer.
+            patch((a) => ({
+              ...a,
+              recall: [
+                ...(a.recall ?? []),
+                { store: ev.data.store, count: ev.data.count },
+              ],
+            }));
           } else if (ev.event === "done") {
             // Spec 31 (D-31-1/2): carry the model decision + budget snapshot
             // alongside the tier (both absent on rule-based turns ⇒ undefined).

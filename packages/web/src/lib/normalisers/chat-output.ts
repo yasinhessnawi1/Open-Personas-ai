@@ -31,6 +31,9 @@ export function chatSseToOutputContent(event: ChatEvent): OutputContent[] {
     // not assistant output content — it renders via AskUserPrompt in the
     // message element, not through the output dispatcher.
     case "asking_user":
+    // Spec 35 (D-35-4): the memory-recall "remembering" state is a transient
+    // pre-answer indicator, not assistant output content.
+    case "memory_recall":
       return [];
     case "tool_calling":
       return projectToolCalling(event.data.tool_calls);

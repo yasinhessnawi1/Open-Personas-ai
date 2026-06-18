@@ -23,9 +23,8 @@
  * first paint; persisted values are read post-hydration — see usePersistedState).
  */
 
-import { ChevronsLeft, ChevronsRight, Plus, Settings } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useCallback, useRef } from "react";
 import { buttonVariants } from "@/components/ui/button";
@@ -39,7 +38,9 @@ import {
 } from "@/components/ui/tooltip";
 import { usePersistedState } from "@/lib/hooks/use-persisted-state";
 import { cn } from "@/lib/utils";
+import { AccountMenu } from "./account-menu";
 import { Brand } from "./brand";
+import { CommandTrigger } from "./command-palette";
 import { Nav } from "./nav";
 import type { SidebarData } from "./sidebar-data";
 import { MessagesList, PersonasRail } from "./sidebar-sections";
@@ -97,7 +98,6 @@ function SidebarSection({
 
 export function Sidebar({ data }: { data: SidebarData }) {
   const t = useTranslations("nav");
-  const pathname = usePathname();
 
   const [width, setWidth] = usePersistedState<number>(WIDTH_KEY, {
     fallback: DEFAULT_WIDTH,
@@ -112,8 +112,6 @@ export function Sidebar({ data }: { data: SidebarData }) {
 
   const asideRef = useRef<HTMLElement | null>(null);
   const dragging = useRef(false);
-
-  const settingsActive = pathname === "/settings";
 
   // --- Pointer-drag resize ------------------------------------------------
   const onPointerMove = useCallback(
@@ -210,11 +208,20 @@ export function Sidebar({ data }: { data: SidebarData }) {
             />
           </div>
 
-          {/* (2) Primary action. */}
+          {/* (2) ⌘K command / search (Spec 35 D-35-14). */}
+          <CommandTrigger collapsed={collapsed} />
+
+          {/* (3) Primary action. */}
           <NewPersonaButton collapsed={collapsed} label={t("newPersona")} />
 
-          {/* (3) Primary nav. */}
-          <Nav collapsed={collapsed} />
+          {/* (4) Primary nav, with live counts (Spec 35 D-35-13). */}
+          <Nav
+            collapsed={collapsed}
+            counts={{
+              personas: data.personas.length,
+              conversations: data.conversations.length,
+            }}
+          />
 
           <Separator className="bg-sidebar-border" />
 
@@ -235,17 +242,14 @@ export function Sidebar({ data }: { data: SidebarData }) {
             />
           </SidebarSection>
 
-          {/* (6) Settings — a non-shrinking footer pinned flush at the bottom.
-           * `shrink-0` keeps it at its natural height (never squeezed) while the
-           * MESSAGES region above it (flex-1) absorbs all remaining space and
-           * scrolls internally, so Settings stays visible at any list length. */}
+          {/* (7) Account footer — the custom account menu (Spec 35 D-35-16:
+           * avatar + name + settings/appearance/sign-out), moved out of the
+           * top-right header island into a persistent home. `shrink-0` keeps it
+           * at natural height while the MESSAGES region above absorbs the slack
+           * and scrolls internally. */}
           <div className="mt-auto shrink-0">
             <Separator className="mb-2 bg-sidebar-border" />
-            <SettingsLink
-              collapsed={collapsed}
-              active={settingsActive}
-              label={t("settings")}
-            />
+            <AccountMenu collapsed={collapsed} />
           </div>
         </div>
 
@@ -347,52 +351,6 @@ function NewPersonaButton({
       className={cn(buttonVariants(), "justify-start gap-2")}
     >
       <Plus className="size-4" />
-      {label}
-    </Link>
-  );
-}
-
-function SettingsLink({
-  collapsed,
-  active,
-  label,
-}: {
-  collapsed: boolean;
-  active: boolean;
-  label: string;
-}) {
-  const base =
-    "flex items-center rounded-md text-sm font-medium outline-none transition-colors duration-[var(--motion-duration-fast)] focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
-  const state = active
-    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground";
-
-  if (collapsed) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Link
-              href="/settings"
-              aria-label={label}
-              aria-current={active ? "page" : undefined}
-              className={cn(base, state, "size-9 justify-center mx-auto")}
-            />
-          }
-        >
-          <Settings className="size-4" />
-        </TooltipTrigger>
-        <TooltipContent side="right">{label}</TooltipContent>
-      </Tooltip>
-    );
-  }
-  return (
-    <Link
-      href="/settings"
-      aria-current={active ? "page" : undefined}
-      className={cn(base, state, "gap-3 px-3 py-2")}
-    >
-      <Settings className="size-4 shrink-0" />
       {label}
     </Link>
   );

@@ -19,11 +19,20 @@ export interface paths {
     put?: never;
     /**
      * Create Persona
-     * @description Create a persona from YAML; populate memory stores; auto-generate an avatar.
+     * @description Create a persona from YAML; populate memory stores; return immediately.
      *
-     *     The avatar is generated only when the builder supplied none (D-29-3); the
-     *     generation is fail-soft so create never fails on an imagegen problem
-     *     (D-29-X-fail-soft). A user-supplied ``avatar_url`` always wins (criterion 6).
+     *     The row + memory chunks are written synchronously (so the persona exists the
+     *     moment this returns), then the response is sent with ``avatar_url=null`` (F1's
+     *     default renders) and any auto-voice unset (the global default voices it). The
+     *     voice auto-pick and the avatar auto-generation — which together added ~30s to
+     *     the critical path — run in a ``BackgroundTasks`` job AFTER the response
+     *     (:func:`_enrich_persona_after_create`), which re-establishes the owner's RLS
+     *     scope before its writes (cloud) and fills in voice + avatar. The web detail
+     *     surface bounded-polls ``GET /v1/personas/{id}`` until they appear.
+     *
+     *     Auto-generation only runs when the builder supplied no avatar (D-29-3); a
+     *     user-supplied ``avatar_url`` always wins (criterion 6) and short-circuits the
+     *     background avatar hook. Everything stays fail-soft (D-29-X-fail-soft).
      */
     post: operations["create_persona_v1_personas_post"];
     delete?: never;
@@ -1400,6 +1409,8 @@ export interface components {
       channel?: {
         [key: string]: unknown;
       } | null;
+      /** Tier Used */
+      tier_used?: string | null;
     };
     /**
      * PersonaCapabilities

@@ -51,6 +51,7 @@ export function runEventToOutputContent(event: RunEvent): OutputContent[] {
     case "started":
     case "tier":
     case "thinking":
+    case "memory_recall":
     case "asking_user":
     case "user_responded":
     case "reasoning":

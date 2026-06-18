@@ -170,6 +170,13 @@ messages = Table(
     # message persist with images = NULL (byte-for-byte unchanged for the
     # text-only path).
     Column("images", _json()),
+    # Spec 35 D-35-2 / migration 010: the routing tier (small/mid/frontier) the
+    # router chose for this assistant turn, persisted so the per-message tier
+    # chip survives a page reload (the live `done` event only covers the
+    # just-streamed turn). Nullable: user/system/tool rows and every message
+    # written before this migration carry NULL → the chip simply does not render
+    # (clean degrade, D-35-2), never a wrong tier.
+    Column("tier_used", Text),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("role IN ('system', 'user', 'assistant', 'tool')", name="messages_role_check"),
     Index("idx_messages_conversation", "conversation_id"),
