@@ -51,6 +51,8 @@ from datetime import datetime  # noqa: TC003 — runtime for Pydantic field vali
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from persona.errors import PersonaError
+from persona.logging import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from persona_voice.session.state_machine import (
@@ -68,6 +70,9 @@ if TYPE_CHECKING:
 
     from persona_voice.stt.protocol import SpeechActivityListener
     from persona_voice.transport.room import VoiceRoom
+
+
+_LOG = get_logger("voice.streaming")
 
 
 __all__ = [
@@ -528,6 +533,26 @@ class StreamingLoop:
             # Clean completion (not cancelled): tell V4 the turn is over so it
             # returns the floor. An empty reply (no audio) resets to LISTENING.
             completed = True
+            if self._orchestrator is not None:
+                if produced_audio:
+                    await self._orchestrator.notify_persona_finished()
+                else:
+                    await self._orchestrator.notify_processing_yielded_no_audio()
+        except PersonaError as exc:
+            # A model/TTS PROVIDER failure (e.g. Cartesia 402 "quota_exceeded" —
+            # out of credits — mapped to TTSStreamFailureError, or a network drop)
+            # must NOT surface as an unretrieved task exception that leaves the
+            # call wedged. The persona simply can't speak this turn: log it
+            # actionably and degrade so V4 returns the floor (turn-0 already
+            # degraded via the greet timeout). Scoped to the domain PersonaError
+            # hierarchy so structural-invariant bugs (e.g. the D-V1-6 sample-rate
+            # ValueError) still raise loudly, and ``CancelledError`` (a
+            # BaseException) still unwinds the stream on barge-in (spec V4 §8).
+            _LOG.warning(
+                "voice turn produced no speech; the persona stays silent this turn "
+                "(check the TTS/model provider — e.g. Cartesia credits/quota): {err}",
+                err=repr(exc)[:300],
+            )
             if self._orchestrator is not None:
                 if produced_audio:
                     await self._orchestrator.notify_persona_finished()

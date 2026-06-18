@@ -310,6 +310,17 @@ class CartesiaStreamingTTS:
             connection = await manager.__aenter__()
         except CartesiaError as exc:
             raise self._map_error(exc) from exc
+        except Exception as exc:  # noqa: BLE001 — non-SDK connect failures
+            # A quota/credits rejection (HTTP 402 "quota_exceeded") and other
+            # handshake failures surface as a raw websockets error, NOT a
+            # CartesiaError — so they bypass _map_error and would leak out as a
+            # raw provider exception. Callers depend on the TTSError hierarchy
+            # (never raw provider types), so map it to a domain stream failure.
+            raise TTSStreamFailureError(
+                "failed to open the Cartesia TTS stream — check the provider "
+                "credits/quota and connectivity",
+                context={"provider": _PROVIDER_NAME, "error": repr(exc)[:200]},
+            ) from exc
 
         # Include ``language`` only when given (Spec 32 B4) — preserving the
         # provider-default behaviour for an unset (English-default / fallback) call.
