@@ -1,94 +1,153 @@
 # persona-web
 
-> Next.js web app for Open Persona.
+> The Next.js 16 web app for Open Persona — persona authoring, streaming chat, agentic runs, and voice, in two editions.
 
-**Status:** Private · In Development
+`persona-web` is **layer 1** of the [Open Persona](../../README.md) stack: the
+surface users actually touch. It is a thin client — all business logic lives in
+[`persona-api`](../api/README.md) — talking REST + SSE over an OpenAPI-generated
+client, with every auth touch isolated behind a swappable `@/auth` seam.
 
-## What it is
+> **Note:** this is **not** the Next.js your training data knows. The app pins
+> Next.js 16 (App Router, Turbopack) with breaking changes from prior versions.
+> See [`AGENTS.md`](AGENTS.md) — read `node_modules/next/dist/docs/` before
+> writing code.
 
-The browser front-end for Open Persona. Next.js 16 (App Router) +
-TypeScript (strict) + Tailwind v4 + shadcn/ui, Clerk auth, an
-OpenAPI-generated client against `persona-api`, and Playwright + Vitest +
-Biome for the verification surface. A thin client; all business logic
-lives in the API. SSE streams (chat + agentic-run timeline) are consumed
-via `fetch` + `ReadableStream` with hand-mirrored event shapes in
-`src/lib/sse-types.ts` because OpenAPI cannot model server-sent events.
+---
 
-Pages:
+## What it is / where it fits
 
-- **Landing**: public marketing page; auth-aware CTAs.
-- **Auth**: Clerk sign-in/up/out; the `(app)` route group is protected.
-- **Personas**: list / detail; authoring flow (one-sentence brief →
-  frontier draft → structured form ⇄ lazy Monaco YAML → save) + edit.
-- **Chat**: streaming SSE chat with visible identity header, collapsible
-  tool-call cards, per-turn tier badge, file + image attachments, and
-  inline **file cards** + a sliding **right-panel renderer** (10 formats:
-  markdown / code / PDF / image / CSV / JSON / HTML / Mermaid / Graphviz /
-  plaintext; rendered↔raw toggle) for tool-produced artifacts.
-- **Run viewer**: agentic-run timeline over SSE (catch-up + reconcile-on-
-  drop), inline ask-user, Markdown final answer, cancel.
-- **Settings**: credit balance + per-turn usage; theme, tier-badge
-  visibility, language (pseudo-locale) toggles; real conversations list.
+The browser front-end: Next.js 16 (App Router) + TypeScript (strict) +
+Tailwind v4 + shadcn/ui, an OpenAPI-generated client against `persona-api`, and
+Biome + Vitest + Playwright as the verification surface. SSE streams (chat +
+agentic-run timelines) are consumed via `fetch` + `ReadableStream` with
+hand-mirrored event shapes (OpenAPI cannot model server-sent events). State is
+server-state-first; no global store.
 
-Responsive (usable at 375px), dark-mode-default, fully i18n via
-`next-intl`. The package is a **standalone Node project**; it is **not**
-part of the `uv` workspace (that's `core` / `runtime` / `api` / `voice`);
-`uv sync` does nothing here.
+It ships in **two editions**, selected at **build time** by `PERSONA_EDITION`:
 
-## Install
+- **community** (default) — a **Clerk-free** build: no sign-in wall, a fixed
+  local owner, middleware is a pass-through. Pairs with the community API
+  (SQLite + Chroma, no auth, no credits) for a clone-and-run local self-host.
+- **cloud** — the owner's commercial hosting: Clerk auth (`ClerkProvider`,
+  sign-in/up, `<UserButton>`), JWT-templated bearer tokens to the API, and the
+  credits dashboard.
 
-`persona-web` is **not yet open source** and **not** published. Development
-install:
+The edition is a **build-time module swap**: every Clerk touch is isolated
+behind a `@/auth` façade (`@/auth`, `@/auth/server`, `@/auth/provider`,
+`@/auth/middleware`) with `*.cloud.*` / `*.community.*` variants that share one
+`types.ts` surface. `turbopack.resolveAlias` (in `next.config.ts`), keyed on
+`PERSONA_EDITION`, points each import at the edition's variant — so a community
+build never pulls `@clerk/*` into the bundle (enforced by CI gates +
+`no-restricted-imports`).
+
+## Features
+
+- **Persona authoring** — one-sentence brief → frontier draft → structured form
+  ⇄ lazy Monaco YAML editor → save, plus edit and a files manager.
+- **Streaming chat** — SSE chat with a visible identity header, collapsible
+  tool-call cards, per-turn tier badges, file + image attachments, and a
+  right-panel artifact renderer covering 10 formats (markdown / code / PDF /
+  image / CSV / JSON / HTML / Mermaid / Graphviz / plaintext, rendered↔raw
+  toggle).
+- **Agentic run viewer** — run timeline over SSE (catch-up + reconcile-on-drop),
+  inline ask-user, Markdown final answer, cancel.
+- **Voice** — a browser voice client (LiveKit `livekit-client`) wired to the
+  `/v1/voice/token` flow; a voice orb surface (V6, in flight).
+- **Settings** — credit balance + per-turn usage, theme, tier-badge
+  visibility, language toggle, conversations list.
+- **Responsive + i18n** — usable at 375px, dark-mode-default, fully
+  internationalized via `next-intl`.
+
+> The web redesign (in flight) is reshaping the UI; the app structure and
+> surfaces above are stable, the specific visual treatment is moving.
+
+## Install / run
+
+`persona-web` is a **standalone Node project** — it is **not** part of the `uv`
+workspace (`uv sync` does nothing here). Use `pnpm`.
 
 ```bash
-git clone <internal-repo-url>
-cd open-persona/packages/web
+cd packages/web
 pnpm install
-cp .env.example .env.local       # NEXT_PUBLIC_API_BASE_URL + Clerk keys
+cp .env.example .env.local        # NEXT_PUBLIC_API_BASE_URL (+ Clerk keys for cloud)
 ```
 
-Prerequisites: Node ≥ 20.9 (tested on 20.19), pnpm 10.x, a running
-`persona-api` on `http://127.0.0.1:8000` for live data.
-
-## Run
+Prerequisites: Node ≥ 20.9, pnpm 10.x, and a running `persona-api` for live
+data.
 
 ```bash
+# community (default) — Clerk-free, pairs with the zero-infra community API
 pnpm dev                          # http://localhost:3000 (Turbopack)
-pnpm build                        # production build (catches RSC errors tsc misses)
-pnpm start                        # serve the production build
+pnpm build                        # community build (omits Clerk)
+
+# cloud — Clerk auth + credits
+pnpm dev:cloud                    # PERSONA_EDITION=cloud next dev
+pnpm build:cloud                  # PERSONA_EDITION=cloud next build
+pnpm start                        # serve a production build
 ```
 
-To run the full stack locally: `docker start persona-pg` →
-`cd ../api && bash run-local.sh` → `pnpm dev`.
+Full stack locally: run the API (`cd ../api && bash run-local.sh`), then
+`pnpm dev`.
 
-## Test
+### Verify
 
 ```bash
-pnpm typecheck                    # tsc --noEmit (strict, no any)
-pnpm lint                         # Biome (format + lint, React-hooks + Next rules)
-pnpm format                       # Biome auto-format
+pnpm typecheck                    # tsc --noEmit (strict)
+pnpm lint                         # Biome (format + lint)
 pnpm test                         # Vitest + React Testing Library
 pnpm test:e2e                     # Playwright against a real browser + live API
+pnpm check:clerk-free             # community build pulls no @clerk/* into src
+pnpm gen:api                      # regenerate the OpenAPI client from openapi.json
 ```
 
-"Done" for a UI change = `typecheck` + `lint` + `build` + `test` clean
-**and** the feature works in a running browser. The E2E harness (under
-`e2e/`) fetches a Clerk testing token, signs up a `+clerk_test` user
-(OTP `424242`), saves `storageState`, and runs specs authed.
+"Done" for a UI change = `typecheck` + `lint` + `build` + `test` clean **and**
+the feature works in a running browser.
 
-## Architecture role
+## Usage / key surfaces
 
-`persona-web` is layer 1 of the Open Persona stack: the surface users
-actually touch. It calls `persona-api` over REST (committed generated
-client from `openapi.json`; never hand-written `fetch`) and consumes SSE
-streams for chat and run viewers. State: TanStack Query for server state,
-React context for UI state, no global store. The package does not link to
-`persona-core`, `persona-runtime`, or `persona-voice` directly; every
-backend concern crosses the API boundary.
+App structure (App Router):
 
-## Contribute
+- `(app)` — the authenticated app group: `chat`, `personas` (+ `new`, `[id]`,
+  edit, files), `conversations`, `runs`, `settings`. In community the group has
+  no auth wall.
+- `(auth)` — Clerk sign-in / sign-up / reset-password (cloud); community
+  variants redirect home.
+- Landing page — public, auth-aware CTAs.
 
-This package is currently private and **not** accepting external
-contributions yet. See `AGENTS.md` for the project's house rules on the
-Next.js 16 surface (this is not the Next.js your training data knows;
-read `node_modules/next/dist/docs/` before writing code).
+**API access.** Every backend call goes through the committed OpenAPI-generated
+client (`src/lib`) — never hand-written `fetch`. The bearer token comes from the
+`@/auth` seam: a Clerk JWT-template token in cloud, `null` in community. SSE
+streams (chat, runs) are read via `ReadableStream` with the event shapes
+mirrored in `src/lib`.
+
+## Architecture (brief)
+
+```
+browser ──┐
+          │  Next.js 16 (App Router, Turbopack)
+          │  @/auth seam ─ build-time swap (turbopack.resolveAlias)
+          │     community → no-auth stub (Clerk-free bundle)
+          │     cloud     → Clerk
+          ▼
+   persona-api  (REST + SSE, OpenAPI)
+```
+
+The web app never links `persona-core`, `persona-runtime`, or `persona-voice`
+directly — every backend concern crosses the API boundary.
+
+## License
+
+`persona-web` is licensed under **PolyForm Noncommercial 1.0.0** — see
+[LICENSE](LICENSE) (`package.json` declares `"SEE LICENSE IN LICENSE"`). It is
+**source-available, not OSI "open source"**: you may read, modify, and
+self-host it for personal, research, evaluation, educational, and other
+**noncommercial** use, but **commercial use requires a separate license** from
+the rights holder. The engine packages
+(`persona-core` / `persona-runtime` / `persona-voice`) are separately
+**MIT**-licensed and free for any use.
+
+## Links
+
+- [Open Persona root README](../../README.md)
+- [`persona-core`](../core/README.md) · [`persona-runtime`](../runtime/README.md) · [`persona-voice`](../voice/README.md) · [`persona-api`](../api/README.md)
+- [AGENTS.md](AGENTS.md) — Next.js 16 house rules · [CHANGELOG](CHANGELOG.md)
