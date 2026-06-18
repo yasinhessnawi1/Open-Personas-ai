@@ -111,7 +111,9 @@ describe("persona-draft routing (Spec 31)", () => {
   it("readRouting fills schema defaults when routing is absent", () => {
     const doc = yamlToDoc(SAMPLE); // has only routing.tier_for_generation
     const r = readRouting(doc);
-    expect(r.intelligentEnabled).toBe(false);
+    // Automatic routing defaults ON when the intelligent block is absent
+    // (unset → enabled; an explicit `enabled: false` is still respected).
+    expect(r.intelligentEnabled).toBe(true);
     expect(r.weights).toEqual(DEFAULT_SCORING_WEIGHTS);
     expect(r.fallbackOnMiss).toBe(true);
     expect(r.budget).toEqual({
@@ -119,6 +121,15 @@ describe("persona-draft routing (Spec 31)", () => {
       maxCentsPerSession: null,
       maxCentsPerDay: null,
     });
+  });
+
+  it("readRouting respects an explicit intelligent.enabled: false (opt-out)", () => {
+    const doc = yamlToDoc(`schema_version: "1.0"
+routing:
+  intelligent:
+    enabled: false
+`);
+    expect(readRouting(doc).intelligentEnabled).toBe(false);
   });
 
   it("readRouting reads an enabled persona with weights + budget caps", () => {

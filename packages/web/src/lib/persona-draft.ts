@@ -255,7 +255,11 @@ export function readRouting(doc: PersonaDoc): RoutingView {
   const weights = asRecord(intelligent.weights);
   const budget = asRecord(routing.budget);
   return {
-    intelligentEnabled: intelligent.enabled === true,
+    // Automatic (intelligent) routing defaults ON: an unset block reads as
+    // enabled, while an explicit `enabled: false` is respected (opt-out). New
+    // personas (the drafter omits `routing`) therefore get automatic routing on
+    // by default, in both the author wizard and the persona settings surface.
+    intelligentEnabled: intelligent.enabled !== false,
     weights: {
       cost: asNumber(weights.cost, DEFAULT_SCORING_WEIGHTS.cost),
       quality: asNumber(weights.quality, DEFAULT_SCORING_WEIGHTS.quality),
