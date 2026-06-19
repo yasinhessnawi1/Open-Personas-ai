@@ -25,7 +25,17 @@ type AuthMethod = "none" | "bearer";
  * returned (the row shows only `has_credential`). Rendered only for an existing
  * persona (it needs a persona id to assign to).
  */
-export function ByoMcpManager({ personaId }: { personaId: string }) {
+export function ByoMcpManager({
+  personaId,
+  bare = false,
+}: {
+  personaId: string;
+  /**
+   * Spec 35: render the content WITHOUT its own collapsible card — used when
+   * nested inside the editor's "Advanced options" section (no card-in-card).
+   */
+  bare?: boolean;
+}) {
   const t = useTranslations("author");
   const { getToken } = useAuth();
   const [servers, setServers] = useState<Server[]>([]);
@@ -142,8 +152,8 @@ export function ByoMcpManager({ personaId }: { personaId: string }) {
     [client, personaId, reload],
   );
 
-  return (
-    <CollapsibleSection id="byo-mcp" title={t("byoTitle")}>
+  const body = (
+    <>
       <p
         className="type-caption text-muted-foreground"
         data-slot="byo-mcp-manager"
@@ -284,6 +294,22 @@ export function ByoMcpManager({ personaId }: { personaId: string }) {
           })}
         </ul>
       )}
+    </>
+  );
+
+  if (bare) {
+    return (
+      <div className="flex flex-col gap-3" data-slot="byo-mcp-bare">
+        <h3 className="font-heading text-sm font-semibold tracking-wide text-foreground uppercase">
+          {t("byoTitle")}
+        </h3>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <CollapsibleSection id="byo-mcp" title={t("byoTitle")}>
+      {body}
     </CollapsibleSection>
   );
 }

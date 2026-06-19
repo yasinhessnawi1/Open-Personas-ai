@@ -1,6 +1,12 @@
 "use client";
 
-import { Code2, Save, SlidersHorizontal, Sparkles } from "lucide-react";
+import {
+  Code2,
+  Save,
+  Settings2,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
 import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { useCallback, useState } from "react";
@@ -270,9 +276,6 @@ export function PersonaEditor({
             }
           />
 
-          {/* Spec 30 T12 — BYO MCP servers (only for a saved persona). */}
-          {personaId ? <ByoMcpManager personaId={personaId} /> : null}
-
           {/* Spec-10 seam: clarifying questions + refinement (D-10-2 / D-10-5).
               Authoring-only; a collapsible section that opens by default so it
               is the second open card in the authoring flow. */}
@@ -292,26 +295,35 @@ export function PersonaEditor({
             </CollapsibleSection>
           ) : null}
 
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => setShowYaml((v) => !v)}
-              className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <Code2 className="size-4" />
-              {showYaml ? t("hideRawYaml") : t("editRawYaml")}
-            </button>
-            {showYaml ? (
-              <>
-                <YAMLEditor value={yamlText} onChange={onYamlChange} />
-                {yamlError ? (
-                  <p className="text-sm text-destructive">
-                    {t("yamlInvalid", { error: yamlError })}
-                  </p>
-                ) : null}
-              </>
-            ) : null}
-          </div>
+          {/* Advanced options — BYO MCP servers + raw YAML, folded away so the
+              main editor stays clean (Spec 35). Collapsed by default. */}
+          <CollapsibleSection
+            id="advanced"
+            title={t("advancedTitle")}
+            icon={Settings2}
+          >
+            {personaId ? <ByoMcpManager personaId={personaId} bare /> : null}
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setShowYaml((v) => !v)}
+                className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <Code2 className="size-4" />
+                {showYaml ? t("hideRawYaml") : t("editRawYaml")}
+              </button>
+              {showYaml ? (
+                <>
+                  <YAMLEditor value={yamlText} onChange={onYamlChange} />
+                  {yamlError ? (
+                    <p className="text-sm text-destructive">
+                      {t("yamlInvalid", { error: yamlError })}
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </CollapsibleSection>
 
           <div className="flex items-center justify-end gap-3">
             {saveError ? (
