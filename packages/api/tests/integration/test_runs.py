@@ -192,7 +192,8 @@ def test_list_runs(client: tuple[TestClient, str, str]) -> None:
     c, uid, pid = client
     r1 = c.post(f"/v1/personas/{pid}/runs", json={"task": "first task"}, headers=_auth(uid))
     r2 = c.post(f"/v1/personas/{pid}/runs", json={"task": "second task"}, headers=_auth(uid))
-    assert r1.status_code == 202 and r2.status_code == 202
+    assert r1.status_code == 202
+    assert r2.status_code == 202
 
     lst = c.get("/v1/runs", headers=_auth(uid))
     assert lst.status_code == 200, lst.text
