@@ -17,12 +17,24 @@
 import { render } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, vi } from "vitest";
-import { derivePersonaIdentityColor } from "@/lib/persona-identity";
 
 // F3 T10 — MessageElement now renders <AuthedImage> for user messages
 // with `images`; AuthedImage uses Clerk's useAuth. Stub it so the
 // existing test suite doesn't need ClerkProvider boilerplate.
 vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken: () => Promise.resolve("test-token") }),
+}));
+
+// Spec 35 — user turns now render <UserAvatar>, which reads the account from
+// the @/auth façade. Stub it so the suite needs no ClerkProvider. Keep useAuth
+// (AuthedImage on image turns reads it from the same façade).
+vi.mock("@/auth", () => ({
+  useAccount: () => ({
+    name: "Tester",
+    email: null,
+    imageUrl: null,
+    available: true,
+  }),
   useAuth: () => ({ getToken: () => Promise.resolve("test-token") }),
 }));
 
@@ -86,22 +98,20 @@ describe("MessageElement", () => {
     expect(bubble?.textContent).toBe("Hello Astrid");
   });
 
-  it("renders persona messages with the D-F1-5 composite — 2px identity-coloured border-left + bg-card", () => {
+  it("renders persona messages with the identity spine — .v-msg__card + byline", () => {
     const { container } = renderWithIntl(
       <MessageElement message={personaMsg("Good morning.")} persona={ASTRID} />,
     );
-    const wrap = container.querySelector('[data-slot="message-element"]');
-    expect(wrap?.getAttribute("data-role")).toBe("persona");
-    const body = container.querySelector(
-      '[data-slot="message-element-body"]',
+    const wrap = container.querySelector(
+      '[data-slot="message-element"]',
     ) as HTMLElement | null;
-    expect(body).not.toBeNull();
-    // 2px border-left + bg-card.
-    expect(body?.className).toContain("border-l-2");
-    expect(body?.className).toContain("bg-card");
-    // Identity-coloured.
-    const expected = derivePersonaIdentityColor(ASTRID).oklch;
-    expect(body?.style.borderLeftColor).toBe(expected);
+    expect(wrap?.getAttribute("data-role")).toBe("persona");
+    expect(wrap?.className).toContain("v-msg__persona");
+    // The identity colour flows via personaIdentityStyle (--identity-* / --v-id),
+    // which the .v-msg__card border-left + .v-id-underline byline consume.
+    expect(wrap?.style.getPropertyValue("--identity-h")).not.toBe("");
+    expect(container.querySelector(".v-msg__card")).not.toBeNull();
+    expect(container.querySelector(".v-msg__byname")).not.toBeNull();
   });
 
   it("(Spec 35 D-35-4) shows the store-named recall state while streaming pre-content", () => {

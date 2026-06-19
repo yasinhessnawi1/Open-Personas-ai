@@ -838,6 +838,54 @@
     height: 100%;
     min-height: 0;
   }
+  /* chat-header presence avatar — an identity ring that pulses while the
+     persona is live (Spec 35 D-35-7). Wraps <PersonaAvatar> so real,
+     auth-served avatars render; the ring is the lightweight "orb". */
+  .v-presence {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 9999px;
+    flex-shrink: 0;
+  }
+  .v-presence::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 9999px;
+    border: 1.5px solid var(--v-id);
+    /* always a faint identity orbit ring; a gentle idle breathe by default. */
+    opacity: 0.35;
+    pointer-events: none;
+    animation: v-presence-idle 3s ease-in-out infinite;
+  }
+  /* live (composing) — a stronger, faster orbit pulse. */
+  .v-presence[data-live="true"]::after {
+    border-width: 2px;
+    animation: v-presence-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes v-presence-idle {
+    0%,
+    100% {
+      opacity: 0.22;
+      transform: scale(0.97);
+    }
+    50% {
+      opacity: 0.42;
+      transform: scale(1.05);
+    }
+  }
+  @keyframes v-presence-pulse {
+    0%,
+    100% {
+      opacity: 0.2;
+      transform: scale(0.95);
+    }
+    50% {
+      opacity: 0.65;
+      transform: scale(1.16);
+    }
+  }
   .v-chat__head {
     display: flex;
     align-items: center;
@@ -1652,7 +1700,8 @@
   .v-recall-dot,
   .v-dots i,
   .v-caret,
-  .v-run-dot {
+  .v-run-dot,
+  .v-presence::after {
     /* biome-ignore lint/complexity/noImportantStyles: reduced-motion override
        must out-specificity the component-local animation rules (same idiom as
        the F1 universal override in globals.css T15). */

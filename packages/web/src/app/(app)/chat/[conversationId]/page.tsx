@@ -31,6 +31,7 @@ export default async function ChatPage({
 }) {
   const { conversationId } = await params;
   const t = await getTranslations("voice");
+  const tc = await getTranslations("chat");
   const api = await serverApi();
 
   const convRes = await api.GET("/v1/conversations/{conversation_id}", {
@@ -48,6 +49,8 @@ export default async function ChatPage({
   const name = persona?.name ?? conv.title ?? "Persona";
   const role = persona?.role ?? "";
   const constraint = persona?.constraints[0];
+  // Spec 35: the real shared-memory count for the header's "remembers N" line.
+  const remembers = personaRes.data?.conversation_count ?? 0;
 
   // The persona shape PersonaIdentityHeader + MessageElement consume.
   // id drives the deterministic identity-colour derivation; avatar_url
@@ -72,23 +75,37 @@ export default async function ChatPage({
 
   return (
     <div className="flex h-[calc(100svh-3.5rem)] flex-col">
-      {/* Spec 35: chat header on the editorial .v-chat__head, with the
-          identity presence orb (#3) as the avatar — it pulses while live. */}
+      {/* Spec 35: chat header on the editorial .v-chat__head. The avatar + name
+          route to the persona detail; the presence avatar (#3) pulses while
+          live; the role line surfaces the real shared-memory count. */}
       <div
         className="v-chat__head"
         style={personaIdentityStyle(personaForDisplay)}
       >
-        <ChatPresenceOrb
-          persona={{ id: personaForDisplay.id, name }}
-          avatarUrl={personaForDisplay.avatar_url}
-          size={40}
-        />
-        <div className="v-chat__head-meta">
-          <div className="v-chat__name">
-            <span className="v-id-underline">{name}</span>
+        <Link
+          href={`/personas/${conv.persona_id}`}
+          aria-label={tc("openPersona", { name })}
+          className="flex min-w-0 flex-1 items-center gap-3.5 outline-none"
+          data-slot="chat-header-persona"
+        >
+          <ChatPresenceOrb persona={personaForDisplay} />
+          <div className="v-chat__head-meta">
+            <div className="v-chat__name">
+              <span className="v-id-underline">{name}</span>
+            </div>
+            <div className="v-chat__role">
+              {role}
+              {remembers > 0 ? (
+                <>
+                  {" · "}
+                  <span style={{ color: "var(--store-self-facts)" }}>
+                    {tc("remembers", { count: remembers })}
+                  </span>
+                </>
+              ) : null}
+            </div>
           </div>
-          {role ? <div className="v-chat__role">{role}</div> : null}
-        </div>
+        </Link>
         {/* V6 D-V6-4 — "Talk to {persona}" entry; binds this conversation. */}
         <Link
           href={`/chat/${conversationId}/voice`}

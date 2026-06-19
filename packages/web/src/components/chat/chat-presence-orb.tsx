@@ -1,35 +1,27 @@
 "use client";
 
 /**
- * Spec 35 D-35-7 — the identity orb beyond voice (signature moment #3).
+ * Spec 35 D-35-7 — the identity presence avatar in the chat header (signature
+ * moment #3, lightweight). It IS the persona's identity avatar (so real,
+ * auth-served avatars render correctly via <PersonaAvatar>/<AuthedAvatarImage>
+ * — the heavy voice particle orb stays in the voice room) wrapped in an
+ * identity-coloured ring that PULSES while the persona is live (composing).
  *
- * A lightweight reuse of the voice <IdentityOrb> as the chat-header avatar: it
- * pulses while the persona is live (composing a reply) and breathes calmly when
- * idle. Audio getters are no-ops (chat has no mic/TTS levels); the "live" signal
- * arrives via a decoupled `chat-streaming` window event dispatched by
- * <ChatWindow> — so the header (above the chat window in the tree) stays in
- * sync without prop-drilling streaming state up through the page.
+ * The "live" signal arrives via a decoupled `chat-streaming` window event
+ * dispatched by <ChatWindow>, so the header (above the chat window in the tree)
+ * stays in sync without prop-drilling streaming state up through the page.
  */
 
-import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { IdentityOrb } from "@/components/voice/identity-orb";
+import {
+  type AvatarPersona,
+  PersonaAvatar,
+} from "@/components/persona/persona-avatar";
 
 /** Dispatched by ChatWindow on each streaming-state change; detail = streaming. */
 export const CHAT_STREAMING_EVENT = "chat-streaming";
 
-const ZERO = () => 0;
-
-export function ChatPresenceOrb({
-  persona,
-  avatarUrl,
-  size = 40,
-}: {
-  persona: { id: string; name: string };
-  avatarUrl?: string | null;
-  size?: number;
-}) {
-  const t = useTranslations("chat");
+export function ChatPresenceOrb({ persona }: { persona: AvatarPersona }) {
   const [streaming, setStreaming] = useState(false);
 
   useEffect(() => {
@@ -40,16 +32,8 @@ export function ChatPresenceOrb({
   }, []);
 
   return (
-    <IdentityOrb
-      persona={persona}
-      // composing → the orbiting "thinking" highlight; idle → calm breathing.
-      agentState={streaming ? "thinking" : "listening"}
-      bargeInSignal={0}
-      getMicLevel={ZERO}
-      getPersonaLevel={ZERO}
-      avatarUrl={avatarUrl}
-      label={streaming ? t("thinking", { name: persona.name }) : persona.name}
-      size={size}
-    />
+    <span className="v-presence" data-live={streaming ? "true" : "false"}>
+      <PersonaAvatar persona={persona} size="md" />
+    </span>
   );
 }

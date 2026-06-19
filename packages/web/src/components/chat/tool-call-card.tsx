@@ -76,7 +76,9 @@ export function ToolCallCard({ entry }: { entry: ToolEntry }) {
           )}
         />
         <span className="truncate">
-          {t("toolUsing", { tool: entry.toolName })}
+          {entry.pending
+            ? t("toolUsingNow", { tool: entry.toolName })
+            : t("toolUsing", { tool: entry.toolName })}
         </span>
         {badge ? (
           <span

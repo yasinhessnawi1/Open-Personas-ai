@@ -337,6 +337,13 @@ export function ChatWindow({
                 <ArrowUp className="size-4" />
               </button>
             </div>
+
+            {/* Spec 35: the editorial composer hint — shared-memory note + the
+                send-key affordance, mono-muted (mirrors .v-composer__hint). */}
+            <div className="flex items-center justify-between gap-3 px-1 type-caption normal-case tracking-normal text-muted-foreground">
+              <span className="truncate">{t("hintMemory")}</span>
+              <span className="hidden shrink-0 sm:inline">{t("hintKeys")}</span>
+            </div>
           </div>
         </form>
       </div>

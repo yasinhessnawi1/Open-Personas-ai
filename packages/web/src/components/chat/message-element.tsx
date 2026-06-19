@@ -49,10 +49,7 @@ import { AskUserPrompt } from "@/components/runs/ask-user-prompt";
 import { Markdown } from "@/components/ui/markdown";
 import type { OutputContent } from "@/lib/api/output-content";
 import { operationFor, projectToolResult } from "@/lib/normalisers/_classify";
-import {
-  derivePersonaIdentityColor,
-  personaIdentityStyle,
-} from "@/lib/persona-identity";
+import { personaIdentityStyle } from "@/lib/persona-identity";
 import type {
   ArtifactRef,
   BudgetSnapshot,
@@ -69,6 +66,7 @@ import { ImageLightbox } from "./output/image-lightbox";
 import { StreamingTextRenderer } from "./streaming-text-renderer";
 import { TierBadge } from "./tier-badge";
 import { ToolCallCard, type ToolEntry } from "./tool-call-card";
+import { UserAvatar } from "./user-avatar";
 
 /**
  * Ordered event in the assistant stream. Drives the D-F2-15 interleaved
@@ -223,7 +221,7 @@ function UserMessage({
 
   return (
     <div
-      className={cn("flex justify-end", className)}
+      className={cn("flex items-start justify-end gap-2.5", className)}
       data-slot="message-element"
       data-role="user"
     >
@@ -249,6 +247,9 @@ function UserMessage({
           <span className="whitespace-pre-wrap">{message.content}</span>
         ) : null}
       </div>
+      {/* Spec 35: the user's own profile avatar on their turns — mirrors the
+          persona avatar on the other side of the thread. */}
+      <UserAvatar className="shrink-0" />
     </div>
   );
 }
@@ -276,8 +277,6 @@ function PersonaMessage({
   // marks every persona message; the avatar anchors identity at turn start.
   const showAvatar = !prevMessage || prevMessage.role === "user";
 
-  const identityColour = derivePersonaIdentityColor(persona);
-
   const t = useTranslations("chat");
   const thinkingLabel = t("thinking", { name: persona.name });
 
@@ -291,7 +290,7 @@ function PersonaMessage({
   return (
     <div
       style={personaIdentityStyle(persona)}
-      className={cn("flex gap-3", className)}
+      className={cn("v-msg__persona", className)}
       data-slot="message-element"
       data-role="persona"
       data-shows-avatar={showAvatar ? "true" : "false"}
@@ -301,42 +300,51 @@ function PersonaMessage({
         {showAvatar ? <PersonaAvatar persona={persona} size="md" /> : null}
       </div>
 
-      <div
-        // D-F1-5: 2px identity-coloured border-left, bg-card surface (neutral).
-        style={{ borderLeftColor: identityColour.oklch }}
-        className="flex min-w-0 flex-1 flex-col gap-2 rounded-r-lg border-l-2 bg-card p-3"
-        data-slot="message-element-body"
-      >
-        {hasEvents ? (
-          <InterleavedContent
-            events={message.events ?? []}
-            streaming={!!message.streaming}
-            thinkingLabel={thinkingLabel}
-            personaName={persona.name}
-            personaId={persona.id}
-            onViewLarger={setLightboxPath}
-          />
-        ) : message.streaming && !message.content ? (
-          // Streaming, no content yet. Spec 35 (D-35-4): if the runtime has
-          // named the typed-memory stores it's recalling, show that "thinking /
-          // remembering" state (store-coloured); otherwise the generic thinking.
-          message.recall && message.recall.length > 0 ? (
-            <RecallState recall={message.recall} />
-          ) : (
-            <StreamingTextRenderer
-              text=""
-              streaming
-              thinking
+      <div className="v-msg__body" data-slot="message-element-body">
+        {/* Byline — the persona name (identity-underlined) above its card, the
+            editorial turn-start anchor (Spec 35). Shown once per turn. */}
+        {showAvatar ? (
+          <div className="v-msg__byline">
+            <span className="v-msg__byname">
+              <span className="v-id-underline">{persona.name}</span>
+            </span>
+          </div>
+        ) : null}
+
+        {/* The message card — D-F1-5: 2px identity-coloured border-left (via
+            --v-id) on the neutral card surface, now the editorial .v-msg__card. */}
+        <div className="v-msg__card">
+          {hasEvents ? (
+            <InterleavedContent
+              events={message.events ?? []}
+              streaming={!!message.streaming}
               thinkingLabel={thinkingLabel}
+              personaName={persona.name}
+              personaId={persona.id}
+              onViewLarger={setLightboxPath}
             />
-          )
-        ) : (
-          // Legacy stacked layout: tools above content (back-compat).
-          <StackedContent message={message} thinkingLabel={thinkingLabel} />
-        )}
+          ) : message.streaming && !message.content ? (
+            // Streaming, no content yet. Spec 35 (D-35-4): if the runtime has
+            // named the typed-memory stores it's recalling, show that "thinking
+            // / remembering" state (store-coloured); otherwise generic thinking.
+            message.recall && message.recall.length > 0 ? (
+              <RecallState recall={message.recall} />
+            ) : (
+              <StreamingTextRenderer
+                text=""
+                streaming
+                thinking
+                thinkingLabel={thinkingLabel}
+              />
+            )
+          ) : (
+            // Legacy stacked layout: tools above content (back-compat).
+            <StackedContent message={message} thinkingLabel={thinkingLabel} />
+          )}
+        </div>
 
         {message.tier && !message.streaming ? (
-          <div className="flex flex-col gap-1" data-slot="turn-transparency">
+          <div className="v-msg__foot" data-slot="turn-transparency">
             <TierBadge tier={message.tier} routing={message.routing} />
             <BudgetIndicator budget={message.budget} />
           </div>
