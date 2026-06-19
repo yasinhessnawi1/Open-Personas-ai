@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { startVoice } from "@/app/actions";
-import { Grid, PageBody, Section, Stack } from "@/components/layout";
+import { PageBody, Section } from "@/components/layout";
 import { MemoryStores } from "@/components/persona/memory-stores";
 import { PersonaDetailManageMenu } from "@/components/persona/persona-detail-manage-menu";
 import { PersonaIdentityHeaderLive } from "@/components/persona/persona-identity-header-live";
@@ -82,7 +82,14 @@ export default async function PersonaDetailPage({
         className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between"
         data-slot="persona-detail-header"
       >
-        <PersonaIdentityHeaderLive persona={headerPersona} size="lg" />
+        <div className="flex min-w-0 flex-col gap-3">
+          <PersonaIdentityHeaderLive persona={headerPersona} size="lg" />
+          {p.background ? (
+            <p className="max-w-prose type-body text-muted-foreground italic">
+              {p.background}
+            </p>
+          ) : null}
+        </div>
         <div className="flex shrink-0 flex-wrap items-center gap-3">
           <Badge
             variant="secondary"
@@ -116,101 +123,127 @@ export default async function PersonaDetailPage({
         </div>
       </header>
 
-      <Stack gap={5}>
-        <Card
-          className="gap-3 border-primary/20 p-5"
-          data-slot="persona-detail-run-task"
+      {/* Spec 35: two-column — typed memory + constraints (main) beside the
+          Run-a-task CTA + routing/capabilities (a sticky aside that stays put
+          while the memory stores scroll). */}
+      <div className="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
+        <div
+          className="flex min-w-0 flex-col gap-8"
+          data-slot="persona-detail-main"
         >
-          <h2 className="type-heading" data-slot="run-task-title">
-            {t("runTaskTitle", { name: p.name })}
-          </h2>
-          <StartRunForm action={startRun.bind(null, id)} name={p.name} />
-        </Card>
+          <Section heading={t("memory.heading")}>
+            <MemoryStores
+              name={p.name}
+              role={p.role}
+              language={p.languageDefault}
+              selfFacts={p.selfFacts.map((f) => f.fact)}
+              worldview={p.worldview}
+              conversationCount={detail.conversation_count ?? 0}
+            />
+          </Section>
 
-        {p.background ? (
-          <Section heading={t("background")}>
+          <Section heading={t("constraints")}>
             <Card className="p-5">
-              <p className="type-body whitespace-pre-line text-muted-foreground">
-                {p.background}
-              </p>
+              {p.constraints.length === 0 ? (
+                <p className="type-body text-muted-foreground">{t("none")}</p>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {p.constraints.map((c) => (
+                    <li key={c} className="type-body flex items-start gap-2">
+                      <Shield
+                        className="mt-0.5 size-4 shrink-0 text-primary"
+                        aria-hidden="true"
+                      />
+                      <span>{c}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Card>
           </Section>
-        ) : null}
+        </div>
 
-        <Section heading={t("constraints")}>
-          <Card className="p-5">
-            {p.constraints.length === 0 ? (
-              <p className="type-body text-muted-foreground">{t("none")}</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {p.constraints.map((c) => (
-                  <li key={c} className="type-body flex items-start gap-2">
-                    <Shield
-                      className="mt-0.5 size-4 shrink-0 text-primary"
-                      aria-hidden="true"
-                    />
-                    <span>{c}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+        <aside
+          className="flex flex-col gap-6 lg:sticky lg:top-4"
+          data-slot="persona-detail-aside"
+        >
+          <Card
+            className="gap-3 border-l-2 border-l-primary p-5"
+            data-slot="persona-detail-run-task"
+          >
+            <h2 className="type-heading" data-slot="run-task-title">
+              {t("runTaskTitle", { name: p.name })}
+            </h2>
+            <StartRunForm action={startRun.bind(null, id)} name={p.name} />
           </Card>
-        </Section>
 
-        <Section heading={t("memory.heading")}>
-          <MemoryStores
-            name={p.name}
-            role={p.role}
-            language={p.languageDefault}
-            selfFacts={p.selfFacts.map((f) => f.fact)}
-            worldview={p.worldview}
-            conversationCount={detail.conversation_count ?? 0}
-          />
-        </Section>
+          <Card className="gap-5 p-5">
+            <div>
+              <p className="type-caption font-mono text-muted-foreground">
+                {t("detail.routing")}
+              </p>
+              <p className="mt-2">
+                <span className="v-chip">
+                  <span
+                    className="size-1.5 rounded-full bg-primary"
+                    aria-hidden="true"
+                  />
+                  {t("detail.routingValue")}
+                </span>
+              </p>
+              <p className="mt-2 max-w-prose type-caption normal-case tracking-normal text-muted-foreground">
+                {t("detail.routingHint")}
+              </p>
+            </div>
 
-        {(p.tools.length > 0 || p.skills.length > 0) && (
-          <Grid cols={{ base: 1, sm: 2 }} gap={5}>
-            <Section heading={t("tools")}>
-              <Card className="p-5">
-                {p.tools.length === 0 ? (
-                  <p className="type-body text-muted-foreground">{t("none")}</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {p.tools.map((i) => (
-                      <Badge
-                        key={i}
-                        variant="secondary"
-                        className="type-caption font-mono"
-                      >
-                        {i}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </Section>
-            <Section heading={t("skills")}>
-              <Card className="p-5">
-                {p.skills.length === 0 ? (
-                  <p className="type-body text-muted-foreground">{t("none")}</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {p.skills.map((i) => (
-                      <Badge
-                        key={i}
-                        variant="secondary"
-                        className="type-caption font-mono"
-                      >
-                        {i}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </Section>
-          </Grid>
-        )}
-      </Stack>
+            <div>
+              <p className="type-caption font-mono text-muted-foreground">
+                {t("tools")}
+              </p>
+              {p.tools.length === 0 ? (
+                <p className="mt-2 type-ui text-muted-foreground">
+                  {t("none")}
+                </p>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {p.tools.map((i) => (
+                    <Badge
+                      key={i}
+                      variant="secondary"
+                      className="type-caption font-mono"
+                    >
+                      {i}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <p className="type-caption font-mono text-muted-foreground">
+                {t("skills")}
+              </p>
+              {p.skills.length === 0 ? (
+                <p className="mt-2 type-ui text-muted-foreground">
+                  {t("none")}
+                </p>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {p.skills.map((i) => (
+                    <Badge
+                      key={i}
+                      variant="secondary"
+                      className="type-caption font-mono"
+                    >
+                      {i}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+        </aside>
+      </div>
     </PageBody>
   );
 }

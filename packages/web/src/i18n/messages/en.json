@@ -190,7 +190,10 @@
       "manage": "Manage",
       "manageLabel": "Manage {name}",
       "editViaAuthoring": "Edit via authoring",
-      "files": "Files"
+      "files": "Files",
+      "routing": "Routing",
+      "routingValue": "Smart · automatic",
+      "routingHint": "Each turn is routed to a right-sized model automatically — small → frontier. The tier is never set per persona."
     },
     "memory": {
       "heading": "Typed memory",

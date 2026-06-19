@@ -107,7 +107,7 @@ function StoreCard({
 }) {
   return (
     <div
-      className="v-card v-card--pad border-l-2"
+      className="v-card v-card--pad border-l-2 transition-[transform,box-shadow] duration-[var(--motion-duration-normal)] ease-[var(--motion-ease-standard)] hover:-translate-y-0.5 hover:shadow-[var(--elevation-2)] motion-reduce:transition-none motion-reduce:hover:translate-y-0"
       style={
         {
           "--store-color": color,
