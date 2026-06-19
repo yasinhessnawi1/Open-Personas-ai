@@ -24,6 +24,7 @@ from persona.language_capability import serviceability_warning
 from persona.logging import get_logger
 from persona.registry import PersonaRegistry
 from persona.schema.persona import Persona
+from persona.schema.safety import SAFETY_CONSTRAINT, ensure_safety_constraint
 from persona.stores import (
     EpisodicStore,
     IdentityStore,
@@ -98,6 +99,38 @@ def load_persona_from_yaml(yaml_str: str, *, persona_id: str, owner_id: str) -> 
     return Persona.model_validate(raw)  # ValidationError → 422
 
 
+def _guard_safety(persona: Persona, yaml_str: str) -> tuple[Persona, str]:
+    """Guarantee the mandatory safety constraint on the persona AND the stored YAML.
+
+    Spec 36, D-36-safety-server: direct-create posts a structured YAML with no
+    model in the loop, so the drafter prompt's instruction to include the safety
+    constraint cannot be relied on. This is the enforcement floor for *every*
+    create/update path. The constraint must end up in the **stored** YAML — the
+    runtime re-loads the persona from it, so guarding only the in-memory object
+    would leave the persona unsafe on its next load.
+
+    Idempotent + churn-free: when the constraint is already present (every
+    prebuilt starter and drafter output), the original ``yaml_str`` is returned
+    unchanged. Only a submission that stripped the constraint is re-dumped — and
+    only then does the stored representation change — re-injecting it as the
+    first constraint of the original mapping (authored shape preserved).
+    """
+    guarded = ensure_safety_constraint(persona)
+    if guarded is persona:
+        return persona, yaml_str
+    raw = yaml.safe_load(yaml_str)
+    identity = raw.setdefault("identity", {})
+    existing = identity.get("constraints") or []
+    identity["constraints"] = [SAFETY_CONSTRAINT, *existing]
+    guarded_yaml = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    _LOG.warning(
+        "re-asserted the mandatory safety constraint on a persona that omitted it "
+        "(persona_id={pid})",
+        pid=persona.persona_id or "",
+    )
+    return guarded, guarded_yaml
+
+
 def _build_registry(engine: Engine, embedder: Embedder, audit_root: Path) -> PersonaRegistry:
     """Compose the four typed stores over PostgresBackend (RLS-scoped engine)."""
     backend = PostgresBackend(engine=engine, embedder=embedder)
@@ -134,6 +167,7 @@ def create_persona(
     """
     persona_id = f"persona_{uuid.uuid4().hex}"
     persona = load_persona_from_yaml(yaml_str, persona_id=persona_id, owner_id=owner_id)
+    persona, yaml_str = _guard_safety(persona, yaml_str)
     _warn_if_language_unserviceable(persona)
 
     with rls_engine.begin() as conn:
@@ -168,6 +202,7 @@ def update_persona(
     a PATCH semantics for the presentation field).
     """
     persona = load_persona_from_yaml(yaml_str, persona_id=persona_id, owner_id=owner_id)
+    persona, yaml_str = _guard_safety(persona, yaml_str)
     _warn_if_language_unserviceable(persona)
     values: dict[str, object] = {"yaml": yaml_str, "schema_version": persona.schema_version}
     if avatar_url is not None:

@@ -9,11 +9,21 @@
 import { describe, expect, it } from "vitest";
 import {
   ACCENT_OKLCH,
+  type EpistemicStatus,
   PERSONA_EXAMPLE_CATEGORIES,
   PERSONA_EXAMPLES_BY_ID,
+  SKILL_PALETTE,
+  WIRABLE_TOOLS,
 } from "./persona-examples";
+import { SAFETY_CONSTRAINT } from "./persona-safety";
 
 const ALL_EXAMPLES = PERSONA_EXAMPLE_CATEGORIES.flatMap((c) => c.examples);
+const EPISTEMIC: ReadonlySet<EpistemicStatus> = new Set([
+  "fact",
+  "belief",
+  "hypothesis",
+  "contested",
+]);
 
 describe("persona-examples dataset", () => {
   it("has six categories, each with four examples (24 total)", () => {
@@ -58,10 +68,22 @@ describe("persona-examples dataset", () => {
   });
 
   it("contains no em-dash or en-dash in any visible string", () => {
-    // House design rule: hyphen only, never — or –.
+    // House design rule: hyphen only, never — or –. Covers card chrome AND the
+    // structured prose that ships into the persona (background, constraints,
+    // self_facts, worldview) — all of it is user-visible.
     for (const example of ALL_EXAMPLES) {
-      const visible = `${example.name} ${example.role} ${example.hook} ${example.seed}`;
-      expect(visible).not.toMatch(/[—–]/);
+      const s = example.structure;
+      const visible = [
+        example.name,
+        example.role,
+        example.hook,
+        example.seed,
+        s.identity.background,
+        ...s.identity.constraints,
+        ...s.self_facts.map((f) => f.fact),
+        ...s.worldview.map((w) => w.claim),
+      ].join(" ");
+      expect(visible, example.id).not.toMatch(/[—–]/);
     }
   });
 
@@ -107,6 +129,126 @@ describe("persona-examples dataset", () => {
       expect(corpus, `no example exercises capability: ${family}`).toMatch(
         pattern,
       );
+    }
+  });
+});
+
+describe("prebuilt structured starters (direct-create roster)", () => {
+  it("gives every starter a complete, well-formed structure", () => {
+    for (const { id, structure: s } of ALL_EXAMPLES) {
+      expect(s.schema_version, id).toBe("1.0");
+      expect(s.identity.name.trim().length, id).toBeGreaterThan(0);
+      expect(s.identity.role.trim().length, id).toBeGreaterThan(0);
+      // background is REQUIRED + non-empty in the v1 schema, and is the flagship
+      // prose — assert it is substantial, not a one-liner.
+      expect(s.identity.background.trim().length, id).toBeGreaterThan(120);
+      expect(s.identity.language_default.trim().length, id).toBeGreaterThan(0);
+      expect(s.routing.intelligent.enabled, id).toBe(true);
+    }
+  });
+
+  it("leads every starter's constraints with the verbatim safety constraint", () => {
+    // D-36-safety: the dataset mirror of the create-boundary guard.
+    for (const { id, structure: s } of ALL_EXAMPLES) {
+      expect(s.identity.constraints[0], id).toBe(SAFETY_CONSTRAINT);
+      // and never duplicated.
+      expect(
+        s.identity.constraints.filter((c) => c === SAFETY_CONSTRAINT).length,
+        id,
+      ).toBe(1);
+    }
+  });
+
+  it("wires ONLY real, shipped capabilities (the honesty rule)", () => {
+    // Every tool/mcp + skill must be a live-catalog member; a faked phase-3
+    // capability or a typo fails CI (D-36-honesty-rule).
+    for (const { id, structure: s } of ALL_EXAMPLES) {
+      for (const tool of s.tools) {
+        expect(WIRABLE_TOOLS, `${id} wires unknown tool ${tool}`).toContain(
+          tool,
+        );
+      }
+      for (const skill of s.skills) {
+        expect(SKILL_PALETTE, `${id} wires unknown skill ${skill}`).toContain(
+          skill,
+        );
+      }
+    }
+  });
+
+  it("never wires the SSRF-risk mcp:fetch server", () => {
+    for (const { id, structure: s } of ALL_EXAMPLES) {
+      expect(s.tools, id).not.toContain("mcp:fetch");
+    }
+  });
+
+  it("validates self_facts and worldview field bounds", () => {
+    for (const { id, structure: s } of ALL_EXAMPLES) {
+      for (const f of s.self_facts) {
+        expect(f.fact.trim().length, id).toBeGreaterThan(0);
+        expect(f.confidence, id).toBeGreaterThanOrEqual(0);
+        expect(f.confidence, id).toBeLessThanOrEqual(1);
+      }
+      for (const w of s.worldview) {
+        expect(w.claim.trim().length, id).toBeGreaterThan(0);
+        expect(EPISTEMIC.has(w.epistemic), `${id} ${w.epistemic}`).toBe(true);
+        expect(w.confidence, id).toBeGreaterThanOrEqual(0);
+        expect(w.confidence, id).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("keeps seed and structure coherent (one canonical cast)", () => {
+    // D-36-seed-field: the drafter seed and the structured starter are the same
+    // identity, never a divergent second cast.
+    for (const { id, name, role, structure: s } of ALL_EXAMPLES) {
+      expect(s.identity.name, id).toBe(name);
+      expect(s.identity.role, id).toBe(role);
+    }
+  });
+
+  it("bakes NO premade voice or visual_style (generate-on-create governs)", () => {
+    // D-36-X-asset-strategy: avatar + voice are generated on create from the
+    // EDITED identity (the shipped async enrichment), so a starter must not pin
+    // a premade asset that would mismatch edits. No premade in v1.
+    for (const { id, structure: s } of ALL_EXAMPLES) {
+      const identity = s.identity as Record<string, unknown>;
+      expect(identity.voice, id).toBeUndefined();
+      expect(identity.visual_style, id).toBeUndefined();
+    }
+  });
+
+  it("positions every starter with an aspirational roadmap clause", () => {
+    // Criterion 8: each starter conveys phase-3 ambition — as PROSE only, never
+    // as wired capability (D-36-roadmap-signalling).
+    for (const { id, structure: s } of ALL_EXAMPLES) {
+      expect(s.identity.background, id).toContain("Roadmap:");
+    }
+  });
+
+  it("collectively wires a broad spread of real capability families", () => {
+    // The roster's WIRING (not just its prose) must exercise the platform's
+    // breadth — proof the showcase is real, not narrated.
+    const wiredTools = new Set(ALL_EXAMPLES.flatMap((e) => e.structure.tools));
+    const wiredSkills = new Set(
+      ALL_EXAMPLES.flatMap((e) => e.structure.skills),
+    );
+    for (const tool of [
+      "web_search",
+      "code_execution",
+      "render_diagram",
+      "generate_image",
+      "currency_convert",
+      "text_diff",
+      "file_write",
+      "mcp:github",
+      "mcp:weather",
+      "mcp:time",
+    ]) {
+      expect(wiredTools, `no starter wires ${tool}`).toContain(tool);
+    }
+    for (const skill of SKILL_PALETTE) {
+      expect(wiredSkills, `no starter wires skill ${skill}`).toContain(skill);
     }
   });
 });

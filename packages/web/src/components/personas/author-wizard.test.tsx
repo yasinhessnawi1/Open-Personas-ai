@@ -1,39 +1,69 @@
 /**
- * AuthorWizard — describe-phase layout order.
+ * AuthorWizard — the Spec 36 new-persona flow.
  *
- * The describe phase leads with the free-text "describe your own" path (the
- * textarea + Generate button) and shows the example gallery BELOW it, framed as
- * "or start from an example". This test pins that DOM order so the reorder
- * cannot silently regress, and re-checks the seed → textarea handoff still works.
+ * Three create paths converge on the shared editor + one direct-create assembly:
+ *   1. pick a prebuilt starter → editable structured draft (no `/author` call);
+ *   2. start from scratch → empty structured draft;
+ *   3. describe your own → the drafter.
+ * The gallery now LEADS (starters are primary) and picking a card opens the
+ * editor directly rather than seeding the describe textarea.
  *
- * The wizard's API seam (useAuthor) and the createPersona server action are
- * mocked so the describe phase renders without a Clerk provider or a network
- * call — no Generate is triggered here, so neither mock is invoked.
+ * `PersonaEditor` is mocked (its form ⇄ YAML internals have their own tests); we
+ * capture its props to assert the wizard hands it the right draft + wiring, and
+ * drive its `onSave` to prove the direct-create assembly reaches `createPersona`
+ * with the safety constraint intact. `useAuthor` + `createPersona` are mocked so
+ * no Clerk provider or network is needed.
  */
 
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "@/i18n/messages/en.json";
 import { PERSONA_EXAMPLE_CATEGORIES } from "@/lib/persona-examples";
+import { SAFETY_CONSTRAINT } from "@/lib/persona-safety";
 import { AuthorWizard } from "./author-wizard";
 
-// jsdom has no scrollIntoView; the wizard calls it to reveal the seeded textarea
-// after a pick. Stub it so the handoff path runs without an unhandled error.
-beforeAll(() => {
-  Element.prototype.scrollIntoView = vi.fn();
-});
+const author = vi.fn(async () => ({ yaml: "", questions: [] }));
+const createPersona = vi.fn(
+  async (_yaml: string): Promise<{ error: string } | undefined> => undefined,
+);
 
-// vitest hoists vi.mock above the imports.
+// Capture the props the wizard hands the editor + expose a save trigger.
+const captured: { props: Record<string, unknown> | null } = { props: null };
+
 vi.mock("@/lib/hooks/use-author", () => ({
-  useAuthor: () => ({
-    author: vi.fn(async () => ({ yaml: "", questions: [] })),
-    refine: vi.fn(async () => ({ yaml: "", questions: [] })),
-  }),
+  useAuthor: () => ({ author, refine: vi.fn() }),
 }));
 vi.mock("@/lib/persona-actions", () => ({
-  createPersona: vi.fn(async () => undefined),
+  createPersona: (yaml: string) => createPersona(yaml),
 }));
+vi.mock("./persona-editor", () => ({
+  PersonaEditor: (props: Record<string, unknown>) => {
+    captured.props = props;
+    return (
+      <div data-slot="mock-editor">
+        <button
+          type="button"
+          data-slot="mock-save"
+          onClick={async () => {
+            const { docToYaml } = await import("@/lib/persona-draft");
+            await (props.onSave as (y: string) => Promise<unknown>)(
+              docToYaml(props.initialDoc as Record<string, unknown>),
+            );
+          }}
+        >
+          save
+        </button>
+      </div>
+    );
+  },
+}));
+
+beforeEach(() => {
+  author.mockClear();
+  createPersona.mockClear();
+  captured.props = null;
+});
 
 function renderWizard() {
   return render(
@@ -43,55 +73,101 @@ function renderWizard() {
   );
 }
 
-/** Query an element by data-slot, asserting it exists (narrows away null). */
 function bySlot(container: HTMLElement, slot: string): Element {
   const el = container.querySelector(`[data-slot="${slot}"]`);
   expect(el, `missing [data-slot="${slot}"]`).not.toBeNull();
   return el as Element;
 }
 
-/** True when `b` follows `a` in document order. */
 function isBefore(a: Element, b: Element): boolean {
   return Boolean(
     a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
   );
 }
 
-describe("AuthorWizard — describe-phase order", () => {
-  it("renders the describe-your-own path ABOVE the example gallery", () => {
-    const { container } = renderWizard();
+const firstStarter = PERSONA_EXAMPLE_CATEGORIES[0].examples[0];
 
-    const textarea = bySlot(container, "author-wizard-description");
+describe("AuthorWizard — describe-phase layout", () => {
+  it("LEADS with the starter gallery, above describe-your-own", () => {
+    const { container } = renderWizard();
     const gallery = bySlot(container, "example-gallery");
-
-    // The describe-your-own textarea precedes the gallery in document order.
-    expect(isBefore(textarea, gallery)).toBe(true);
-  });
-
-  it("places the textarea and Generate button before the first gallery card", () => {
-    const { container } = renderWizard();
-
     const textarea = bySlot(container, "author-wizard-description");
-    const generate = bySlot(container, "author-wizard-generate");
-    const firstCard = bySlot(container, "example-card");
-
-    expect(isBefore(textarea, firstCard)).toBe(true);
-    expect(isBefore(generate, firstCard)).toBe(true);
+    // Spec 36: starters are the primary path now — gallery precedes the textarea.
+    expect(isBefore(gallery, textarea)).toBe(true);
   });
 
-  it("seeds the textarea when an example card is picked (handoff intact)", () => {
-    const { container, getByLabelText } = renderWizard();
+  it("offers a start-from-scratch path", () => {
+    const { container } = renderWizard();
+    expect(bySlot(container, "author-wizard-scratch")).toBeTruthy();
+  });
+});
 
-    const target = PERSONA_EXAMPLE_CATEGORIES[0].examples[0];
+describe("AuthorWizard — prebuilt starter (direct create)", () => {
+  it("opens the editor directly on the structured starter, NOT the textarea", () => {
+    const { container, getByLabelText } = renderWizard();
     const label = messages.author.gallery.useNamed.replace(
       "{name}",
-      target.name,
+      firstStarter.name,
     );
     fireEvent.click(getByLabelText(label));
 
-    const textarea = container.querySelector<HTMLTextAreaElement>(
-      '[data-slot="author-wizard-description"]',
+    // The editor is shown; the describe textarea is gone (no drafter seeding).
+    expect(bySlot(container, "mock-editor")).toBeTruthy();
+    expect(
+      container.querySelector('[data-slot="author-wizard-description"]'),
+    ).toBeNull();
+
+    // The editor received the starter's structure, no refinement seam (direct).
+    const doc = captured.props?.initialDoc as {
+      identity: { name: string; constraints: string[] };
+    };
+    expect(doc.identity.name).toBe(firstStarter.name);
+    expect(captured.props?.refinement).toBeUndefined();
+    // The safety constraint is present + first (pinned).
+    expect(doc.identity.constraints[0]).toBe(SAFETY_CONSTRAINT);
+  });
+
+  it("creates directly: onSave assembles guarded YAML and calls createPersona", async () => {
+    const { getByLabelText, container } = renderWizard();
+    fireEvent.click(
+      getByLabelText(
+        messages.author.gallery.useNamed.replace("{name}", firstStarter.name),
+      ),
     );
-    expect(textarea?.value).toBe(target.seed);
+    fireEvent.click(bySlot(container, "mock-save"));
+
+    await waitFor(() => expect(createPersona).toHaveBeenCalledTimes(1));
+    const yaml = createPersona.mock.calls[0][0] as string;
+    expect(yaml).toContain(SAFETY_CONSTRAINT);
+    // Direct create never invokes the drafter.
+    expect(author).not.toHaveBeenCalled();
+  });
+});
+
+describe("AuthorWizard — start from scratch", () => {
+  it("opens an empty editable draft with the safety constraint pinned", () => {
+    const { container } = renderWizard();
+    fireEvent.click(bySlot(container, "author-wizard-scratch"));
+    expect(bySlot(container, "mock-editor")).toBeTruthy();
+    const doc = captured.props?.initialDoc as {
+      identity: { constraints: string[] };
+    };
+    expect(doc.identity.constraints[0]).toBe(SAFETY_CONSTRAINT);
+    expect(author).not.toHaveBeenCalled();
+  });
+});
+
+describe("AuthorWizard — describe your own (drafter preserved)", () => {
+  it("still calls the drafter on Generate", async () => {
+    const { container } = renderWizard();
+    const textarea = bySlot(
+      container,
+      "author-wizard-description",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: { value: "a tenancy law assistant" },
+    });
+    fireEvent.click(bySlot(container, "author-wizard-generate"));
+    await waitFor(() => expect(author).toHaveBeenCalledTimes(1));
   });
 });

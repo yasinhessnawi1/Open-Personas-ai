@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, X } from "lucide-react";
+import { Plus, ShieldCheck, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,6 +20,7 @@ import {
   writeStringList,
   writeWorldview,
 } from "@/lib/persona-draft";
+import { SAFETY_CONSTRAINT } from "@/lib/persona-safety";
 import { cn } from "@/lib/utils";
 import { voiceLanguageWarning } from "@/lib/voice/language-support";
 import { CollapsibleSection } from "./collapsible-section";
@@ -126,6 +127,11 @@ export function PersonaForm({
             items={identity.constraints}
             placeholder={t("constraintPlaceholder")}
             addLabel={t("addConstraint")}
+            // The mandatory safety constraint is pinned: read-only, not
+            // removable (Spec 36, D-36-safety-ux). The server re-asserts it
+            // regardless; this stops a user editing it away in the form.
+            lockedItem={SAFETY_CONSTRAINT}
+            lockedLabel={t("safetyConstraintLocked")}
             onChange={(list) =>
               onChange(writeIdentityField(doc, "constraints", list))
             }
@@ -501,31 +507,59 @@ function ListEditor({
   placeholder,
   addLabel,
   onChange,
+  lockedItem,
+  lockedLabel,
 }: {
   items: string[];
   placeholder: string;
   addLabel: string;
   onChange: (list: string[]) => void;
+  /** An item that renders read-only + non-removable (e.g. the safety constraint). */
+  lockedItem?: string;
+  /** Accessible label for the lock indicator on a locked row. */
+  lockedLabel?: string;
 }) {
   return (
     <div className="flex flex-col gap-2">
-      {items.map((item, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
-        <div key={i} className="flex items-center gap-2">
-          <Input
-            value={item}
-            placeholder={placeholder}
-            className="flex-1"
-            onChange={(e) =>
-              onChange(items.map((x, j) => (j === i ? e.target.value : x)))
-            }
-          />
-          <RemoveButton
-            label="remove"
-            onClick={() => onChange(items.filter((_, j) => j !== i))}
-          />
-        </div>
-      ))}
+      {items.map((item, i) => {
+        const locked = lockedItem !== undefined && item === lockedItem;
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
+          <div key={i} className="flex items-center gap-2">
+            <Input
+              value={item}
+              placeholder={placeholder}
+              className="flex-1"
+              readOnly={locked}
+              aria-readonly={locked || undefined}
+              data-locked={locked || undefined}
+              onChange={
+                locked
+                  ? undefined
+                  : (e) =>
+                      onChange(
+                        items.map((x, j) => (j === i ? e.target.value : x)),
+                      )
+              }
+            />
+            {locked ? (
+              <span
+                role="img"
+                className="grid size-8 shrink-0 place-items-center text-muted-foreground"
+                title={lockedLabel}
+                aria-label={lockedLabel}
+              >
+                <ShieldCheck className="size-4 text-primary" />
+              </span>
+            ) : (
+              <RemoveButton
+                label="remove"
+                onClick={() => onChange(items.filter((_, j) => j !== i))}
+              />
+            )}
+          </div>
+        );
+      })}
       <AddButton label={addLabel} onClick={() => onChange([...items, ""])} />
     </div>
   );

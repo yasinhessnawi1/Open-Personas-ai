@@ -33,11 +33,13 @@ from persona.schema.persona import (
     VoiceSpec,
     WorldviewClaim,
 )
+from persona.schema.safety import SAFETY_CONSTRAINT, ensure_safety_constraint
 from persona.schema.skills import SkillSpec
 from persona.schema.tools import Tool, ToolCall, ToolResult
 
 __all__ = [
     "CHUNK_ID_INDEX_WIDTH",
+    "SAFETY_CONSTRAINT",
     "SUPPORTED_SCHEMA_VERSIONS",
     "CatalogueVoice",
     "ChunkProvenance",
@@ -61,5 +63,6 @@ __all__ = [
     "VoiceSpec",
     "WorldviewClaim",
     "WriteSource",
+    "ensure_safety_constraint",
     "make_chunk_id",
 ]

@@ -11,6 +11,26 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Prebuilt Personas — editable starters, no authoring required (code-complete 2026-06-18)
+
+> The new-persona screen now leads with a curated row of **flagship, fully-structured
+> starter personas**. Pick one, edit every field in place, and create it **directly** —
+> the edited structure posts straight to `POST /v1/personas` with **no LLM authoring
+> call and no minutes-long wait** (~1–3s). Avatar + voice are the only generated
+> assets, produced on-create by the existing async enrichment so they **follow your
+> edits**. The "describe your own" drafter, "start from scratch", and "Edit YAML" paths
+> all remain. **No new create endpoint; no API-contract change.**
+
+#### Added
+- **24 flagship structured starters** (`persona-examples.ts`) across six categories — each a complete v1.0 persona (identity / self_facts / worldview / constraints + real `tools`/`skills`/MCP wiring). Backgrounds are capability-forward and reference roadmap ambitions (autonomy, proactive messaging, the knowledge graph) **as prose only** — never as functional wiring. A dataset-integrity test imports the live capability palettes so a faked capability fails CI.
+- **Direct-create flow** — picking a starter (or "start from scratch") opens the shared `PersonaEditor` on the structured draft and creates it with no `/author` call. The drafter "describe your own" path is preserved as the secondary option.
+- **Client-side schema validation** (`personaDocSchema`, zod) — the edited structure is validated against the v1 schema before submit, surfacing field-scoped errors; the server 422 remains the final authority.
+- **Mandatory safety constraint, enforced everywhere** — a single shared `SAFETY_CONSTRAINT` (Python source of truth in `persona-core`, mirrored once in web with a byte-match drift-guard test). It is pinned non-removable in the editor, re-asserted client-side at assembly, and — the floor — re-asserted **server-side at the create service boundary** (`ensure_safety_constraint`) on every create/update path, including the stored YAML the runtime reloads from. A persona can no longer be created or updated without it.
+
+#### Changed
+- **The new-persona screen leads with the starter gallery** (primary), with "describe your own" and "start from scratch" below it. Picking a starter now opens the editable draft directly instead of seeding the drafter textarea.
+- **`persona-examples.ts` is now the single canonical roster** — the starter `seed` (drafter input) is derived from and coherence-tested against each starter's structured identity; no divergent second example set.
+
 ### Open-Core Editions — community / cloud + per-package relicense (code-complete 2026-06-18)
 
 > The monorepo becomes a clean open-core project: an **MIT engine**

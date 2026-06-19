@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import yaml
 from persona.schema.persona import Persona
+from persona.schema.safety import SAFETY_CONSTRAINT
 from persona_api.services.authoring_prompt import (
     AUTHORING_PROMPT_VERSION,
     EXAMPLE_COMPLEX_YAML,
@@ -47,6 +48,22 @@ def test_naming_instruction_forbids_few_shot_and_placeholder_names() -> None:
         assert placeholder in system
     # the language-fit instruction is present
     assert "language_default" in system
+
+
+def test_prompt_carries_the_shared_safety_constraint_verbatim() -> None:
+    # D-36-safety-constant: the prompt interpolates the single SAFETY_CONSTRAINT
+    # source of truth rather than a hand-copied literal — guards drift between
+    # the instruction and the enforcement floor.
+    system = build_authoring_prompt("a cooking assistant", _TOOLS, _SKILLS)[0].content
+    assert SAFETY_CONSTRAINT in system
+
+
+def test_few_shot_examples_lead_with_the_safety_constraint() -> None:
+    # The two few-shots model the constraint as the FIRST constraint; if either
+    # drifts, the cross-model compliance lever stops teaching it.
+    for example in (EXAMPLE_SIMPLE_YAML, EXAMPLE_COMPLEX_YAML):
+        constraints = yaml.safe_load(example)["identity"]["constraints"]
+        assert constraints[0] == SAFETY_CONSTRAINT
 
 
 def test_build_authoring_prompt_injects_tools_and_skills() -> None:

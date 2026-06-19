@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from persona.schema.conversation import ConversationMessage
+from persona.schema.safety import SAFETY_CONSTRAINT
 
 __all__ = [
     "AUTHORING_PROMPT_VERSION",
@@ -207,7 +208,7 @@ different descriptions must not yield the same name.
 4. constraints: 3-5 constraints a RESPONSIBLE version of this persona follows.
    ALWAYS include, VERBATIM and IN ENGLISH, as the FIRST constraint — even when
    the persona speaks another language — this exact sentence:
-   "Do not fabricate information; say when you don't know."
+   "{SAFETY_CONSTRAINT}"
    Then add domain-specific constraints (e.g. "Do not give binding legal advice"
    for a legal assistant, "Do not diagnose medical conditions" for a health
    assistant); these MAY be in the persona's language. This safety rule is

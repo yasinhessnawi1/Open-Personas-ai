@@ -1,8 +1,8 @@
 "use client";
 
-import { Wand2 } from "lucide-react";
+import { Sparkles, Wand2 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Stack } from "@/components/layout";
 import { SkeletonLine } from "@/components/patterns/loading";
 import { buttonVariants } from "@/components/ui/button";
@@ -12,8 +12,15 @@ import type { AuthoringDraft } from "@/lib/api";
 import { ApiError } from "@/lib/api/client";
 import { useAuthor } from "@/lib/hooks/use-author";
 import { createPersona } from "@/lib/persona-actions";
-import { type PersonaDoc, yamlToDoc } from "@/lib/persona-draft";
+import {
+  docToYaml,
+  emptyPersonaDoc,
+  type PersonaDoc,
+  yamlToDoc,
+} from "@/lib/persona-draft";
 import type { PersonaExample } from "@/lib/persona-examples";
+import { ensureSafetyConstraint } from "@/lib/persona-safety";
+import { validatePersonaDoc } from "@/lib/persona-schema";
 import { cn } from "@/lib/utils";
 import { ExampleGallery } from "./example-gallery";
 import { PersonaEditor } from "./persona-editor";
@@ -28,29 +35,26 @@ type Phase = "describe" | "loading" | "creating" | "review";
 const MAX_REFINE_ROUNDS = 3;
 
 /**
- * Spec F2 T29 — AuthorWizard (rebuilt presentation).
+ * AuthorWizard — the new-persona flow (Spec 36 + Spec F2 T29 presentation).
+ *
+ * THREE create paths, all converging on the shared `PersonaEditor` + a single
+ * direct-create assembly:
+ *   1. PREBUILT STARTER (primary, Spec 36) — pick a flagship starter → its
+ *      structured draft opens in the editor → Create posts it DIRECTLY to
+ *      `POST /v1/personas` with NO `/author` LLM call (instant).
+ *   2. START FROM SCRATCH — an empty structured draft opens in the editor.
+ *   3. DESCRIBE YOUR OWN (drafter) — free text → `useAuthor()` two-endpoint
+ *      flow (D-09-11 / D-10-2) → review with the clarifying-questions seam.
+ *
+ * Every path's Create runs through `handleCreate`: re-assert the safety
+ * constraint (D-36-safety-ux), validate against the v1 schema client-side
+ * (D-36-validation), then `createPersona`. The server (`_guard_safety`) remains
+ * the authoritative safety floor.
  *
  * DO NOT TOUCH (per audit.md §authoring.plumbing):
- *   - `useAuthor()` hook (D-09-11 seam, two-endpoint flow D-10-2);
- *   - `MAX_REFINE_ROUNDS = 3` (UI cap mirrors server backstop D-10-5);
- *   - `createPersona` action;
- *   - `applyDraft` / `generate` / `answerQuestion` state machine;
- *   - `ApiError.isRateLimited` check + `tRateLimited` copy (D-11-14);
- *   - `<PersonaEditor>` (form ⇄ Monaco sync D-09-9 + Monaco lazy-load D-09-8) —
- *     composed verbatim; T29 does not rewrite its internals.
- *
- * REPLACED (presentation only):
- *   - byline `font-mono text-xs tracking-wide uppercase` → `.type-caption font-mono uppercase`
- *     (resolves through F1's `--text-caption-*` tokens);
- *   - heading `font-heading text-2xl/3xl font-semibold tracking-tight` →
- *     `.type-heading` / `.type-display` (Fraunces lives in the token now);
- *   - body `text-sm text-muted-foreground` → `.type-body` / `.type-ui`;
- *   - shadcn `<Skeleton>` in `<WizardLoading>` → T21 `<SkeletonLine>`
- *     (token-resolved animation-duration via F1 `--motion-duration-*`);
- *   - hand-rolled outer `<div className="flex flex-col gap-6">` → T20 `<Stack>`;
- *   - inline error `text-sm text-destructive` → `.type-ui text-destructive` with
- *     `role="alert"` for the assertive announcement; the full T22 `<ErrorState>`
- *     is reserved for surface-level error panels, not single-line form errors.
+ *   - `useAuthor()` hook, `MAX_REFINE_ROUNDS`, `createPersona`, the
+ *     `applyDraft` / `generate` / `answerQuestion` drafter state machine,
+ *     `ApiError.isRateLimited` handling, and `<PersonaEditor>` composition.
  */
 export function AuthorWizard({
   tools,
@@ -65,32 +69,32 @@ export function AuthorWizard({
   const { author, refine } = useAuthor();
   const [description, setDescription] = useState("");
   const [phase, setPhase] = useState<Phase>("describe");
+  // `draft` is the DRAFTER output (carries clarifying questions); it is null for
+  // the prebuilt-starter and start-from-scratch paths, which need no refinement.
   const [draft, setDraft] = useState<AuthoringDraft | null>(null);
   const [doc, setDoc] = useState<PersonaDoc | null>(null);
   const [round, setRound] = useState(0);
   const [refining, setRefining] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [selectedExampleId, setSelectedExampleId] = useState<string | null>(
-    null,
-  );
-  const descriptionRef = useRef<HTMLTextAreaElement>(null);
 
-  // Picking a starter persona seeds the EXISTING describe flow: it writes the
-  // seed into the same textarea the user types into, then the user reviews and
-  // hits Generate exactly as for a hand-typed description. No API call here.
-  function selectExample(example: PersonaExample) {
-    setDescription(example.seed);
-    setSelectedExampleId(example.id);
+  // Open the editor on a structured draft directly (no drafter call). The safety
+  // constraint is re-asserted up front so the editor shows it pinned from the
+  // start (starters already carry it; scratch does not until now).
+  function openDirect(seedDoc: PersonaDoc) {
+    setDraft(null);
+    setDoc(ensureSafetyConstraint(seedDoc));
     setError(null);
-    // Bring the seeded textarea into view and focus it so the handoff is
-    // legible — the user sees their description was filled and can edit it.
-    const el = descriptionRef.current;
-    if (el) {
-      el.focus();
-      el.setSelectionRange(example.seed.length, example.seed.length);
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
+    setEditorKey((k) => k + 1);
+    setPhase("review");
+  }
+
+  function openStarter(example: PersonaExample) {
+    openDirect(example.structure as unknown as PersonaDoc);
+  }
+
+  function openScratch() {
+    openDirect(emptyPersonaDoc());
   }
 
   function applyDraft(next: AuthoringDraft): boolean {
@@ -150,17 +154,31 @@ export function AuthorWizard({
     }
   }
 
-  // Wrap createPersona so the create wait shows a dedicated loader — this is
-  // when the avatar is actually generated (Spec 29's build-time hook in POST
-  // /personas, fail-soft, up to ~25s). On success createPersona redirects; it
-  // only returns here on a validation error, which drops back to review.
+  // The single direct-create assembly, shared by all three paths (Spec 36 T2):
+  //   re-assert safety → validate against the v1 schema → POST.
+  // Validation runs BEFORE the phase flips to "creating" so a failure leaves the
+  // editor mounted (edits preserved) and surfaces inline via the editor's save
+  // error. On success `createPersona` redirects; it returns only on a server
+  // error, which drops back to the editor.
   async function handleCreate(
     yaml: string,
     _avatarUrl?: string | null,
   ): Promise<{ error: string } | undefined> {
+    let parsed: PersonaDoc;
+    try {
+      parsed = yamlToDoc(yaml);
+    } catch {
+      return { error: t("authorError") };
+    }
+    const guarded = ensureSafetyConstraint(parsed);
+    const validation = validatePersonaDoc(guarded);
+    if (!validation.ok) {
+      const fields = validation.issues.map((i) => i.path).join(", ");
+      return { error: t("createValidationFailed", { fields }) };
+    }
     setPhase("creating");
     setError(null);
-    const result = await createPersona(yaml);
+    const result = await createPersona(docToYaml(guarded));
     if (result?.error) {
       setError(result.error);
       setPhase("review");
@@ -168,16 +186,24 @@ export function AuthorWizard({
     return result;
   }
 
-  if (phase === "review" && draft && doc) {
+  if (phase === "review" && doc) {
+    // Direct-create (starter / scratch) has no drafter draft → no refinement
+    // seam and a "make it yours" framing instead of "review the draft".
+    const direct = draft === null;
     return (
       <Stack gap={6} data-slot="author-wizard-review">
         <header>
           <p className="type-caption font-mono text-muted-foreground uppercase">
-            {t("reviewByline")}
+            {direct ? t("directByline") : t("reviewByline")}
           </p>
           <h1 className="type-heading mt-1" data-slot="author-wizard-title">
-            {t("reviewTitle")}
+            {direct ? t("directTitle") : t("reviewTitle")}
           </h1>
+          {direct ? (
+            <p className="type-body mt-2 max-w-prose text-muted-foreground">
+              {t("directSubtitle")}
+            </p>
+          ) : null}
         </header>
         {error ? (
           <p className="type-ui text-destructive" role="alert">
@@ -192,13 +218,17 @@ export function AuthorWizard({
           mcpServers={mcpServers}
           onSave={handleCreate}
           saveLabel={t("save")}
-          refinement={{
-            questions: draft.questions ?? [],
-            round,
-            maxRounds: MAX_REFINE_ROUNDS,
-            refining,
-            onAnswer: (q, a, yaml) => void answerQuestion(q, a, yaml),
-          }}
+          refinement={
+            draft
+              ? {
+                  questions: draft.questions ?? [],
+                  round,
+                  maxRounds: MAX_REFINE_ROUNDS,
+                  refining,
+                  onAnswer: (q, a, yaml) => void answerQuestion(q, a, yaml),
+                }
+              : undefined
+          }
         />
       </Stack>
     );
@@ -214,8 +244,8 @@ export function AuthorWizard({
   }
 
   if (phase === "creating") {
-    // The persona is drafted; now it's being created + its identity image
-    // generated. No taking-shape skeleton here — the content already exists.
+    // The structure already exists; now it's persisting + the avatar/voice
+    // enrich asynchronously in the background (no taking-shape skeleton).
     return (
       <WizardLoading
         title={t("creatingTitle")}
@@ -232,26 +262,43 @@ export function AuthorWizard({
           {t("describeByline")}
         </p>
         <h1 className="type-display mt-1" data-slot="author-wizard-title">
-          {t("gallery.title")}
+          {t("starterTitle")}
         </h1>
         <p className="type-body mt-2 max-w-prose text-muted-foreground">
-          {t("gallery.subtitle")}
+          {t("starterSubtitle")}
         </p>
       </header>
 
-      {/* Describe-your-own leads: the free-text path is primary, the gallery
-          below it is the "or start from an example" fallback. */}
+      {/* PRIMARY: pick a prebuilt starter → edit in place → create directly. */}
+      <ExampleGallery onSelect={openStarter} />
+
+      <div className="flex justify-center">
+        <button
+          type="button"
+          onClick={openScratch}
+          className={cn(buttonVariants({ variant: "outline" }), "gap-2")}
+          data-slot="author-wizard-scratch"
+        >
+          <Sparkles className="size-4" aria-hidden="true" />
+          {t("gallery.startScratch")}
+        </button>
+      </div>
+
+      {/* SECONDARY: describe your own → the LLM drafter. */}
+      <div className="flex items-center gap-3" aria-hidden="true">
+        <span className="h-px flex-1 bg-border" />
+        <span className="type-caption font-mono text-muted-foreground uppercase">
+          {t("gallery.describeOwnLabel")}
+        </span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+
       <Stack gap={4} data-slot="author-wizard-own">
         <p className="type-body text-muted-foreground">{t("describeHint")}</p>
 
         <Textarea
-          ref={descriptionRef}
           value={description}
-          onChange={(e) => {
-            setDescription(e.target.value);
-            // Editing away from a picked seed drops the "selected" affordance.
-            if (selectedExampleId) setSelectedExampleId(null);
-          }}
+          onChange={(e) => setDescription(e.target.value)}
           rows={5}
           placeholder={t("describePlaceholder")}
           className="resize-none"
@@ -281,16 +328,6 @@ export function AuthorWizard({
           </button>
         </div>
       </Stack>
-
-      <div className="flex items-center gap-3" aria-hidden="true">
-        <span className="h-px flex-1 bg-border" />
-        <span className="type-caption font-mono text-muted-foreground uppercase">
-          {t("gallery.ownPathLabel")}
-        </span>
-        <span className="h-px flex-1 bg-border" />
-      </div>
-
-      <ExampleGallery onSelect={selectExample} selectedId={selectedExampleId} />
     </Stack>
   );
 }
