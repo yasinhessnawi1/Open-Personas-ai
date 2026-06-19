@@ -1,8 +1,8 @@
 "use client";
 
+import { Route } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   presetToWeights,
@@ -43,6 +43,7 @@ export function RoutingSection({
     <CollapsibleSection
       id="routing"
       title={t("title")}
+      icon={Route}
       headerAccessory={
         <button
           type="button"
@@ -55,16 +56,10 @@ export function RoutingSection({
               intelligentEnabled: !value.intelligentEnabled,
             })
           }
-          className={cn(
-            buttonVariants({
-              variant: value.intelligentEnabled ? "default" : "outline",
-              size: "sm",
-            }),
-          )}
+          className="v-toggle"
+          data-on={value.intelligentEnabled ? "true" : "false"}
           data-slot="routing-enable-switch"
-        >
-          {value.intelligentEnabled ? t("on") : t("off")}
-        </button>
+        />
       }
     >
       <p

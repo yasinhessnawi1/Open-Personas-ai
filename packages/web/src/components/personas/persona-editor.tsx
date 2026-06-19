@@ -1,6 +1,6 @@
 "use client";
 
-import { Code2, Save, Sparkles } from "lucide-react";
+import { Code2, Save, SlidersHorizontal, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { useCallback, useState } from "react";
@@ -240,7 +240,11 @@ export function PersonaEditor({
 
           {/* Autonomy + consent: existing-persona edit only (D-31-X-autonomy-placement). */}
           {personaId && onConsentChange ? (
-            <CollapsibleSection id="autonomy" title={t("autonomyTitle")}>
+            <CollapsibleSection
+              id="autonomy"
+              title={t("autonomyTitle")}
+              icon={SlidersHorizontal}
+            >
               <AutonomyConsentSection
                 autonomy={readAutonomy(doc)}
                 onAutonomyChange={(level) =>
@@ -281,6 +285,8 @@ export function PersonaEditor({
               id="refine"
               title={t("questionsTitle")}
               defaultOpen
+              icon={Sparkles}
+              accent="var(--primary)"
             >
               <RefineQuestions refinement={refinement} currentYaml={yamlText} />
             </CollapsibleSection>
@@ -341,22 +347,22 @@ function RefineQuestions({
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Sparkles className="size-3.5 text-primary" />
+      <p className="type-caption flex items-center gap-1.5 text-muted-foreground">
+        <Sparkles className="size-3.5 text-primary" aria-hidden />
         {t("questionsHint", { max: refinement.maxRounds })}
       </p>
-      <ul className="flex flex-col gap-3">
+      <ul className="flex flex-col gap-2.5">
         {refinement.questions.map((q, i) => {
           const answer = answers[i] ?? "";
           return (
             <li
               key={`${q.section}-${q.question}`}
-              className="flex flex-col gap-1.5"
+              className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3"
             >
-              <span className="text-sm">
-                <span className="font-mono text-xs text-muted-foreground">
+              <span className="type-body">
+                <span className="type-caption mr-1.5 rounded border border-border bg-background px-1.5 py-0.5 font-mono uppercase text-muted-foreground">
                   {q.section}
-                </span>{" "}
+                </span>
                 {q.question}
               </span>
               <div className="flex items-end gap-2">
@@ -367,7 +373,7 @@ function RefineQuestions({
                     setAnswers((a) => ({ ...a, [i]: e.target.value }))
                   }
                   placeholder={t("answerPlaceholder")}
-                  className="min-h-9 resize-none"
+                  className="min-h-9 resize-none bg-background"
                 />
                 <button
                   type="button"
@@ -375,10 +381,7 @@ function RefineQuestions({
                   onClick={() =>
                     refinement.onAnswer(q.question, answer.trim(), currentYaml)
                   }
-                  className={cn(
-                    buttonVariants({ variant: "outline" }),
-                    "shrink-0",
-                  )}
+                  className={cn(buttonVariants(), "shrink-0")}
                 >
                   {refinement.refining ? t("refining") : t("applyAnswer")}
                 </button>

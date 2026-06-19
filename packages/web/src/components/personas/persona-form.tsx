@@ -1,7 +1,8 @@
 "use client";
 
-import { Plus, ShieldCheck, X } from "lucide-react";
+import { Mic, Plus, ShieldCheck, Wrench, X } from "lucide-react";
 import { useTranslations } from "next-intl";
+import type { ComponentType } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 // Spec V6 C2 — the voice-selector contribution (F5/Spec 10 own the screen).
@@ -146,7 +147,7 @@ export function PersonaForm({
       </Section>
 
       {/* Voice — its own card (a persona's audible identity, V6 C2). */}
-      <Section id="voice" title={t("voiceTitle")}>
+      <Section id="voice" title={t("voiceTitle")} icon={Mic}>
         <Field label={t("voice")} hint={t("voiceDescription")}>
           <VoiceSelector
             value={currentVoiceId}
@@ -314,7 +315,7 @@ export function PersonaForm({
       </Section>
 
       {/* Capabilities: tools + skills + MCP as one set (spec 30 T11) */}
-      <Section id="capabilities" title={t("capabilitiesTitle")}>
+      <Section id="capabilities" title={t("capabilitiesTitle")} icon={Wrench}>
         <p
           className={cn(
             "text-xs",
@@ -459,6 +460,7 @@ function Section({
   defaultOpen,
   badge,
   accent,
+  icon,
   children,
 }: {
   id: string;
@@ -466,6 +468,7 @@ function Section({
   defaultOpen?: boolean;
   badge?: string;
   accent?: string;
+  icon?: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   children: React.ReactNode;
 }) {
   return (
@@ -475,6 +478,7 @@ function Section({
       defaultOpen={defaultOpen}
       badge={badge}
       accent={accent}
+      icon={icon}
     >
       {children}
     </CollapsibleSection>

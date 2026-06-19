@@ -3,6 +3,7 @@
 import { ChevronDown } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
+  type ComponentType,
   createContext,
   type ReactNode,
   useCallback,
@@ -113,6 +114,7 @@ export function CollapsibleSection({
   headerAccessory,
   badge,
   accent,
+  icon,
   children,
 }: {
   id: string;
@@ -128,16 +130,23 @@ export function CollapsibleSection({
   badge?: string;
   /** CSS colour (a `var(--store-*)` token) for the badge + a left accent rule. */
   accent?: string;
+  /**
+   * Spec 35: a lucide glyph for a CONFIG section (voice / capabilities /
+   * routing / autonomy) — rendered in a neutral square so every section reads
+   * as a badged card, visually distinct from the vivid typed-memory stores.
+   */
+  icon?: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   children: ReactNode;
 }) {
   const t = useTranslations("author");
   const { open, setOpen } = useCollapsible(id, title, defaultOpen);
   const bodyId = useId();
+  const Icon = icon;
 
   return (
     <Card
       id={id}
-      className="scroll-mt-20 gap-0 p-0"
+      className="scroll-mt-20 gap-0 overflow-hidden p-0"
       style={
         accent ? { borderLeftColor: accent, borderLeftWidth: "2px" } : undefined
       }
@@ -153,6 +162,17 @@ export function CollapsibleSection({
           >
             {badge}
           </span>
+        ) : Icon ? (
+          <span
+            className={cn(
+              "grid size-9 shrink-0 place-items-center rounded-md",
+              accent ? "text-white" : "bg-muted text-muted-foreground",
+            )}
+            style={accent ? { background: accent } : undefined}
+            aria-hidden="true"
+          >
+            <Icon className="size-4" />
+          </span>
         ) : null}
         <button
           type="button"
@@ -162,7 +182,7 @@ export function CollapsibleSection({
           className="-m-1 flex flex-1 items-center justify-between gap-3 rounded p-1 text-left"
           data-slot="collapsible-trigger"
         >
-          <h2 className="font-heading text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+          <h2 className="font-heading text-sm font-semibold tracking-wide text-foreground uppercase">
             {title}
           </h2>
           <ChevronDown
