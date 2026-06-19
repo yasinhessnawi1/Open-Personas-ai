@@ -1,36 +1,33 @@
 "use client";
 
-import { ArrowRight, Quote } from "lucide-react";
 import { useTranslations } from "next-intl";
 import type { CSSProperties } from "react";
 import { Stack } from "@/components/layout";
+import { PersonaAvatar } from "@/components/persona/persona-avatar";
 import {
   ACCENT_OKLCH,
   PERSONA_EXAMPLE_CATEGORIES,
   type PersonaExample,
   type PersonaExampleCategory,
 } from "@/lib/persona-examples";
+import { derivePersonaIdentityColor } from "@/lib/persona-identity";
 import { cn } from "@/lib/utils";
 
 /**
- * Starter-persona gallery for the new-persona page.
+ * Starter-persona gallery for the new-persona page (Spec 36 design match).
  *
- * Replaces the prior three-line `example1..3` list. Picking a card hands its
- * `seed` to `onSelect` — the AuthorWizard writes it into the describe textarea,
- * so the existing author → review → create flow is untouched. This component is
- * presentation + a single callback; it never calls the API.
+ * Each card matches the design prototype's `.starter`: a per-persona
+ * identity-coloured avatar (initials in Fraunces) + name + truncated role, in a
+ * compact auto-fill grid — not the old editorial card. Picking one hands the
+ * full example to `onSelect`; the wizard opens it as an editable structured
+ * draft for direct create. This component is presentation + one callback; it
+ * never calls the API.
  *
- * Design (editorial-instrument, D-09-7): warm paper cards on the warm-paper
- * canvas, a per-category accent rail keyed to the four typed-memory store hues
- * (identity·teal / self_facts·green / worldview·indigo / episodic·rose) plus the
- * vermilion core. Calm motion only (staggered fade on load, token-resolved hover
- * lift); the global reduced-motion path (globals.css) zeroes durations.
- *
- * Color discipline (no-literals gate, D-F2-6): accent hues are pre-composed into
- * full OKLCH strings in JS and applied as inline `--accent` / `--accent-soft` /
- * `--accent-faint` custom properties. Class names reference them via
- * `bg-[var(--accent)]` etc. — `var(` does NOT trip the gate's color-literal
- * regex, and no `oklch(` literal appears in any class string.
+ * Colour discipline (no-literals gate, D-F2-6): the per-category accent rail
+ * uses pre-composed `--accent*` custom properties; each card's avatar + hover/
+ * selected ring use the persona's derived identity colour exposed as an inline
+ * `--v-id` custom property (mirrors the design). Class names reference both via
+ * `var(--…)`, which does not trip the colour-literal regex.
  */
 
 const CATEGORY_LABEL_KEY: Record<PersonaExampleCategory["id"], string> = {
@@ -43,15 +40,13 @@ const CATEGORY_LABEL_KEY: Record<PersonaExampleCategory["id"], string> = {
 };
 
 /**
- * Pre-composed accent custom properties for a category. Three strengths cover
- * the rail/solid (`--accent`), the icon wash (`--accent-faint`, 12% alpha), and
- * the hover ring (`--accent-soft`, 40% alpha).
+ * Pre-composed accent custom properties for a category rail. `--accent` is the
+ * solid rail; `--accent-faint` (12% alpha) backs the heading dot.
  */
 function accentStyle(accent: PersonaExampleCategory["accent"]): CSSProperties {
   const { h, c, l } = ACCENT_OKLCH[accent];
   return {
     "--accent": `oklch(${l} ${c} ${h})`,
-    "--accent-soft": `oklch(${l} ${c} ${h} / 0.4)`,
     "--accent-faint": `oklch(${l} ${c} ${h} / 0.12)`,
   } as CSSProperties;
 }
@@ -108,7 +103,7 @@ function CategorySection({
     <div
       data-slot="example-category"
       style={accentStyle(category.accent)}
-      className="flex flex-col gap-4"
+      className="flex flex-col gap-3"
     >
       <div className="flex items-center gap-3">
         <span
@@ -117,7 +112,7 @@ function CategorySection({
         />
         <h2 className="type-heading">{label}</h2>
       </div>
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {category.examples.map((example, exampleIndex) => (
           <li key={example.id}>
             <ExampleCard
@@ -151,6 +146,9 @@ function ExampleCard({
   index: number;
   onSelect: (example: PersonaExample) => void;
 }) {
+  // Per-persona identity colour (matches the design's `--v-id`), used for the
+  // avatar fill (via PersonaAvatar, same derivation) + the hover/selected ring.
+  const idColor = derivePersonaIdentityColor({ id: example.id }).oklch;
   return (
     <button
       type="button"
@@ -158,52 +156,38 @@ function ExampleCard({
       data-slot="example-card"
       data-selected={isSelected ? "true" : undefined}
       aria-label={useNamed(example.name)}
-      // animation-delay is a motion knob, not a design color/size literal; the
-      // global reduced-motion path zeroes animation duration so it stays inert.
-      style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+      style={
+        {
+          "--v-id": idColor,
+          // animation-delay is a motion knob, not a colour/size literal; the
+          // global reduced-motion path zeroes the duration so it stays inert.
+          animationDelay: `${Math.min(index, 8) * 40}ms`,
+        } as CSSProperties
+      }
       className={cn(
-        "motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 group/example flex h-full w-full flex-col gap-3 rounded-xl bg-card p-4 text-left ring-1 ring-foreground/10 outline-none transition-[transform,box-shadow,border-color] duration-[var(--motion-duration-normal)] ease-[var(--motion-ease-emphasized)] motion-safe:animate-in",
-        "hover:-translate-y-0.5 hover:shadow-[var(--elevation-2)] hover:ring-[var(--accent-soft)]",
-        "focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        "data-[selected=true]:ring-2 data-[selected=true]:ring-[var(--accent)]",
+        "motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 group/example flex w-full items-center gap-3 rounded-xl bg-card p-3.5 text-left ring-1 ring-foreground/10 outline-none transition-[transform,box-shadow] duration-[var(--motion-duration-normal)] ease-[var(--motion-ease-emphasized)] motion-safe:animate-in",
+        "hover:-translate-y-0.5 hover:shadow-[var(--elevation-2)] hover:ring-[var(--v-id)]",
+        "focus-visible:ring-2 focus-visible:ring-[var(--v-id)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "data-[selected=true]:ring-2 data-[selected=true]:ring-[var(--v-id)]",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="type-heading truncate leading-tight">{example.name}</p>
-          <p className="type-ui truncate text-muted-foreground">
-            {example.role}
-          </p>
-        </div>
-        <span
-          aria-hidden="true"
-          className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--accent-faint)] text-[var(--accent)]"
-        >
-          <Quote className="size-3.5" />
+      <PersonaAvatar
+        persona={{ id: example.id, name: example.name }}
+        size="md"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="type-heading block truncate leading-tight">
+          {example.name}
         </span>
-      </div>
-
-      <p className="type-body text-foreground/80">{example.hook}</p>
-
-      <p className="type-ui line-clamp-3 text-muted-foreground">
-        {example.seed}
-      </p>
-
-      <span
-        className={cn(
-          "type-caption mt-auto inline-flex items-center gap-1.5 pt-1 font-mono uppercase",
-          isSelected
-            ? "text-[var(--accent)]"
-            : "text-muted-foreground transition-colors group-hover/example:text-foreground",
-        )}
-        aria-hidden={isSelected ? undefined : "true"}
-      >
-        {isSelected ? (
-          selectedLabel
-        ) : (
-          <ArrowRight className="size-3 transition-transform duration-[var(--motion-duration-fast)] group-hover/example:translate-x-0.5" />
-        )}
+        <span className="type-ui block truncate text-muted-foreground">
+          {example.role}
+        </span>
       </span>
+      {isSelected ? (
+        <span className="type-caption shrink-0 font-mono text-[var(--v-id)] uppercase">
+          {selectedLabel}
+        </span>
+      ) : null}
     </button>
   );
 }
