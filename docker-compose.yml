@@ -1,3 +1,11 @@
+# Pin the Compose project name so the postgres container + `pgdata` volume are
+# the SAME regardless of the directory you run from. Without this, Compose
+# derives the project from the directory basename, so running from a git
+# worktree (e.g. Open-Persona-<feature>/) spins up a SEPARATE, empty
+# `<dir>_pgdata` volume on the same :5436 port — which reads as a "suddenly
+# wiped" database. One name -> one shared dev database everywhere.
+name: open-persona
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -6,7 +14,11 @@ services:
       POSTGRES_PASSWORD: persona
       POSTGRES_DB: persona
     ports:
-      - "5432:5432"
+      # Host port is configurable via POSTGRES_HOST_PORT (Compose auto-loads .env),
+      # defaulting to 5432. Set POSTGRES_HOST_PORT=5436 in .env for a local
+      # instance that coexists with another Postgres on 5432. The container side
+      # stays 5432, and DATABASE_URL's host port must match the chosen value.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

@@ -87,13 +87,34 @@ def _database_url() -> str | None:
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
-    """The sync Postgres DSN, or skip the test if unavailable."""
+    """The sync Postgres DSN, or skip the test if unavailable.
+
+    SAFETY GATE: the integration fixtures that depend on this (``pg_engine``,
+    ``migrated_engine``, and every migration test's ``clean_db``) start with
+    ``DROP SCHEMA public CASCADE``. ``DATABASE_URL`` is the SAME variable
+    ``run-local.sh`` exports for the dev database, so an accidental
+    ``pytest -m integration`` in a dev shell would silently wipe the dev schema.
+    We therefore refuse to hand out the URL unless the target is provably
+    disposable: its database name ends in ``_test``, OR ``PERSONA_TEST_DB=1`` is
+    set to explicitly affirm the database is throwaway (CI sets this). Otherwise
+    we skip — the destructive fixtures never run against a dev DB.
+    """
+    from sqlalchemy.engine import make_url
+
     url = _database_url()
     if not url:
         pytest.skip("DATABASE_URL not set; skipping Postgres integration test")
     if "+asyncpg" in url:
         # The transport is sync (D-07-1); coerce a stray async DSN.
         url = url.replace("+asyncpg", "+psycopg")
+    db_name = make_url(url).database or ""
+    if os.environ.get("PERSONA_TEST_DB") != "1" and not db_name.endswith("_test"):
+        pytest.skip(
+            f"Refusing to run destructive integration fixtures against database "
+            f"{db_name!r}: they DROP SCHEMA public CASCADE. Point DATABASE_URL at a "
+            f"database whose name ends in '_test', or set PERSONA_TEST_DB=1 to confirm "
+            f"this database is disposable. (Guards against wiping the dev DB.)"
+        )
     return url
 
 

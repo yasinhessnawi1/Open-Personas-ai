@@ -101,6 +101,10 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://persona:persona@localhost:5432/persona
           APP_DATABASE_URL: postgresql+psycopg://persona_app:persona_app@localhost:5432/persona
+          # Affirm this CI Postgres is disposable — the integration fixtures
+          # DROP SCHEMA. The conftest safety gate skips without this opt-in so a
+          # dev shell can't wipe its dev DB by accident.
+          PERSONA_TEST_DB: "1"
         run: uv run pytest -m integration
 
   web:

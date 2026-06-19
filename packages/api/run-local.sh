@@ -32,6 +32,49 @@ export PERSONA_EDITION="cloud"
 export DATABASE_URL="postgresql+psycopg://persona:persona@localhost:5436/persona"
 export APP_DATABASE_URL="postgresql+psycopg://persona_app:persona_app@localhost:5436/persona"
 
+# --- Idempotent local DB bootstrap ------------------------------------------
+# A fresh or wiped `pgdata` volume comes up with NO schema, and even after a
+# migration the app role (`persona_app`) has NO grants — so the cloud API 500s
+# on the first request ("relation ... does not exist"). Both steps below are
+# safe to run on every launch:
+#   1. `alembic upgrade head` — a no-op when already at head.
+#   2. grant `persona_app` — GRANT / ALTER DEFAULT PRIVILEGES are idempotent.
+# Gated on a reachability probe so a stopped/remote Postgres just warns + skips
+# rather than aborting the launch. Runs as the superuser DATABASE_URL.
+if uv run python - <<'PY'
+import os, sys
+from sqlalchemy import create_engine, text
+try:
+    with create_engine(os.environ["DATABASE_URL"]).connect() as c:
+        c.execute(text("SELECT 1"))
+except Exception as exc:  # noqa: BLE001 — best-effort probe
+    print(f"[run-local] Postgres unreachable, skipping DB bootstrap: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  echo "[run-local] DB bootstrap: alembic upgrade head + persona_app grants…"
+  uv run alembic upgrade head
+  uv run python - <<'PY'
+import os
+from sqlalchemy import create_engine, text
+GRANTS = [
+    "GRANT USAGE ON SCHEMA public TO persona_app",
+    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO persona_app",
+    "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO persona_app",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO persona_app",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO persona_app",
+]
+with create_engine(os.environ["DATABASE_URL"]).begin() as c:
+    if c.execute(text("SELECT 1 FROM pg_roles WHERE rolname='persona_app'")).first():
+        for stmt in GRANTS:
+            c.execute(text(stmt))
+        print("[run-local] persona_app grants applied.")
+    else:
+        print("[run-local] role persona_app absent; skipped grants.")
+PY
+  echo "[run-local] DB bootstrap complete."
+fi
+
 # Clerk JWT verification (D-09-2): RS256 + the dashboard PEM + the template aud.
 export PERSONA_API_JWT_ALGORITHMS="RS256"
 export PERSONA_API_JWT_AUDIENCE="persona-api"
