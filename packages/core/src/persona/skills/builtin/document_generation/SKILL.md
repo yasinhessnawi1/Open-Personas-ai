@@ -52,6 +52,23 @@ improvising an unsupported one.
 
 ## Shared conventions (every format)
 
+- **Install the library first.** The sandbox does NOT preinstall every format's
+  library — `reportlab` (pdf) and `python-pptx` (pptx) are absent by default and
+  importing them raises `ModuleNotFoundError`. Begin your generated code with an
+  idempotent install of the exact pinned library for your `format` BEFORE any
+  import, then import. `md`/`txt` need no library. The runtime grants a longer
+  time budget to a turn that installs (it detects the `pip install` line), so
+  this does not cost you the exec cap.
+
+  ```python
+  import importlib.util, subprocess, sys
+  # pin per format: pdf→"reportlab==4.2.5", pptx→"python-pptx==1.0.2",
+  # docx→"python-docx==1.1.2", xlsx→"openpyxl==3.1.5" (docx/xlsx are usually
+  # preinstalled, but installing is a safe no-op when already present).
+  for _pkg, _mod in [("reportlab==4.2.5", "reportlab")]:  # ← swap for your format
+      if importlib.util.find_spec(_mod) is None:
+          subprocess.run([sys.executable, "-m", "pip", "install", "-q", _pkg], check=True)
+  ```
 - **Output path.** Write to `/workspace/out/<descriptive-name><ext>` from
   inside the sandbox — lowercase, hyphenated filename. The runtime surfaces the
   produced file. Same-session persistence only; do not promise cross-session
@@ -99,6 +116,9 @@ that span pages; page numbers via `onLaterPages`. Supplements: `pdf-flowables`,
 `pdf-pagination`, `pdf-images`.
 
 ```python
+import importlib.util, subprocess, sys
+if importlib.util.find_spec("reportlab") is None:  # not preinstalled — install first
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "reportlab==4.2.5"], check=True)
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph
@@ -113,6 +133,9 @@ Use slide layouts, not free-floating text boxes; one idea per slide; readable
 font sizes. Supplements: `pptx-layouts`, `pptx-charts`, `pptx-theme`.
 
 ```python
+import importlib.util, subprocess, sys
+if importlib.util.find_spec("pptx") is None:  # not preinstalled — install first
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "python-pptx==1.0.2"], check=True)
 from pptx import Presentation
 prs = Presentation()
 slide = prs.slides.add_slide(prs.slide_layouts[0])

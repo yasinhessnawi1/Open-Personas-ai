@@ -182,9 +182,21 @@ async def build_default_toolbox(
         allow_list_size=len(persona.tools),
     )
 
+    # The ``use_skill`` meta-tool (D-04-10) is composed into ``extra_tools`` by the
+    # runtime/API ONLY when the persona has scanned skills — its presence IS the
+    # authorization, exactly like assigned BYO MCP tools (D-30-6). It is never named
+    # in a persona's YAML ``tools`` allow-list (that list enumerates capabilities,
+    # not the skill-dispatch mechanism). Without this auto-allow, a persona with an
+    # explicit allow-list would have ``use_skill`` filtered out of the toolbox, so
+    # the model never sees it and calls the skill name directly → ToolNotAllowedError
+    # (e.g. "document_generation is not available"). Auto-allow it whenever it was
+    # injected, matching the BYO precedent below.
+    skill_meta_allow = [t.name for t in (extra_tools or []) if t.name == "use_skill"]
+
     # The allow-list: the persona's declared tools PLUS the assigned BYO tool
-    # names. When the persona declares nothing (dev-permissive None path) BYO
-    # tools are allowed anyway (all-allowed), preserving prior behaviour exactly.
-    allow_list = [*persona.tools, *byo_allow] if persona.tools else None
+    # names PLUS the composed use_skill meta-tool. When the persona declares
+    # nothing (dev-permissive None path) every tool is allowed anyway
+    # (all-allowed), preserving prior behaviour exactly.
+    allow_list = [*persona.tools, *byo_allow, *skill_meta_allow] if persona.tools else None
     toolbox = Toolbox(all_tools, allow_list=allow_list)
     return toolbox, mcp_clients

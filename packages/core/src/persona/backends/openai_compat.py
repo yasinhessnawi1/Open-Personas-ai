@@ -1319,6 +1319,71 @@ def _parse_anthropic_response(
     )
 
 
+def _recover_textual_tool_call(content: str) -> ToolCall | None:
+    """Recover a tool call a native-tools model serialised into ``content`` text.
+
+    Some OpenRouter-fronted models, when handed native ``tools``, emit the tool
+    call as a JSON object in the assistant *content* instead of populating the
+    structured ``tool_calls`` field — the OpenAI serialisation shape
+    ``{"type":"function","name":...,"parameters":{...}}`` (or the bare
+    ``{"name":...,"arguments":{...}}`` shape). Left unrecovered, the agentic loop
+    treats that text as a reasoning step and surfaces the raw JSON to the user.
+
+    The recovery is deliberately strict to avoid false positives: the *entire*
+    trimmed content (optionally inside a ```` ```json ```` fence) must parse as a
+    single JSON object that carries a string ``name`` AND an ``arguments`` /
+    ``parameters`` object (or ``"type": "function"``). Prose that merely embeds a
+    JSON snippet does not match (it is not standalone JSON), so normal replies are
+    never mistaken for tool calls.
+
+    Args:
+        content: The assistant message content returned by the provider.
+
+    Returns:
+        A :class:`ToolCall` when the content is unambiguously a serialised tool
+        call, else ``None`` (the caller keeps the content as text).
+    """
+    text = content.strip()
+    if text.startswith("```"):
+        # Strip a single fenced block (```json ... ``` or ``` ... ```).
+        inner = text[3:]
+        if inner[:4].lower().startswith("json"):
+            inner = inner[4:]
+        inner = inner.strip()
+        if inner.endswith("```"):
+            inner = inner[:-3].strip()
+        text = inner
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    # ``{"type":"function","function":{"name":...,"arguments":...}}`` (nested) or
+    # the flattened ``{"type":"function","name":...,"parameters":...}`` variant.
+    inner_fn = obj.get("function")
+    candidate = inner_fn if isinstance(inner_fn, dict) else obj
+    name = candidate.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    raw_args = candidate.get("arguments")
+    if raw_args is None:
+        raw_args = candidate.get("parameters")
+    is_function = obj.get("type") == "function"
+    if raw_args is None and not is_function:
+        # No args field AND no function marker → not confidently a tool call.
+        return None
+    if isinstance(raw_args, str):
+        try:
+            raw_args = json.loads(raw_args)
+        except (json.JSONDecodeError, ValueError):
+            raw_args = {}
+    args = raw_args if isinstance(raw_args, dict) else {}
+    return ToolCall(name=name, args=args, call_id="")
+
+
 def _parse_openai_response(
     response: Any,  # noqa: ANN401 — SDK type
     provider: str,
@@ -1351,6 +1416,16 @@ def _parse_openai_response(
     if not use_native_tools:
         content, parsed = parse_tool_calls(content)
         tool_calls.extend(parsed)
+    elif not tool_calls and content:
+        # Native-tools path: the SDK returned no structured tool_calls. Some
+        # OpenRouter-fronted models serialise the tool call into the content text
+        # instead (the OpenAI ``{"type":"function",...}`` shape). Recover it so the
+        # agentic loop dispatches a real call rather than surfacing raw JSON to the
+        # user as a reasoning step.
+        recovered = _recover_textual_tool_call(content)
+        if recovered is not None:
+            tool_calls.append(recovered)
+            content = ""
 
     usage_obj = getattr(response, "usage", None)
     prompt_tokens = getattr(usage_obj, "prompt_tokens", 0) if usage_obj else 0

@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator  # noqa: TC003 — used at runtime in helpers
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,6 +34,7 @@ from persona.backends.openai_compat import (
     _message_to_anthropic,
     _message_to_openai,
     _native_tools_supported,
+    _parse_openai_response,
     _strip_reasoning_for_provider,
     _vision_supported,
 )
@@ -1287,3 +1289,64 @@ class TestSamplingParams:
         kwargs = create_mock.call_args.kwargs
         assert "top_p" not in kwargs
         assert "top_k" not in kwargs
+
+
+class TestTextualToolCallRecovery:
+    """Native-tools models that serialise a tool call into ``content`` text.
+
+    Some OpenRouter-fronted models, when given native ``tools``, emit the tool
+    call as a JSON object in the *content* (the OpenAI ``{"type":"function",
+    "name":...,"parameters":...}`` shape) instead of populating structured
+    ``tool_calls``. Without recovery the agentic loop treats that text as a
+    reasoning step and surfaces the raw JSON to the user. The parser must
+    recover the textual call into ``response.tool_calls`` and clear the content.
+    """
+
+    @staticmethod
+    def _resp(content: str) -> Any:
+        msg = SimpleNamespace(content=content, tool_calls=None)
+        choice = SimpleNamespace(message=msg)
+        usage = SimpleNamespace(prompt_tokens=3, completion_tokens=5)
+        return SimpleNamespace(choices=[choice], usage=usage, model="m")
+
+    def test_function_type_shape_recovered(self) -> None:
+        text = '{"type":"function","name":"code_execution","parameters":{"code":"print(1)"}}'
+        resp = _parse_openai_response(self._resp(text), "openrouter", use_native_tools=True)
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].name == "code_execution"
+        assert resp.tool_calls[0].args == {"code": "print(1)"}
+        assert resp.content.strip() == ""
+
+    def test_name_arguments_shape_recovered(self) -> None:
+        text = '{"name":"web_search","arguments":{"query":"x"}}'
+        resp = _parse_openai_response(self._resp(text), "openrouter", use_native_tools=True)
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].name == "web_search"
+        assert resp.tool_calls[0].args == {"query": "x"}
+
+    def test_fenced_json_recovered(self) -> None:
+        text = '```json\n{"type":"function","name":"calculator","parameters":{"expr":"1+1"}}\n```'
+        resp = _parse_openai_response(self._resp(text), "openrouter", use_native_tools=True)
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].name == "calculator"
+
+    def test_plain_prose_is_not_a_tool_call(self) -> None:
+        text = 'Here is a JSON example: {"type": "object"} — note the schema.'
+        resp = _parse_openai_response(self._resp(text), "openrouter", use_native_tools=True)
+        assert resp.tool_calls == []
+        assert resp.content == text
+
+    def test_structured_tool_calls_take_precedence(self) -> None:
+        # When the SDK already populated structured tool_calls, content is left as-is.
+        fn = SimpleNamespace(name="web_search", arguments='{"q":"x"}')
+        tc = SimpleNamespace(function=fn, id="call_0")
+        msg = SimpleNamespace(content="some narration", tool_calls=[tc])
+        resp_obj = SimpleNamespace(
+            choices=[SimpleNamespace(message=msg)],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+            model="m",
+        )
+        resp = _parse_openai_response(resp_obj, "openrouter", use_native_tools=True)
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].name == "web_search"
+        assert resp.content == "some narration"

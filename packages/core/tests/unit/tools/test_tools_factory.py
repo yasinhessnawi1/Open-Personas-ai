@@ -282,6 +282,29 @@ class TestBuildDefaultToolboxWithMCP:
             await c.disconnect()
 
     @pytest.mark.asyncio
+    async def test_use_skill_extra_tool_is_auto_allowed(self, tmp_path: Path) -> None:
+        # Regression: a persona that declares an explicit ``tools`` allow-list
+        # (which never names ``use_skill`` — it is a composition-root meta-tool,
+        # not a persona-declared capability) must STILL advertise the
+        # ``use_skill`` tool the runtime/API injects via ``extra_tools`` when the
+        # persona has scanned skills. Before the fix the allow-list filtered
+        # ``use_skill`` out, so the model never saw it and called the skill name
+        # directly → ToolNotAllowedError ("document_generation not available").
+        from persona.tools.protocol import tool
+
+        @tool(name="use_skill", description="Activate a skill by name.")
+        async def _fake_use_skill(*, skill_name: str) -> str:  # noqa: ARG001
+            return "ok"
+
+        config = PersonaCoreConfig(tools_sandbox_root=tmp_path)
+        # The persona declares a normal allow-list — NOT use_skill.
+        persona = _persona(tools=["code_execution", "web_search"])
+        toolbox, _ = await build_default_toolbox(config, persona, extra_tools=[_fake_use_skill])
+        names = toolbox.names()
+        assert "use_skill" in names, "use_skill must be advertised even with an explicit allow-list"
+        assert toolbox.is_allowed("use_skill")
+
+    @pytest.mark.asyncio
     async def test_unreachable_mcp_server_graceful(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

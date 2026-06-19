@@ -28,6 +28,7 @@ or otherwise breaks the wiring fails this test loud.
 
 from __future__ import annotations
 
+import pytest
 from persona.skills import BUILTIN_ROOT, SkillScanner
 from persona.skills.document_generation import supported_formats
 
@@ -130,3 +131,54 @@ def test_unified_skill_supports_the_relocated_formats() -> None:
     formats = set(supported_formats())
     assert {"docx", "pptx", "xlsx", "pdf"} <= formats
     assert {"md", "txt"} <= formats
+
+
+@pytest.mark.asyncio
+async def test_build_toolbox_advertises_use_skill_for_skilled_persona() -> None:
+    """Runtime-factory wiring: a persona with scanned skills + an explicit
+    ``tools`` allow-list (that does NOT name ``use_skill``) STILL advertises the
+    ``use_skill`` tool the factory composes.
+
+    Regression for the runtime bug where the toolbox allow-list filtered the
+    composed ``use_skill`` meta-tool out — the model then never saw it and
+    called the skill name directly (``document_generation``), hitting
+    ``ToolNotAllowedError`` ("document_generation is not available"). The prior
+    integration test masked this by cheating ``use_skill`` INTO the persona's
+    ``tools`` list, which a real persona YAML never does.
+    """
+    from persona.schema.persona import Persona, PersonaIdentity
+    from persona.skills import render_skill_index
+    from persona_api.services.runtime_factory import RuntimeFactory
+
+    persona = Persona(
+        persona_id="p_skilled",
+        identity=PersonaIdentity(
+            name="Doc Bot",
+            role="Writer",
+            background="A persona that produces downloadable documents.",
+        ),
+        # A REAL persona's allow-list: capabilities only, never ``use_skill``.
+        tools=["code_execution", "web_search", "web_fetch"],
+        skills=["document_generation"],
+    )
+    # The factory never queries the engine in ``_build_toolbox``; a sentinel
+    # engine is sufficient for this wiring assertion.
+    factory = RuntimeFactory(
+        rls_engine=object(),  # type: ignore[arg-type]
+        embedder=None,  # type: ignore[arg-type]
+        tier_registry=None,  # type: ignore[arg-type]
+        turn_log_writer=None,  # type: ignore[arg-type]
+        audit_root=BUILTIN_ROOT.parent,  # any extant dir
+    )
+    _scanner, scanned = factory._scan_skills(persona)  # noqa: SLF001
+    assert "document_generation" in {s.name for s in scanned}
+
+    toolbox = await factory._build_toolbox(persona, scanned)  # noqa: SLF001
+    names = toolbox.names()  # type: ignore[attr-defined]
+    assert "use_skill" in names, (
+        "use_skill must be advertised for a skilled persona with an explicit "
+        f"tools allow-list; got {names}"
+    )
+    # The skill index the agentic loop injects must list the enabled skill.
+    index = render_skill_index(scanned)  # type: ignore[arg-type]
+    assert "document_generation" in index
