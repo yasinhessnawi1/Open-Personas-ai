@@ -146,25 +146,6 @@ export function PersonaForm({
         </Field>
       </Section>
 
-      {/* Voice — its own card (a persona's audible identity, V6 C2). */}
-      <Section id="voice" title={t("voiceTitle")} icon={Mic}>
-        <Field label={t("voice")} hint={t("voiceDescription")}>
-          <VoiceSelector
-            value={currentVoiceId}
-            language={identity.language_default}
-            onChange={(voice) =>
-              onChange({
-                ...doc,
-                identity: {
-                  ...((doc.identity ?? {}) as Record<string, unknown>),
-                  voice,
-                },
-              })
-            }
-          />
-        </Field>
-      </Section>
-
       {/* Self-facts */}
       <Section
         id="self-facts"
@@ -312,6 +293,27 @@ export function PersonaForm({
             )
           }
         />
+      </Section>
+
+      {/* Voice — its own card (a persona's audible identity, V6 C2). Sits after
+          the typed-memory stores so identity → self-facts → worldview group
+          first, then voice (consistency). */}
+      <Section id="voice" title={t("voiceTitle")} icon={Mic}>
+        <Field label={t("voice")} hint={t("voiceDescription")}>
+          <VoiceSelector
+            value={currentVoiceId}
+            language={identity.language_default}
+            onChange={(voice) =>
+              onChange({
+                ...doc,
+                identity: {
+                  ...((doc.identity ?? {}) as Record<string, unknown>),
+                  voice,
+                },
+              })
+            }
+          />
+        </Field>
       </Section>
 
       {/* Capabilities: tools + skills + MCP as one set (spec 30 T11) */}
