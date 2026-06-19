@@ -80,7 +80,13 @@ export function PersonaForm({
   return (
     <div className="flex flex-col gap-5">
       {/* Identity */}
-      <Section id="identity" title={t("identityTitle")} defaultOpen>
+      <Section
+        id="identity"
+        title={t("identityTitle")}
+        defaultOpen
+        badge="ID"
+        accent="var(--store-identity)"
+      >
         <Field label={t("name")}>
           <Input
             value={identity.name}
@@ -159,7 +165,12 @@ export function PersonaForm({
       </Section>
 
       {/* Self-facts */}
-      <Section id="self-facts" title={t("selfFactsTitle")}>
+      <Section
+        id="self-facts"
+        title={t("selfFactsTitle")}
+        badge="SF"
+        accent="var(--store-self-facts)"
+      >
         {selfFacts.map((f, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
           <div key={i} className="flex items-start gap-2">
@@ -215,7 +226,12 @@ export function PersonaForm({
       </Section>
 
       {/* Worldview */}
-      <Section id="worldview" title={t("worldviewTitle")}>
+      <Section
+        id="worldview"
+        title={t("worldviewTitle")}
+        badge="WV"
+        accent="var(--store-worldview)"
+      >
         {worldview.map((w, i) => {
           const set = (patch: Partial<typeof w>) =>
             onChange(
@@ -441,15 +457,25 @@ function Section({
   id,
   title,
   defaultOpen,
+  badge,
+  accent,
   children,
 }: {
   id: string;
   title: string;
   defaultOpen?: boolean;
+  badge?: string;
+  accent?: string;
   children: React.ReactNode;
 }) {
   return (
-    <CollapsibleSection id={id} title={title} defaultOpen={defaultOpen}>
+    <CollapsibleSection
+      id={id}
+      title={title}
+      defaultOpen={defaultOpen}
+      badge={badge}
+      accent={accent}
+    >
       {children}
     </CollapsibleSection>
   );

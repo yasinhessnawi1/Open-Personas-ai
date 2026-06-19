@@ -44,9 +44,14 @@ export default async function EditPersonaPage({
         <ArrowLeft className="size-4" />
         {t("backToPersona")}
       </Link>
-      <h1 className="mb-6 font-heading text-2xl font-semibold tracking-tight">
-        {t("editTitle", { name })}
-      </h1>
+      <header className="mb-6">
+        <p className="type-caption font-mono uppercase text-muted-foreground">
+          {t("editKicker")}
+        </p>
+        <h1 className="mt-1 font-heading text-2xl font-semibold tracking-tight">
+          {t("editTitle", { name })}
+        </h1>
+      </header>
       <PersonaEditor
         initialDoc={doc}
         tools={(tools as ToolSummary[]).map((x) => x.name)}

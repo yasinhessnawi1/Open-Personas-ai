@@ -111,6 +111,8 @@ export function CollapsibleSection({
   title,
   defaultOpen = false,
   headerAccessory,
+  badge,
+  accent,
   children,
 }: {
   id: string;
@@ -118,6 +120,14 @@ export function CollapsibleSection({
   defaultOpen?: boolean;
   /** Optional control rendered in the header, left of the chevron (e.g. a toggle). */
   headerAccessory?: ReactNode;
+  /**
+   * Spec 35: a short store glyph (e.g. "ID"/"SF") shown as a `.v-store-badge`
+   * tinted by `accent` — gives the memory-store sections their typed-memory
+   * identity, matching the persona detail page. Absent → plain header.
+   */
+  badge?: string;
+  /** CSS colour (a `var(--store-*)` token) for the badge + a left accent rule. */
+  accent?: string;
   children: ReactNode;
 }) {
   const t = useTranslations("author");
@@ -128,10 +138,22 @@ export function CollapsibleSection({
     <Card
       id={id}
       className="scroll-mt-20 gap-0 p-0"
+      style={
+        accent ? { borderLeftColor: accent, borderLeftWidth: "2px" } : undefined
+      }
       data-slot="collapsible-section"
       data-open={open}
     >
       <div className="flex items-center gap-3 p-5">
+        {badge ? (
+          <span
+            className="v-store-badge"
+            style={{ background: accent }}
+            aria-hidden="true"
+          >
+            {badge}
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={() => setOpen(!open)}
