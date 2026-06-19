@@ -1,14 +1,20 @@
 "use client";
 
-import { MoreVertical } from "lucide-react";
+import {
+  FileText,
+  MessageSquare,
+  MoreVertical,
+  Phone,
+  Shield,
+  Wrench,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import {
-  PersonaCard,
-  type PersonaCardPersona,
-} from "@/components/persona/persona-card";
+import { startChat, startVoice } from "@/app/actions";
+import { PersonaAvatar } from "@/components/persona/persona-avatar";
+import type { PersonaCardPersona } from "@/components/persona/persona-card";
 import { buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,6 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useApi } from "@/lib/api/use-api";
 import { renameInIdentity } from "@/lib/persona";
+import { personaIdentityStyle } from "@/lib/persona-identity";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,7 +44,19 @@ import { cn } from "@/lib/utils";
  * discipline (mirrors D-F3-X-chip-placement / D-F4-X-result-block-placement).
  */
 export interface PersonaLibraryCardProps {
-  persona: PersonaCardPersona;
+  /**
+   * The list-view persona. Spec 35 surfaces the capability/identity glance from
+   * the (free) `PersonaSummary` counts — `tools_count` already folds MCP servers
+   * (a persona enables a server via `mcp:<name>` in its tools), so it reads as
+   * one "apps & tools" count.
+   */
+  persona: PersonaCardPersona & {
+    language?: string;
+    tools_count?: number;
+    skills_count?: number;
+    constraints_count?: number;
+    conversation_count?: number;
+  };
 }
 
 export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
@@ -87,12 +106,90 @@ export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
   }
 
   return (
-    <div className="relative">
-      <PersonaCard
-        persona={persona}
+    <article
+      className="v-card v-card--pad v-card--hover relative"
+      style={personaIdentityStyle(persona)}
+      data-slot="persona-library-card"
+    >
+      {/* Card body → the persona detail. Only the header is the navigating link
+          so the footer actions + kebab stay independently clickable. */}
+      <Link
         href={`/personas/${persona.id}`}
-        className="glass-card"
-      />
+        className="block outline-none"
+        data-slot="persona-library-card-link"
+      >
+        <div className="flex items-start gap-3.5">
+          <PersonaAvatar persona={persona} size="lg" />
+          <div className="min-w-0 flex-1 pr-8">
+            <p className="type-heading leading-tight">
+              <span className="v-id-underline">{persona.name}</span>
+            </p>
+            <p className="mt-1 truncate type-ui text-muted-foreground">
+              {persona.role}
+            </p>
+          </div>
+        </div>
+      </Link>
+
+      {/* Capability + identity glance — the free PersonaSummary counts. The
+          "apps & tools" count already folds MCP servers (mcp:<name> in tools). */}
+      <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
+        {persona.language ? (
+          <span className="v-chip uppercase">{persona.language}</span>
+        ) : null}
+        {persona.tools_count ? (
+          <span
+            className="v-chip"
+            title={t("library.appsTools", { count: persona.tools_count })}
+          >
+            <Wrench aria-hidden="true" />
+            {persona.tools_count}
+          </span>
+        ) : null}
+        {persona.skills_count ? (
+          <span
+            className="v-chip"
+            title={t("library.skillsCount", { count: persona.skills_count })}
+          >
+            <FileText aria-hidden="true" />
+            {persona.skills_count}
+          </span>
+        ) : null}
+        {persona.constraints_count ? (
+          <span
+            className="v-chip"
+            title={t("library.constraintsCount", {
+              count: persona.constraints_count,
+            })}
+          >
+            <Shield aria-hidden="true" />
+            {persona.constraints_count}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Footer: chat count + real server actions (start a chat / voice call). */}
+      <footer className="mt-4 flex items-center gap-2 border-t pt-3.5">
+        <span className="type-caption normal-case tracking-normal text-muted-foreground">
+          {t("library.chats", { count: persona.conversation_count ?? 0 })}
+        </span>
+        <form action={startVoice.bind(null, persona.id)} className="ml-auto">
+          <button
+            type="submit"
+            className="v-btn v-btn--ghost v-btn--sm"
+            aria-label={t("library.call")}
+          >
+            <Phone className="size-4" aria-hidden="true" />
+          </button>
+        </form>
+        <form action={startChat.bind(null, persona.id)}>
+          <button type="submit" className="v-btn v-btn--outline v-btn--sm">
+            <MessageSquare className="size-4" aria-hidden="true" />
+            {t("library.chat")}
+          </button>
+        </form>
+      </footer>
+
       <div className="absolute top-2 right-2">
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -135,6 +232,6 @@ export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </div>
+    </article>
   );
 }

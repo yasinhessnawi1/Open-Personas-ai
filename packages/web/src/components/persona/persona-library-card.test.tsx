@@ -17,11 +17,22 @@ vi.mock("@clerk/nextjs", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
+vi.mock("@/app/actions", () => ({
+  startChat: vi.fn(),
+  startVoice: vi.fn(),
+}));
 
 const messages = {
   personas: {
     library: {
       menuLabel: "Actions for {name}",
+      chat: "Chat",
+      call: "Voice call",
+      appsTools: "{count, plural, one {# app & tool} other {# apps & tools}}",
+      skillsCount: "{count, plural, one {# skill} other {# skills}}",
+      constraintsCount:
+        "{count, plural, one {# constraint} other {# constraints}}",
+      chats: "{count, plural, =0 {No chats} one {# chat} other {# chats}}",
       view: "View",
       edit: "Edit",
       duplicate: "Duplicate as template",
@@ -32,7 +43,16 @@ const messages = {
   },
 };
 
-const FIXTURE = { id: "astrid", name: "Astrid", role: "Tenancy law" };
+const FIXTURE = {
+  id: "astrid",
+  name: "Astrid",
+  role: "Tenancy law",
+  language: "no",
+  tools_count: 3,
+  skills_count: 1,
+  constraints_count: 2,
+  conversation_count: 5,
+};
 
 function renderCard() {
   return render(
@@ -49,14 +69,24 @@ describe("PersonaLibraryCard — T09 structural surface", () => {
     expect(trigger).toBeInTheDocument();
   });
 
-  it("composes <PersonaCard> with the glass-card class", () => {
-    const { container } = renderCard();
-    // glass-card lives on the inner card body via the className prop drill.
-    const glass = container.querySelector(".glass-card");
-    expect(glass).toBeInTheDocument();
+  it("renders the capability glance + chat count from the summary (Spec 35)", () => {
+    renderCard();
+    // language chip, apps&tools (folds MCP), and the chat count — all free.
+    expect(screen.getByText("no")).toBeInTheDocument();
+    expect(screen.getByTitle("3 apps & tools")).toBeInTheDocument();
+    expect(screen.getByText("5 chats")).toBeInTheDocument();
   });
 
-  it("renders a PersonaCard Link href pointing to the detail route", () => {
+  it("renders the identity .v-card surface (Spec 35 restyle)", () => {
+    const { container } = renderCard();
+    // The library card is now the editorial identity card, not the glass card.
+    const card = container.querySelector(
+      '[data-slot="persona-library-card"].v-card',
+    );
+    expect(card).toBeInTheDocument();
+  });
+
+  it("renders a card-body Link href pointing to the detail route", () => {
     renderCard();
     const links = screen.getAllByRole("link");
     // At least one link points at /personas/astrid (the card body wrapping).

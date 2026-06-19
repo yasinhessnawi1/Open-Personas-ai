@@ -41,7 +41,7 @@ const messages = {
       untitled: "Untitled conversation",
       unknownPersona: "Unknown persona",
     },
-    command: { open: "Search and commands" },
+    command: { open: "Search and commands", search: "Search" },
     account: { menu: "Account", plan: "Account" },
   },
   theme: { light: "Light", dark: "Dark", system: "System" },

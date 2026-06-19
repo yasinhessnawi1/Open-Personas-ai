@@ -319,7 +319,9 @@ export function CommandTrigger({ collapsed = false }: { collapsed?: boolean }) {
       <Search aria-hidden />
       {!collapsed && (
         <>
-          <span>{t("open")}</span>
+          {/* Compact visible label so it never wraps in the narrow rail; the
+              full "Search and commands" stays on the button's aria-label. */}
+          <span>{t("search")}</span>
           <kbd suppressHydrationWarning>
             {mounted ? (isMac ? "⌘K" : "Ctrl K") : ""}
           </kbd>

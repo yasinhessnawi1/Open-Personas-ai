@@ -129,6 +129,10 @@
   .v-cmd span {
     font-size: 13px;
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .v-cmd kbd {
     font-family: var(--font-geist-mono);

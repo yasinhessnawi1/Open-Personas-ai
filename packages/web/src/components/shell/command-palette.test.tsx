@@ -28,6 +28,7 @@ const messages = {
     conversations: "Conversations",
     command: {
       open: "Search and commands",
+      search: "Search",
       placeholder: "Search personas, conversations, or jump to…",
       empty: "No matches",
       groupActions: "Actions",

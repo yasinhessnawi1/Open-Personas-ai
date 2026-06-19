@@ -78,6 +78,7 @@
     },
     "command": {
       "open": "Search and commands",
+      "search": "Search",
       "placeholder": "Search personas, conversations, or jump to…",
       "empty": "No matches",
       "groupActions": "Actions",
@@ -172,6 +173,12 @@
     "runTaskTitle": "Give {name} a task",
     "library": {
       "menuLabel": "Actions for {name}",
+      "chat": "Chat",
+      "call": "Voice call",
+      "appsTools": "{count, plural, one {# app & tool} other {# apps & tools}}",
+      "skillsCount": "{count, plural, one {# skill} other {# skills}}",
+      "constraintsCount": "{count, plural, one {# constraint} other {# constraints}}",
+      "chats": "{count, plural, =0 {No chats} one {# chat} other {# chats}}",
       "view": "View",
       "edit": "Edit",
       "duplicate": "Duplicate as template",

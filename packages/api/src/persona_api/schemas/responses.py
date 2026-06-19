@@ -48,7 +48,13 @@ class _Output(BaseModel):
 
 
 class PersonaSummary(_Output):
-    """A persona in a list view (no full YAML)."""
+    """A persona in a list view (no full YAML).
+
+    Spec 35: the library card surfaces a capability + identity glance. The
+    counts below are parsed from the SAME stored YAML the list query already
+    loads (so they cost nothing extra), and ``conversation_count`` is a single
+    GROUP-BY over the RLS-scoped conversations — not an N+1.
+    """
 
     id: str
     name: str
@@ -56,6 +62,15 @@ class PersonaSummary(_Output):
     avatar_url: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Spec 35 — capability/identity glance for the library card (all free):
+    language: str = "en"
+    # "Apps & tools": the persona's tool allow-list length, which already folds
+    # MCP servers (a persona enables a server by carrying `mcp:<name>` in its
+    # `tools` list — see persona-form.tsx), so built-in tools + MCP count as one.
+    tools_count: int = 0
+    skills_count: int = 0
+    constraints_count: int = 0
+    conversation_count: int = 0
 
 
 class PersonaCapabilities(_Output):

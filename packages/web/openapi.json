@@ -2843,13 +2843,38 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          },
+          "tools_count": {
+            "type": "integer",
+            "title": "Tools Count",
+            "default": 0
+          },
+          "skills_count": {
+            "type": "integer",
+            "title": "Skills Count",
+            "default": 0
+          },
+          "constraints_count": {
+            "type": "integer",
+            "title": "Constraints Count",
+            "default": 0
+          },
+          "conversation_count": {
+            "type": "integer",
+            "title": "Conversation Count",
+            "default": 0
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": ["id", "name", "role", "created_at", "updated_at"],
         "title": "PersonaSummary",
-        "description": "A persona in a list view (no full YAML)."
+        "description": "A persona in a list view (no full YAML).\n\nSpec 35: the library card surfaces a capability + identity glance. The\ncounts below are parsed from the SAME stored YAML the list query already\nloads (so they cost nothing extra), and ``conversation_count`` is a single\nGROUP-BY over the RLS-scoped conversations \u2014 not an N+1."
       },
       "PostMessageRequest": {
         "properties": {

@@ -1481,6 +1481,11 @@ export interface components {
     /**
      * PersonaSummary
      * @description A persona in a list view (no full YAML).
+     *
+     *     Spec 35: the library card surfaces a capability + identity glance. The
+     *     counts below are parsed from the SAME stored YAML the list query already
+     *     loads (so they cost nothing extra), and ``conversation_count`` is a single
+     *     GROUP-BY over the RLS-scoped conversations — not an N+1.
      */
     PersonaSummary: {
       /** Id */
@@ -1501,6 +1506,31 @@ export interface components {
        * Format: date-time
        */
       updated_at: string;
+      /**
+       * Language
+       * @default en
+       */
+      language: string;
+      /**
+       * Tools Count
+       * @default 0
+       */
+      tools_count: number;
+      /**
+       * Skills Count
+       * @default 0
+       */
+      skills_count: number;
+      /**
+       * Constraints Count
+       * @default 0
+       */
+      constraints_count: number;
+      /**
+       * Conversation Count
+       * @default 0
+       */
+      conversation_count: number;
     };
     /**
      * PostMessageRequest

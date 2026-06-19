@@ -585,10 +585,15 @@ async def list_personas(
     offset: int = 0,
 ) -> list[PersonaSummary]:
     """List the caller's personas (paginated; RLS-scoped)."""
+    rls_engine = request.app.state.rls_engine
     rows = persona_service.list_personas(
-        rls_engine=request.app.state.rls_engine, limit=min(limit, 200), offset=offset
+        rls_engine=rls_engine, limit=min(limit, 200), offset=offset
     )
-    return [persona_service.summary_of(r) for r in rows]
+    # Spec 35: one GROUP-BY for the whole page feeds every card's chat count.
+    counts = persona_service.conversation_counts(rls_engine=rls_engine)
+    return [
+        persona_service.summary_of(r, conversation_count=counts.get(str(r["id"]), 0)) for r in rows
+    ]
 
 
 @router.get("/{persona_id}", response_model=PersonaDetail)

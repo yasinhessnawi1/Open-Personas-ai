@@ -40,7 +40,7 @@ export default async function PersonasPage() {
   const personas = await unwrap(await api.GET("/v1/personas"));
 
   return (
-    <PageBody>
+    <PageBody width="wide">
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}

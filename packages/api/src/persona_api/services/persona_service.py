@@ -33,8 +33,9 @@ from persona.stores import (
 )
 from persona.stores.embedder import SentenceTransformerEmbedder
 from persona.stores.postgres import PostgresBackend
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 
+from persona_api.db.models import conversations as conversations_t
 from persona_api.db.models import personas as personas_t
 from persona_api.schemas import PersonaSummary
 
@@ -288,6 +289,21 @@ def list_personas(*, rls_engine: Engine, limit: int, offset: int) -> list[dict[s
     return [dict(r) for r in rows]
 
 
+def conversation_counts(*, rls_engine: Engine) -> dict[str, int]:
+    """Conversations per persona for the caller (one RLS-scoped GROUP BY).
+
+    Spec 35: feeds ``PersonaSummary.conversation_count`` for the whole library
+    page in a single query — never per-persona. RLS scopes it to the owner.
+    """
+    with rls_engine.begin() as conn:
+        rows = conn.execute(
+            select(conversations_t.c.persona_id, func.count().label("n")).group_by(
+                conversations_t.c.persona_id
+            )
+        ).all()
+    return {str(persona_id): int(n) for persona_id, n in rows}
+
+
 def delete_persona(
     *, rls_engine: Engine, persona_id: str, workspace_root: Path | None = None, owner_id: str
 ) -> None:
@@ -324,16 +340,30 @@ def default_embedder(model_name: str) -> SentenceTransformerEmbedder:
     return SentenceTransformerEmbedder(model_name=model_name, device="cpu")
 
 
-def summary_of(row: dict[str, object]) -> PersonaSummary:
-    """Build a list-view summary from a persona row (name/role from the YAML)."""
+def summary_of(row: dict[str, object], *, conversation_count: int = 0) -> PersonaSummary:
+    """Build a list-view summary from a persona row.
+
+    name/role + the Spec-35 capability glance (language + tools/skills/
+    constraints counts) all come from the SAME stored YAML this row already
+    carries — no extra query. ``conversation_count`` is supplied by the caller
+    (one GROUP-BY for the whole page, never per persona).
+    """
     name, role = "", ""
+    language = "en"
+    tools_count = skills_count = constraints_count = 0
     try:
         parsed = yaml.safe_load(str(row["yaml"]))
-        identity = parsed.get("identity", {}) if isinstance(parsed, dict) else {}
-        name = str(identity.get("name", ""))
-        role = str(identity.get("role", ""))
+        if isinstance(parsed, dict):
+            identity = parsed.get("identity", {})
+            identity = identity if isinstance(identity, dict) else {}
+            name = str(identity.get("name", ""))
+            role = str(identity.get("role", ""))
+            language = _language_of(identity.get("language_default"))
+            constraints_count = _len_of(identity.get("constraints"))
+            tools_count = _len_of(parsed.get("tools"))
+            skills_count = _len_of(parsed.get("skills"))
     except (yaml.YAMLError, AttributeError):
-        pass  # a malformed stored YAML still lists, just without name/role
+        pass  # a malformed stored YAML still lists, just without the extras
     avatar = row.get("avatar_url")
     return PersonaSummary(
         id=str(row["id"]),
@@ -342,4 +372,28 @@ def summary_of(row: dict[str, object]) -> PersonaSummary:
         avatar_url=str(avatar) if avatar is not None else None,
         created_at=row["created_at"],  # type: ignore[arg-type]
         updated_at=row["updated_at"],  # type: ignore[arg-type]
+        language=language,
+        tools_count=tools_count,
+        skills_count=skills_count,
+        constraints_count=constraints_count,
+        conversation_count=conversation_count,
     )
+
+
+def _len_of(value: object) -> int:
+    """Length of a YAML list field, or 0 when absent/malformed."""
+    return len(value) if isinstance(value, list) else 0
+
+
+def _language_of(value: object) -> str:
+    """ISO-639-1 language code from the YAML ``language_default``.
+
+    YAML's bool keywords bite here: an unquoted ``no`` (Norwegian's own ISO
+    code!) parses to ``False`` and ``yes`` to ``True``. Map those back so a
+    Norwegian persona reads as ``no``, not ``False``. Empty/None → ``en``.
+    """
+    if value is False:
+        return "no"
+    if value is True:
+        return "yes"
+    return str(value) if value else "en"
