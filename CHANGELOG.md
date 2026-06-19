@@ -23,13 +23,25 @@ Per-spec entries are added by the close-out phase of each spec.
 
 #### Added
 - **24 flagship structured starters** (`persona-examples.ts`) across six categories — each a complete v1.0 persona (identity / self_facts / worldview / constraints + real `tools`/`skills`/MCP wiring). Backgrounds are capability-forward and reference roadmap ambitions (autonomy, proactive messaging, the knowledge graph) **as prose only** — never as functional wiring. A dataset-integrity test imports the live capability palettes so a faked capability fails CI.
-- **Direct-create flow** — picking a starter (or "start from scratch") opens the shared `PersonaEditor` on the structured draft and creates it with no `/author` call. The drafter "describe your own" path is preserved as the secondary option.
+- **Quick-edit preview + direct create** — picking a starter (or "start from scratch") reveals an inline quick-edit card (the design's "Choose & edit" draft): edit name / role / background / self_facts / worldview lines / constraints (safety pinned), then **Create directly** (no `/author` call), or **Open full editor** for tools / skills / MCP / voice / routing. The quick edits carry over into the full editor (shared `doc`); the drafter "describe your own" path is preserved.
+- **Design-matched starter cards** — compact per-persona identity-coloured avatar + name + role (via `PersonaAvatar`), replacing the earlier editorial card.
 - **Client-side schema validation** (`personaDocSchema`, zod) — the edited structure is validated against the v1 schema before submit, surfacing field-scoped errors; the server 422 remains the final authority.
 - **Mandatory safety constraint, enforced everywhere** — a single shared `SAFETY_CONSTRAINT` (Python source of truth in `persona-core`, mirrored once in web with a byte-match drift-guard test). It is pinned non-removable in the editor, re-asserted client-side at assembly, and — the floor — re-asserted **server-side at the create service boundary** (`ensure_safety_constraint`) on every create/update path, including the stored YAML the runtime reloads from. A persona can no longer be created or updated without it.
 
 #### Changed
-- **The new-persona screen leads with the starter gallery** (primary), with "describe your own" and "start from scratch" below it. Picking a starter now opens the editable draft directly instead of seeding the drafter textarea.
+- **The new-persona screen leads with "describe your own" + "start from scratch"** on top, with the starter suggestions below; picking a starter reveals the quick-edit card inline (rather than seeding the drafter textarea or jumping straight to the full editor).
 - **`persona-examples.ts` is now the single canonical roster** — the starter `seed` (drafter input) is derived from and coherence-tested against each starter's structured identity; no divergent second example set.
+
+### Local dev DB safety — integration-test guard + self-healing bootstrap (2026-06-19)
+
+> Fixes the recurring "local Postgres suddenly empty / missing tables" failures. Dev-only; no product change.
+
+#### Added
+- **Integration-test safety gate** (`packages/api/tests/conftest.py`) — the destructive Postgres fixtures (`DROP SCHEMA public CASCADE`) now refuse to run unless the target DB name ends in `_test` or `PERSONA_TEST_DB=1` is set, so a stray `pytest -m integration` in a dev shell can no longer wipe the dev schema. CI opts in via `PERSONA_TEST_DB=1`.
+- **Self-healing local bootstrap** (`packages/api/run-local.sh`) — on launch, probe Postgres then idempotently `alembic upgrade head` + grant the `persona_app` RLS role, so a fresh/wiped `pgdata` volume comes up fully working with no manual steps.
+
+#### Changed
+- **Pinned Compose project name** (`name: open-persona`) so running from any git worktree shares one `pgdata` volume instead of spawning an empty per-directory one; made the host port configurable via `${POSTGRES_HOST_PORT:-5432}`.
 
 ### Open-Core Editions — community / cloud + per-package relicense (code-complete 2026-06-18)
 
