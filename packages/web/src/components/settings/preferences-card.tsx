@@ -7,7 +7,6 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { LOCALE_COOKIE } from "@/i18n/config";
 import { TIER_BADGE_SETTING, useBoolSetting } from "@/lib/hooks/use-setting";
-import { cn } from "@/lib/utils";
 
 /**
  * Spec F2 T31 — PreferencesCard (retokenised).
@@ -49,7 +48,7 @@ export function PreferencesCard() {
       </h2>
 
       <Row label={t("theme")} hint={t("themeHint")}>
-        <div className="flex gap-1 rounded-md border p-0.5">
+        <div className="v-seg">
           {THEMES.map(({ value, icon: Icon }) => {
             const active = mounted && theme === value;
             return (
@@ -58,12 +57,8 @@ export function PreferencesCard() {
                 type="button"
                 onClick={() => setTheme(value)}
                 aria-pressed={active}
-                className={cn(
-                  "type-caption inline-flex items-center gap-1.5 rounded px-2.5 py-1",
-                  active
-                    ? "bg-secondary text-secondary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
+                data-active={active ? "true" : undefined}
+                className="inline-flex items-center gap-1.5"
                 data-slot="settings-theme-option"
               >
                 <Icon className="size-3.5" aria-hidden="true" />
@@ -103,19 +98,14 @@ function LanguageToggle({ mounted }: { mounted: boolean }) {
     { value: "xx", label: t("langPseudo") },
   ] as const;
   return (
-    <div className="flex gap-1 rounded-md border p-0.5">
+    <div className="v-seg">
       {langs.map(({ value, label }) => (
         <button
           key={value}
           type="button"
           onClick={() => choose(value)}
           aria-pressed={current === value}
-          className={cn(
-            "type-caption rounded px-2.5 py-1",
-            current === value
-              ? "bg-secondary text-secondary-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
+          data-active={current === value ? "true" : undefined}
           data-slot="settings-language-option"
         >
           {label}
@@ -134,11 +124,13 @@ function Row({
   hint: string;
   children: React.ReactNode;
 }) {
+  // Spec 35: the v1 setting row — title/desc on the left, control on the right,
+  // hairline-separated (the last row drops its rule against the card padding).
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div className="v-set-row last:border-b-0">
       <div className="min-w-0">
-        <p className="type-body font-medium">{label}</p>
-        <p className="type-caption text-muted-foreground">{hint}</p>
+        <div className="v-set-row__t">{label}</div>
+        <div className="v-set-row__d">{hint}</div>
       </div>
       {children}
     </div>
@@ -154,6 +146,8 @@ function Switch({
   onChange: (v: boolean) => void;
   label: string;
 }) {
+  // Spec 35: the v1 `.v-toggle` switch — the track + thumb (::after) live in CSS;
+  // `data-on` drives the colour + thumb slide.
   return (
     <button
       type="button"
@@ -161,18 +155,9 @@ function Switch({
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={cn(
-        "relative h-6 w-10 shrink-0 rounded-full border transition-colors",
-        checked ? "bg-primary" : "bg-muted",
-      )}
+      className="v-toggle"
+      data-on={checked ? "true" : "false"}
       data-slot="settings-switch"
-    >
-      <span
-        className={cn(
-          "absolute top-0.5 size-4 rounded-full bg-background transition-all",
-          checked ? "left-[1.125rem]" : "left-0.5",
-        )}
-      />
-    </button>
+    />
   );
 }

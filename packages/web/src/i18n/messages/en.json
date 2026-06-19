@@ -105,6 +105,7 @@
   },
   "settings": {
     "title": "Settings",
+    "subtitle": "Account, appearance, and how the instrument behaves — stored per account.",
     "account": "Account",
     "accountHint": "Manage your account from the avatar menu in the header.",
     "credits": "Credits",

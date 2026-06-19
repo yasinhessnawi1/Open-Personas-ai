@@ -50,7 +50,7 @@ export default async function SettingsPage() {
 
   return (
     <PageBody>
-      <PageHeader title={t("title")} />
+      <PageHeader title={t("title")} subtitle={t("subtitle")} />
 
       <div className="lg:grid lg:grid-cols-[14rem_1fr] lg:gap-6">
         <nav
