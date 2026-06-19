@@ -147,7 +147,8 @@ export PERSONA_MODEL=claude-sonnet-4-6
 
 # 3. run the API (SQLite + Chroma are created on first boot; a fixed
 #    local owner is seeded; PERSONA_EDITION defaults to community)
-uv run uvicorn persona_api.app:create_app --factory --port 8000
+uv run persona-api            # or:  uv run python -m persona_api
+#    loads .env as-is; override bind with PERSONA_API_HOST / PERSONA_API_PORT
 
 # 4. run the web app (the community build is Clerk-free)
 cd packages/web && pnpm install && pnpm dev

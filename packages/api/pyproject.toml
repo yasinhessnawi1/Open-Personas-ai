@@ -38,6 +38,12 @@ dependencies = [
     "cryptography>=43,<49",
 ]
 
+# Portable console entrypoint — `uv run persona-api` / `python -m persona_api`.
+# Cross-platform launcher for self-hosters; loads .env and serves the app
+# factory via uvicorn. `run-local.sh` remains the owner's cloud dev harness.
+[project.scripts]
+persona-api = "persona_api.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

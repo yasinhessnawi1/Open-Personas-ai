@@ -71,15 +71,22 @@ uv sync                       # install the workspace
 ### Community (default — zero infra)
 
 ```bash
-# one model API key is all community needs
+# one model API key is all community needs (put these in .env or export them)
 export PERSONA_PROVIDER=anthropic
 export PERSONA_API_KEY=sk-ant-...
 export PERSONA_MODEL=claude-sonnet-4-6
 
 # SQLite + Chroma are created on first boot; a fixed local owner is seeded.
 # PERSONA_EDITION defaults to community.
-uv run uvicorn persona_api.app:create_app --factory --port 8000
+uv run persona-api            # or:  uv run python -m persona_api
 ```
+
+The `persona-api` console script is the portable, cross-platform launcher
+(no shell script): it loads the nearest `.env` as-is, then serves the app via
+uvicorn. Bind is configurable from the environment — `PERSONA_API_HOST`
+(default `127.0.0.1`), `PERSONA_API_PORT` (default `8000`), `PERSONA_API_RELOAD`
+(default off). Existing env vars always win over `.env`, so
+`PERSONA_API_PORT=9000 uv run persona-api` works.
 
 ### Cloud (Clerk auth + Postgres RLS + credits)
 
