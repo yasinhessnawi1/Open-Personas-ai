@@ -53,6 +53,7 @@ from persona.sandbox.result import (
     NetworkPolicy,
     ResourceLimits,
     SandboxFile,
+    guess_media_type,
 )
 
 from persona_api.sandbox.config import SandboxWallClockConfig
@@ -63,6 +64,7 @@ if TYPE_CHECKING:
     # runtime, not an ImportError at module-load). For type-checking, pull
     # the ``Sandbox`` symbol into scope so the SDK-bearing parameter
     # annotations carry the real type instead of ``Any``.
+    from e2b import EntryInfo as E2BEntryInfo
     from e2b_code_interpreter import Sandbox as E2BSandbox
 
 __all__ = ["HostedSandbox", "detect_env_setup"]
@@ -167,6 +169,18 @@ _HOSTED_WORKSPACE_OUT = "/workspace/out"
 _WORKSPACE_OUT_BOOTSTRAP = (
     f"import os as _os; _os.makedirs({_HOSTED_WORKSPACE_OUT!r}, exist_ok=True)"
 )
+
+#: Recursion depth for the produced-file listing under ``/workspace/out``. The
+#: E2B SDK ``files.list(path, depth=...)`` defaults to ``1`` (non-recursive),
+#: which would miss the load-bearing ``charts/<id>.png`` sub-dir (D-17-X chart
+#: prefix). A bounded depth recurses into the documented sub-dirs without an
+#: unbounded walk of a pathological tree (the count + size caps are the real
+#: limits; this just has to reach the conventional ``charts/`` nesting).
+_PRODUCED_FILE_LIST_DEPTH = 5
+
+#: The E2B ``FileType.DIR`` enum value (the string ``"dir"``). Compared by value
+#: so the lazy-import module never has to import the SDK enum at module load.
+_E2B_DIR_TYPE_VALUE = "dir"
 
 
 def _is_sandbox_reaped(stderr: str) -> bool:
@@ -489,7 +503,7 @@ class HostedSandbox:
         if session_id is None:
             sandbox = self._create_sandbox(limits=limits, network=network)
             try:
-                return self._run_and_marshal(sandbox, code, timeout_s, input_files)
+                return self._run_and_marshal(sandbox, code, timeout_s, input_files, limits)
             finally:
                 self._safe_kill(sandbox)
         # Stateful: reuse the session container
@@ -497,7 +511,7 @@ class HostedSandbox:
         if sandbox is None:
             msg = f"session {session_id!r} does not exist; call create_session() first"
             raise CodeSandboxError(msg, context={"reason": "no_session", "session_id": session_id})
-        result = self._run_and_marshal(sandbox, code, timeout_s, input_files)
+        result = self._run_and_marshal(sandbox, code, timeout_s, input_files, limits)
         # Spec 25 §2.4 (operator-pass 2026-06-13): the E2B substrate reaps an
         # idle sandbox server-side; the next run_code raised a TimeoutException
         # ("The sandbox was not found", code 502) that _run_and_marshal captured
@@ -631,6 +645,7 @@ class HostedSandbox:
         code: str,
         timeout_s: float,
         input_files: list[SandboxFile],
+        limits: ResourceLimits,
     ) -> ExecutionResult:
         """Run ``code`` on ``sandbox``; marshal the E2B result into :class:`ExecutionResult`."""
         # Seed input files via the SDK's filesystem API. Best-effort: file
@@ -681,13 +696,109 @@ class HostedSandbox:
             outcome = "ok"
             exit_status = 0
 
+        # Produced-file discovery (parity with LocalDockerSandbox). The local
+        # substrate walks the rw ``/workspace/out`` mount; the E2B substrate has
+        # no host mount, so we list + read over the SDK filesystem API. Runs for
+        # every outcome — a partial-success run that wrote a chart before
+        # erroring still surfaces it (mirrors the produced_file_persister which
+        # fires regardless of outcome). Best-effort: a listing failure logs and
+        # yields no produced files rather than masking the run's real result.
+        produced, files_truncated = self._discover_produced_files(sandbox, limits)
+
         return ExecutionResult(
             stdout=stdout,
             stderr=stderr,
             exit_status=exit_status,
             outcome=outcome,
+            produced_files=produced,
             duration_ms=duration_ms,
+            truncated_files=files_truncated,
         )
+
+    @classmethod
+    def _discover_produced_files(
+        cls, sandbox: E2BSandbox, limits: ResourceLimits
+    ) -> tuple[tuple[SandboxFile, ...], bool]:
+        """List + read files produced under ``/workspace/out`` on the E2B sandbox.
+
+        Hosted analogue of :meth:`LocalDockerSandbox._discover_produced_files`.
+        The local substrate walks the read-write host mount; E2B has no host
+        mount, so this lists the documented out-dir via the SDK
+        (``files.list(path, depth=...)`` → ``list[EntryInfo]`` with ``path`` /
+        ``type`` / ``size`` per the verified SDK shape). Like the local path it
+        returns metadata-only :class:`SandboxFile` entries (``content_bytes``
+        stays ``None``) — the bytes are read on demand by the api-side
+        ``produced_file_persister`` via :meth:`copy_produced_file_to` /
+        :meth:`read_produced_file_bytes` (which is where
+        :data:`PRODUCED_FILE_CAP_BYTES` is authoritatively enforced).
+
+        Caps mirror the local path exactly (D-12-10): the per-file
+        ``max_produced_file_mb`` cap skips an oversize file (marking the run
+        truncated so the model knows), and the ``max_produced_files`` count cap
+        stops enumeration. ``media_type`` is inferred from the extension so a
+        produced PNG surfaces as ``image/png`` and renders inline.
+
+        Returns ``(files, was_truncated)``; ``was_truncated`` is ``True`` when
+        either cap fired. A missing out-dir or any SDK listing error yields
+        ``((), False)`` — discovery never converts a successful run into a
+        failure.
+        """
+        try:
+            entries = sandbox.files.list(_HOSTED_WORKSPACE_OUT, depth=_PRODUCED_FILE_LIST_DEPTH)
+        except Exception as exc:  # noqa: BLE001 — SDK error hierarchy abstracted
+            # Most commonly a NotFoundException when no out-dir was created.
+            _logger.debug(
+                "produced-file listing failed (no out-dir / SDK error)",
+                exc_type=type(exc).__name__,
+            )
+            return (), False
+
+        per_file_cap_bytes = limits.max_produced_file_mb * 1024 * 1024
+        prefix = f"{_HOSTED_WORKSPACE_OUT}/"
+        produced: list[SandboxFile] = []
+        truncated = False
+        # Sort by absolute path for a deterministic, sortable order (parity with
+        # the local path's ``sorted(host_out.rglob("*"))``).
+        for entry in sorted(entries, key=lambda e: e.path):
+            if not cls._entry_is_file(entry):
+                continue
+            abs_path = entry.path
+            if not abs_path.startswith(prefix):
+                # Defensive: the SDK should only return entries under the listed
+                # dir, but never surface a path outside the documented out-dir.
+                continue
+            if len(produced) >= limits.max_produced_files:
+                truncated = True
+                break
+            size = int(entry.size)
+            if size > per_file_cap_bytes:
+                # Surface that the run was truncated (the model wrote it) but do
+                # not report an oversize file the persister cannot copy.
+                truncated = True
+                continue
+            rel = abs_path[len(prefix) :]
+            produced.append(
+                SandboxFile(
+                    path=rel,
+                    size_bytes=size,
+                    media_type=guess_media_type(rel),
+                )
+            )
+        return tuple(produced), truncated
+
+    @staticmethod
+    def _entry_is_file(entry: E2BEntryInfo) -> bool:
+        """True when an E2B ``EntryInfo`` denotes a regular file (not a dir).
+
+        The SDK ``EntryInfo.type`` is a ``FileType`` enum (``FILE`` / ``DIR``);
+        compared by its ``.value`` string (``"file"``) to avoid importing the
+        SDK enum into this lazy-import module. Defensive: an entry without a
+        recognisable type is treated as a file (it will simply fail the read
+        and be skipped if it is not).
+        """
+        file_type = getattr(entry, "type", None)
+        type_value = getattr(file_type, "value", file_type)
+        return type_value != _E2B_DIR_TYPE_VALUE
 
     @staticmethod
     def _safe_kill(sandbox: E2BSandbox) -> None:

@@ -114,6 +114,7 @@ from persona.sandbox.result import (
     NetworkPolicy,
     ResourceLimits,
     SandboxFile,
+    guess_media_type,
 )
 
 __all__ = ["LocalDockerSandbox"]
@@ -963,7 +964,11 @@ class LocalDockerSandbox:
                 SandboxFile(
                     path=rel,
                     size_bytes=size,
-                    media_type="application/octet-stream",
+                    # Infer the media type from the extension so a produced PNG
+                    # surfaces as ``image/png`` and renders inline (the frontend
+                    # keys inline rendering on ``media_type.startswith("image/")``
+                    # with no extension fallback). D-12-X-produced-media-type.
+                    media_type=guess_media_type(rel),
                 )
             )
         return tuple(produced), truncated

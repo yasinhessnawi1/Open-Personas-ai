@@ -30,15 +30,18 @@ from persona.sandbox.errors import (
 )
 from persona.sandbox.protocol import CodeSandbox
 from persona.sandbox.result import (
+    DEFAULT_MEDIA_TYPE,
     ExecutionOutcome,
     ExecutionResult,
     NetworkPolicy,
     ResourceLimits,
     SandboxFile,
+    guess_media_type,
 )
 from persona.sandbox.tool import TRUNCATION_MARKER_PREFIX, make_code_execution_tool
 
 __all__ = [
+    "DEFAULT_MEDIA_TYPE",
     "TRUNCATION_MARKER_PREFIX",
     "CodeSandbox",
     "CodeSandboxError",
@@ -52,5 +55,6 @@ __all__ = [
     "SandboxFile",
     "SandboxQuotaExceededError",
     "SandboxUnavailableError",
+    "guess_media_type",
     "make_code_execution_tool",
 ]

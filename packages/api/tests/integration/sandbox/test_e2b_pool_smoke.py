@@ -167,3 +167,46 @@ async def test_reaper_task_lifecycle_against_real_substrate() -> None:
         # block hasn't unwound yet here).
     # After context exit, the reaper should be done (cancelled by aclose).
     assert reaper.done()
+
+
+@e2b_required
+@pytest.mark.asyncio
+async def test_produced_png_surfaces_as_image_artifact_against_real_substrate() -> None:
+    """Live E2B: code that writes a PNG to /workspace/out comes back as an
+    ``image/png`` produced file (the rich-output fix — parity with local Docker).
+
+    Reproduces the reported bug end-to-end on the hosted substrate: before the
+    fix ``ExecutionResult.produced_files`` was always empty, so a produced chart
+    never became a ToolResult artifact and the chat UI showed only stdout. This
+    asserts the produced PNG is discovered, surfaces with the ``image/png`` media
+    type the frontend keys inline rendering on, and is byte-readable via the
+    produced-file read path.
+    """
+    async with _pool() as pool:
+        handle = await pool.acquire(user_id="png-user", conversation_id="png-conv")
+        sandbox = pool._sandbox  # noqa: SLF001 — smoke verifies composition
+
+        # Write a minimal valid 1x1 PNG to the documented out-dir.
+        code = (
+            "import os\n"
+            "os.makedirs('/workspace/out', exist_ok=True)\n"
+            "png = bytes.fromhex('89504e470d0a1a0a0000000d49484452"
+            "000000010000000108060000001f15c4890000000a49444154789c"
+            "6360000002000154a24f9b0000000049454e44ae426082')\n"
+            "open('/workspace/out/chart.png','wb').write(png)\n"
+            "print('wrote chart')\n"
+        )
+        result = await sandbox.execute(code, session_id=handle.session_id)
+
+        assert result.outcome == "ok"
+        assert "wrote chart" in result.stdout
+        by_path = {f.path: f for f in result.produced_files}
+        assert "chart.png" in by_path, f"produced_files: {[f.path for f in result.produced_files]}"
+        assert by_path["chart.png"].media_type == "image/png"
+
+        # The produced file is byte-readable through the read path (what the
+        # api-side persister uses to copy bytes into the workspace).
+        data = await sandbox.read_produced_file_bytes(handle.session_id, "chart.png")
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+
+        await pool.release(handle)

@@ -809,6 +809,11 @@ class TestProducedFileCaps:
         assert truncated is False
         assert len(produced) == 2
         assert {f.path for f in produced} == {"a.csv", "b.png"}
+        # Media type is inferred from the extension so a produced PNG renders
+        # inline (the frontend keys inline on media_type.startswith("image/")).
+        by_path = {f.path: f for f in produced}
+        assert by_path["b.png"].media_type == "image/png"
+        assert by_path["a.csv"].media_type == "text/csv"
 
     def test_count_cap_truncates(self, tmp_path: Path) -> None:
         """``max_produced_files=N`` truncates to the first N files."""

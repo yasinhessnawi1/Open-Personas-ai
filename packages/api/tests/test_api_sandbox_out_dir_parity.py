@@ -103,6 +103,8 @@ def test_create_sandbox_survives_sdk_without_make_dir() -> None:
 
 
 def test_run_and_marshal_prepends_out_dir_bootstrap() -> None:
+    from persona.sandbox.result import ResourceLimits
+
     fake = _FakeSandbox()
     sandbox = HostedSandbox()
     result = sandbox._run_and_marshal(  # noqa: SLF001
@@ -110,6 +112,7 @@ def test_run_and_marshal_prepends_out_dir_bootstrap() -> None:
         "print('hi')",
         timeout_s=5.0,
         input_files=[],
+        limits=ResourceLimits(),
     )
     assert result.outcome == "ok"
     assert len(fake.run_code_calls) == 1

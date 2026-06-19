@@ -244,3 +244,38 @@ class TestExecutionResult:
         roundtrip = ExecutionResult.model_validate_json(result.model_dump_json())
         assert roundtrip.truncated_stdout is True
         assert roundtrip.truncated_files is True
+
+
+class TestGuessMediaType:
+    """``guess_media_type`` — extension-based media-type inference (the fix that
+    lets a produced PNG render inline; the frontend keys inline rendering on
+    ``media_type.startswith("image/")`` with no extension fallback)."""
+
+    def test_png_infers_image_png(self) -> None:
+        from persona.sandbox.result import guess_media_type
+
+        assert guess_media_type("chart.png") == "image/png"
+        assert guess_media_type("charts/sales.png") == "image/png"
+        assert guess_media_type("/workspace/out/x.png") == "image/png"
+
+    def test_common_image_types(self) -> None:
+        from persona.sandbox.result import guess_media_type
+
+        assert guess_media_type("a.jpg") == "image/jpeg"
+        assert guess_media_type("a.jpeg") == "image/jpeg"
+        assert guess_media_type("a.gif") == "image/gif"
+        assert guess_media_type("a.svg") == "image/svg+xml"
+
+    def test_documents_and_text(self) -> None:
+        from persona.sandbox.result import guess_media_type
+
+        assert guess_media_type("a.csv") == "text/csv"
+        assert guess_media_type("a.json") == "application/json"
+        assert guess_media_type("a.pdf") == "application/pdf"
+
+    def test_unknown_and_extensionless_fall_back_to_octet_stream(self) -> None:
+        from persona.sandbox.result import DEFAULT_MEDIA_TYPE, guess_media_type
+
+        assert DEFAULT_MEDIA_TYPE == "application/octet-stream"
+        assert guess_media_type("data.parquet") == DEFAULT_MEDIA_TYPE
+        assert guess_media_type("noext") == DEFAULT_MEDIA_TYPE

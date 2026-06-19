@@ -143,7 +143,7 @@ ignore_missing_imports = true
 # (graceful SandboxUnavailableError vs. ImportError at module load); the
 # TYPE_CHECKING import pulls the ``Sandbox`` symbol for type-narrowing only.
 [[tool.mypy.overrides]]
-module = ["e2b_code_interpreter.*"]
+module = ["e2b_code_interpreter.*", "e2b", "e2b.*"]
 ignore_missing_imports = true
 
 # openpyxl (persona-core [documents] extra, spec 14 T09) ships no py.typed
