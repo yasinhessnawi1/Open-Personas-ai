@@ -90,6 +90,19 @@ _ASK_USER_MARKER = "[ASK_USER]"
 _FINAL_MARKER = "[FINAL]"
 _NO_CALLBACK_REPLY = "Please proceed with your best judgment."
 _HALLUCINATION_NUDGE = "You must use only the tools listed as available. Do not invent tool names."
+# A reasoning step (text-only — no tool call, no marker) ends the context on an
+# assistant message. The next chat() call would then end on an assistant
+# message, which Anthropic (and any provider without assistant-prefill) rejects
+# with a 400 ("the conversation must end with a user message"). Appending this
+# user-role continuation BOTH fixes the 400 AND pushes the plan-act-reflect loop
+# forward: it tells the model to take a concrete next action (call a tool) or
+# emit [FINAL] if done. The wording echoes the marker-floor instructions
+# (_AGENTIC_INSTRUCTIONS) so the marker contract stays consistent.
+_REASONING_CONTINUE_NUDGE = (
+    "Continue the task: take the next concrete action by calling one of the "
+    f"available tools, or if the task is complete, give your final deliverable "
+    f"prefixed with {_FINAL_MARKER}."
+)
 _AGENTIC_INSTRUCTIONS = (
     "You are completing a task end to end. Plan before acting, and use the tools "
     "available to you rather than guessing. When you need information from the user "
@@ -271,7 +284,15 @@ class AgenticLoop:
                 await self._emit(on_event, RunEvent.completed(step_num, output))
                 break
             else:
-                context = [*context, self._assistant(response.content)]
+                # Reasoning step: append the assistant text, then a user-role
+                # continuation nudge so the context ends user-role before the
+                # next chat() (Bug fix — no assistant-prefill 400) and the loop
+                # actually progresses toward a tool call or [FINAL].
+                context = [
+                    *context,
+                    self._assistant(response.content),
+                    self._user(_REASONING_CONTINUE_NUDGE),
+                ]
                 steps.append(
                     Step(
                         type=StepType.REASONING,

@@ -32,6 +32,11 @@ from sqlalchemy import update
 
 from persona_api.db.models import runs as runs_t
 from persona_api.middleware.rls_context import current_user_id
+from persona_api.sandbox import (
+    SandboxRequestContext,
+    reset_sandbox_request_context,
+    set_sandbox_request_context,
+)
 
 if TYPE_CHECKING:
     from persona_runtime.agentic.events import RunEvent
@@ -99,6 +104,20 @@ class RunRegistry:
         owner via this contextvar — correct, since the run acts as the owner.
         """
         token = current_user_id.set(handle.owner_id)
+        # Bind the per-request sandbox context for the run's lifetime, mirroring
+        # chat_service.stream_chat. The file tools (file_read / file_write) and
+        # code_execution read this contextvar to resolve their scoped root /
+        # session: file_read/file_write fail CLOSED when nothing is bound (the
+        # post-security-fix behaviour), so a run with no context bound errors on
+        # every file tool. The owner is the run's owner (file-tool root →
+        # <workspace_root>/<owner_id>/<persona_id>); the conversation_id slot is
+        # the run_id so the run gets its OWN sandbox session (session_id =
+        # owner_id:run_id), distinct from any chat conversation. Isolation is
+        # intact: the root never escapes the run's owner/persona. Reset in the
+        # finally regardless of completion / cancellation / error.
+        sandbox_token = set_sandbox_request_context(
+            SandboxRequestContext(owner_id=handle.owner_id, conversation_id=handle.run_id)
+        )
         # Accumulate the per-step event log so a restart mid-run leaves the run
         # VIEWABLE (S08-2: progress visible, not resumable). The final Run (with
         # the authoritative Step objects) overwrites this on completion.
@@ -123,6 +142,7 @@ class RunRegistry:
             _log.error("agentic run {rid} failed: {err}", rid=handle.run_id, err=str(exc))
             self._persist_error(handle.run_id, str(exc))
         finally:
+            reset_sandbox_request_context(sandbox_token)
             current_user_id.reset(token)
             await handle.events.put(None)  # end-of-stream sentinel for SSE
 

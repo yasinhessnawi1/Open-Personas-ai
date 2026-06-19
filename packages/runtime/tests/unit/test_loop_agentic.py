@@ -286,6 +286,31 @@ class TestMaxSteps:
         assert run.status is not RunStatus.COMPLETED
 
 
+class TestReasoningStep:
+    @pytest.mark.asyncio
+    async def test_reasoning_step_does_not_leave_context_on_assistant(self) -> None:
+        # Bug A: a text-only step (no tool call, no [FINAL]/[ASK_USER]) must NOT
+        # leave the context ending on an assistant message — Anthropic (and any
+        # provider without assistant-prefill) rejects that with a 400. The loop
+        # appends a user-role continuation nudge after the assistant reasoning so
+        # the NEXT chat() call ends with a user message.
+        script = [
+            _resp("Let me think about this step by step."),  # reasoning, no marker
+            _resp("[FINAL] all done"),
+        ]
+        loop, _, backend = _make_loop(script)
+        run = await loop.run("t")
+
+        assert run.status is RunStatus.COMPLETED
+        assert run.output == "all done"
+        # Two chat() calls happened; the SECOND (after the reasoning step) must
+        # have been handed a context ending in a user-role message, never an
+        # assistant message.
+        assert backend.chat_calls == 2
+        second_context = backend.chat_contexts[1]
+        assert second_context[-1].role == "user"
+
+
 class TestForceFrontier:
     @pytest.mark.asyncio
     async def test_force_frontier_uses_frontier_every_step(self) -> None:

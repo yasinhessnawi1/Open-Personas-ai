@@ -89,6 +89,11 @@ class ScriptedBackend:
         #: tests assert the prompt builder placed a multimodal user message
         #: (image-workspace cascade Part 2). ``None`` until the first call.
         self.last_stream_messages: list[ConversationMessage] | None = None
+        # Each ``chat()`` call records the message list it was handed, so tests
+        # can assert the context shape the loop sends — e.g. that a step never
+        # sends a context ending in an assistant message to a provider that
+        # rejects assistant-prefill.
+        self.chat_contexts: list[list[ConversationMessage]] = []
 
     @property
     def provider_name(self) -> str:
@@ -121,6 +126,7 @@ class ScriptedBackend:
         from persona.backends.types import ChatResponse
 
         self.chat_calls += 1
+        self.chat_contexts.append(list(messages))
         # Agentic-loop path: replay the scripted ChatResponse sequence.
         if self._chat_script:
             if self._chat_index < len(self._chat_script):
