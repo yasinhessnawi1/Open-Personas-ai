@@ -205,6 +205,10 @@ def make_code_execution_tool(
         # Spec 28 — collected on success below; declared here so the final
         # ToolResult can reference it (the SandboxError path returns early).
         produced_artifacts: list[PersistedArtifact] = []
+        # Names of produced files discarded for being 0 bytes (empty/invalid) —
+        # surfaced to the model so it regenerates them rather than assuming the
+        # write succeeded.
+        empty_files: list[str] = []
         try:
             if pre_execute_hook is not None:
                 await pre_execute_hook()
@@ -255,6 +259,23 @@ def make_code_execution_tool(
             # gets its bytes persisted so the model can reference them.
             if produced_file_persister is not None and session_id is not None:
                 for sf in result.produced_files:
+                    # A 0-byte produced file is never a usable artifact: it can
+                    # only render as a broken download (an empty PDF →
+                    # InvalidPDFException), and persisting it would OVERWRITE a
+                    # good earlier file at the same workspace path (produced files
+                    # keep their real names, so an iterating model that re-emits
+                    # the same filename clobbers the prior version). Skip it
+                    # entirely — no copy, no surface, no clobber. The empty file
+                    # still appears in ``result.produced_files`` with size 0, so
+                    # the model sees it and can regenerate.
+                    if sf.size_bytes == 0:
+                        _logger.debug(
+                            "skipping 0-byte produced file",
+                            path=sf.path,
+                            persona_id=persona_id or "<unknown>",
+                        )
+                        empty_files.append(sf.path)
+                        continue
                     workspace_ref = await produced_file_persister(session_id, sf.path)
                     # Spec 28 — surface the persisted file as an artifact so the
                     # chat UI renders a file card. None ⇒ persisted but not
@@ -330,6 +351,18 @@ def make_code_execution_tool(
                 )
 
         formatted = _format_result_for_model(result, limits)
+        # An empty produced file is a silent failure: the code "ran" but wrote
+        # nothing usable (a 0-byte PDF can't open). Tell the model explicitly so
+        # it regenerates rather than reporting success. This also flips the
+        # result to is_error so the agentic loop treats the turn as recoverable.
+        if empty_files:
+            names = ", ".join(sorted(empty_files))
+            formatted = (
+                f"{formatted}\n\n"
+                f"ERROR: these produced files were empty (0 bytes) and were "
+                f"discarded: {names}. The write did not succeed — regenerate the "
+                f"file and verify it is non-empty before finishing."
+            )
         _emit_audit_for_result(
             audit_logger=audit_logger,
             persona_id=persona_id,
@@ -355,8 +388,10 @@ def make_code_execution_tool(
             tool_name="code_execution",
             content=formatted,
             # outcome != "ok" surfaces as is_error so the model recovers (the
-            # loops also feed is_error back without crashing the stream).
-            is_error=result.outcome != "ok",
+            # loops also feed is_error back without crashing the stream). An
+            # empty produced file is also a recoverable failure even when the
+            # code exited 0 — the deliverable wasn't actually written.
+            is_error=result.outcome != "ok" or bool(empty_files),
             data={
                 "outcome": result.outcome,
                 "exit_status": result.exit_status,

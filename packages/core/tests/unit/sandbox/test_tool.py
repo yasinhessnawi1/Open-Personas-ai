@@ -656,3 +656,42 @@ class TestProducedFilesSurfaceAsArtifacts:
         )
         result = await tool.execute(code="...")
         assert result.artifacts == ()
+
+    @pytest.mark.asyncio
+    async def test_zero_byte_produced_file_is_skipped_and_flagged_for_retry(self) -> None:
+        """A 0-byte produced file is never copied/surfaced (an empty PDF can only
+        render broken, and re-persisting it would clobber a good earlier file).
+        The model is told it was empty + to regenerate, and the result is_error so
+        the agentic loop treats the turn as recoverable."""
+        files = (
+            SandboxFile(path="marketing_strategy.pdf", size_bytes=0, media_type="application/pdf"),
+            SandboxFile(path="out/chart.png", size_bytes=2048, media_type="image/png"),
+        )
+        sandbox = FakeSandbox(
+            default_result=ExecutionResult(
+                stdout="done\n", stderr="", exit_status=0, outcome="ok", produced_files=files
+            )
+        )
+
+        copied: list[str] = []
+
+        async def _persister(session_id: str, ref: str) -> str:  # noqa: ARG001
+            copied.append(ref)
+            return f"uploads/{ref.rsplit('/', 1)[-1]}"
+
+        tool = make_code_execution_tool(
+            sandbox,
+            session_id_provider=lambda: "user-1:conv-A",
+            produced_file_persister=_persister,
+            persona_id="astrid",
+        )
+        result = await tool.execute(code="...")
+
+        # The empty PDF was neither copied nor surfaced; the real chart still is.
+        assert copied == ["out/chart.png"]
+        assert [a.workspace_path for a in result.artifacts] == ["uploads/chart.png"]
+        # The model is told to regenerate, and the turn is recoverable.
+        assert result.is_error is True
+        assert "marketing_strategy.pdf" in result.content
+        assert "empty" in result.content.lower()
+        assert "regenerate" in result.content.lower()
