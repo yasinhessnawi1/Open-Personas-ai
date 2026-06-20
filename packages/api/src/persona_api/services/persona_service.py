@@ -23,6 +23,7 @@ from persona.errors import PersonaError, PersonaNotFoundError
 from persona.language_capability import serviceability_warning
 from persona.logging import get_logger
 from persona.registry import PersonaRegistry
+from persona.schema.defaults import ensure_default_capabilities
 from persona.schema.persona import Persona
 from persona.schema.safety import SAFETY_CONSTRAINT, ensure_safety_constraint
 from persona.stores import (
@@ -132,6 +133,41 @@ def _guard_safety(persona: Persona, yaml_str: str) -> tuple[Persona, str]:
     return guarded, guarded_yaml
 
 
+def _guard_default_capabilities(persona: Persona, yaml_str: str) -> tuple[Persona, str]:
+    """Guarantee the default capability floor on the persona AND the stored YAML.
+
+    A persona created without baseline tools/skills can't read uploaded files,
+    run code, search the web, or generate documents — so it answers from
+    imagination and hallucinates. The authoring prompt suggests a capability set,
+    but direct-create posts a structured YAML with no model in the loop, so that
+    suggestion cannot be relied on. This is the enforcement floor for *every*
+    create/update path. The defaults must end up in the **stored** YAML — the
+    runtime re-loads the persona from it, so guarding only the in-memory object
+    would leave the persona under-equipped on its next load.
+
+    Idempotent + churn-free: when every default is already present (the common
+    case), the original ``yaml_str`` is returned unchanged. Only a submission
+    missing one or more defaults is re-dumped — and only then does the stored
+    representation change — appending the missing defaults after the persona's
+    existing entries (authored order preserved).
+    """
+    guarded = ensure_default_capabilities(persona)
+    if guarded is persona:
+        return persona, yaml_str
+    raw = yaml.safe_load(yaml_str)
+    raw["tools"] = list(guarded.tools)
+    raw["skills"] = list(guarded.skills)
+    guarded_yaml = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    _LOG.warning(
+        "added the default capability floor to a persona that omitted some "
+        "(persona_id={pid}, tools={tools}, skills={skills})",
+        pid=persona.persona_id or "",
+        tools=list(guarded.tools),
+        skills=list(guarded.skills),
+    )
+    return guarded, guarded_yaml
+
+
 def _build_registry(engine: Engine, embedder: Embedder, audit_root: Path) -> PersonaRegistry:
     """Compose the four typed stores over PostgresBackend (RLS-scoped engine)."""
     backend = PostgresBackend(engine=engine, embedder=embedder)
@@ -169,6 +205,7 @@ def create_persona(
     persona_id = f"persona_{uuid.uuid4().hex}"
     persona = load_persona_from_yaml(yaml_str, persona_id=persona_id, owner_id=owner_id)
     persona, yaml_str = _guard_safety(persona, yaml_str)
+    persona, yaml_str = _guard_default_capabilities(persona, yaml_str)
     _warn_if_language_unserviceable(persona)
 
     with rls_engine.begin() as conn:
@@ -204,6 +241,7 @@ def update_persona(
     """
     persona = load_persona_from_yaml(yaml_str, persona_id=persona_id, owner_id=owner_id)
     persona, yaml_str = _guard_safety(persona, yaml_str)
+    persona, yaml_str = _guard_default_capabilities(persona, yaml_str)
     _warn_if_language_unserviceable(persona)
     values: dict[str, object] = {"yaml": yaml_str, "schema_version": persona.schema_version}
     if avatar_url is not None:

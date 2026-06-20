@@ -18,6 +18,11 @@ from persona.schema.conversation import (
     ConversationHistory,
     ConversationMessage,
 )
+from persona.schema.defaults import (
+    DEFAULT_SKILLS,
+    DEFAULT_TOOLS,
+    ensure_default_capabilities,
+)
 from persona.schema.persona import (
     SUPPORTED_SCHEMA_VERSIONS,
     CatalogueVoice,
@@ -39,6 +44,8 @@ from persona.schema.tools import Tool, ToolCall, ToolResult
 
 __all__ = [
     "CHUNK_ID_INDEX_WIDTH",
+    "DEFAULT_SKILLS",
+    "DEFAULT_TOOLS",
     "SAFETY_CONSTRAINT",
     "SUPPORTED_SCHEMA_VERSIONS",
     "CatalogueVoice",
@@ -63,6 +70,7 @@ __all__ = [
     "VoiceSpec",
     "WorldviewClaim",
     "WriteSource",
+    "ensure_default_capabilities",
     "ensure_safety_constraint",
     "make_chunk_id",
 ]
