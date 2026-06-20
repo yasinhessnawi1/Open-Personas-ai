@@ -19,6 +19,8 @@ with a scripted backend.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -383,52 +385,75 @@ async def stream_chat(
             documents=turn_documents,
         )
 
-        # The loop fires on_event synchronously between chunk yields; buffer the
-        # events and flush them (in order) before the next chunk's frame, so the SSE
-        # stream preserves the true interleaving. `tier` is captured for `done`.
-        pending: list[RunEvent] = []
+        # The loop fires on_event from INSIDE loop.turn, between/around chunk
+        # yields. A tool-heavy round emits NO text chunks, so a callback that only
+        # buffered would leave tool_calling/tool_result stuck until the next chunk
+        # — the UI froze through multi-tool turns. Bridge the callback into this
+        # generator via a queue: the loop runs in a pump task and every event /
+        # chunk lands on the queue as it fires, so the consumer flushes each the
+        # instant it arrives, interleaved in true emission order. `tier` is
+        # captured for `done` (Spec 31 D-31-1: the routing summary rides the tier
+        # event; None on rule-based turns).
         tier = "frontier"  # fallback; replaced by the router's real choice via on_event
-        # Spec 31 (D-31-1): the concise model-decision summary rides the tier
-        # event; captured here and folded into `done` (None on rule-based turns).
         routing_summary: dict[str, object] | None = None
+        last_chunk: StreamChunk | None = None
+
+        queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
 
         async def _on_event(event: RunEvent) -> None:
-            pending.append(event)
+            await queue.put(("event", event))
 
-        def _drain() -> list[bytes]:
-            nonlocal tier, routing_summary
-            frames: list[bytes] = []
-            for ev in pending:
-                if ev.type == "tier":
-                    tier = str(ev.data.get("tier", tier))
-                    routing_summary = ev.data.get("routing")  # Spec 31; may be None
-                    continue  # tier rides the `done` event, not its own SSE frame
-                frames.append(_sse(ev.type, ev.data))
-            pending.clear()
-            return frames
+        async def _pump() -> None:
+            # Drive the loop in a task so its events reach the queue (and the
+            # client) the moment they fire, not batched at the next chunk. The
+            # sandbox contextvar set above is copied into this task at creation,
+            # so code_execution still resolves (owner_id, conversation_id).
+            # ``turn_has_image`` rides as a keyword for the runtime's T13-T09
+            # vision pre-filter; scripted test loops accept the extra kwargs.
+            try:
+                async for chunk in loop.turn(
+                    conversation,
+                    user_message,
+                    _on_event,
+                    turn_has_image=turn_has_image,
+                    images=turn_images or None,
+                    documents=turn_documents or None,
+                    document_context=document_context,
+                ):
+                    await queue.put(("chunk", chunk))
+                await queue.put(("end", None))
+            except Exception as exc:  # noqa: BLE001 — re-raised on the consumer side
+                await queue.put(("error", exc))
 
-        last_chunk: StreamChunk | None = None
-        # ``turn_has_image`` rides as a keyword so the runtime loop's
-        # T13-T09 vision pre-filter (Router._candidate_tiers) restricts the
-        # candidate tier set to vision-capable backends when image refs are
-        # present. The scripted test loops accept ``**_kwargs`` so this is
-        # compatible with both the real loop and the spec-08 scripted loops.
-        async for chunk in loop.turn(
-            conversation,
-            user_message,
-            _on_event,
-            turn_has_image=turn_has_image,
-            images=turn_images or None,
-            documents=turn_documents or None,
-            document_context=document_context,
-        ):
-            last_chunk = chunk
-            for frame in _drain():  # tool_calling / tool_result that fired before this chunk
-                yield frame
-            if chunk.delta:
-                yield _sse("chunk", {"delta": chunk.delta, "is_final": chunk.is_final})
-        for frame in _drain():  # any trailing events after the final chunk
-            yield frame
+        pump_task = asyncio.create_task(_pump())
+        try:
+            while True:
+                kind, item = await queue.get()
+                if kind == "event":
+                    ev = cast("RunEvent", item)
+                    if ev.type == "tier":
+                        tier = str(ev.data.get("tier", tier))
+                        routing_summary = ev.data.get("routing")  # Spec 31; may be None
+                        continue  # tier rides the `done` event, not its own SSE frame
+                    yield _sse(ev.type, ev.data)
+                elif kind == "chunk":
+                    chunk = cast("StreamChunk", item)
+                    last_chunk = chunk
+                    if chunk.delta:
+                        yield _sse("chunk", {"delta": chunk.delta, "is_final": chunk.is_final})
+                elif kind == "error":
+                    raise cast("BaseException", item)
+                else:  # "end" — loop.turn completed cleanly
+                    break
+        finally:
+            # Client disconnect (GeneratorExit) or a loop error stops the pump so
+            # it can't outlive the request. Cancellation here never reaches the
+            # persist-after-final below (only the clean `end` break does), so the
+            # D-08-6 "cancelled turn deducts nothing" contract holds.
+            if not pump_task.done():
+                pump_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pump_task
 
         # ---- persist-after-final (only reached on clean completion) ----
         usage = last_chunk.usage if last_chunk is not None else None
