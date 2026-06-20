@@ -1350,3 +1350,59 @@ class TestTextualToolCallRecovery:
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].name == "web_search"
         assert resp.content == "some narration"
+
+
+class TestTruncatedToolCallArguments:
+    """Non-streaming parse: a tool call whose ``arguments`` JSON was truncated.
+
+    When the model writes a payload (e.g. a large ``code`` string) that exceeds
+    the response budget, the provider cuts it off mid-JSON. The parser MUST mark
+    the call ``truncated`` (and NOT silently dispatch empty args) so the runtime
+    can feed back a "your call was cut off — shorten it" signal instead of the
+    cryptic "Field required" that triggers an identical-retry loop.
+    """
+
+    @staticmethod
+    def _resp(arguments: str, *, finish_reason: str | None = None) -> Any:
+        fn = SimpleNamespace(name="code_execution", arguments=arguments)
+        tc = SimpleNamespace(function=fn, id="call_0")
+        msg = SimpleNamespace(content="", tool_calls=[tc])
+        choice = SimpleNamespace(message=msg, finish_reason=finish_reason)
+        usage = SimpleNamespace(prompt_tokens=3, completion_tokens=5)
+        return SimpleNamespace(choices=[choice], usage=usage, model="m")
+
+    def test_truncated_arguments_marks_call_truncated(self) -> None:
+        # arguments cut off mid-JSON (a long ``code`` string never closed).
+        truncated_json = '{"code": "import pandas as pd\\nfor i in range(1000):\\n    print(i'
+        resp = _parse_openai_response(
+            self._resp(truncated_json, finish_reason="length"),
+            "openrouter",
+            use_native_tools=True,
+        )
+        assert len(resp.tool_calls) == 1
+        call = resp.tool_calls[0]
+        assert call.name == "code_execution"
+        assert call.truncated is True
+        # args end up empty, but the truncated flag tells the runtime to surface
+        # guidance rather than execute an empty-args call.
+        assert call.args == {}
+
+    def test_length_finish_reason_marks_truncated_even_if_args_parse(self) -> None:
+        # Defensive: finish_reason="length" alone signals a cut-off response.
+        resp = _parse_openai_response(
+            self._resp('{"code": "print(1)"}', finish_reason="length"),
+            "openrouter",
+            use_native_tools=True,
+        )
+        assert resp.tool_calls[0].truncated is True
+
+    def test_wellformed_arguments_not_truncated(self) -> None:
+        # Regression: a normal, complete tool call dispatches with full args.
+        resp = _parse_openai_response(
+            self._resp('{"code": "print(1)"}', finish_reason="tool_calls"),
+            "openrouter",
+            use_native_tools=True,
+        )
+        call = resp.tool_calls[0]
+        assert call.truncated is False
+        assert call.args == {"code": "print(1)"}

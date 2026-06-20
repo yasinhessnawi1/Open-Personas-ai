@@ -1395,22 +1395,36 @@ def _parse_openai_response(
     if choices:
         message = getattr(choices[0], "message", None)
         content = (getattr(message, "content", None) or "") if message else ""
+        # ``finish_reason="length"`` means the provider cut the response off at
+        # the token budget — a tool call's ``arguments`` JSON is then likely
+        # truncated mid-object. Used as corroborating evidence below.
+        finish_reason = getattr(choices[0], "finish_reason", None)
         for tc in getattr(message, "tool_calls", []) or []:
             fn = getattr(tc, "function", None)
             if fn is None:
                 continue
             raw_args = getattr(fn, "arguments", "{}") or "{}"
+            truncated = False
             try:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
             except json.JSONDecodeError:
+                # The model wrote a payload (e.g. a large ``code`` string) that
+                # exceeded the response budget and was cut off mid-JSON. Do NOT
+                # silently coerce to empty args and dispatch — that produces the
+                # cryptic "Field required" and an identical-retry loop. Mark the
+                # call truncated so the runtime returns actionable guidance
+                # (TRUNCATED_TOOL_CALL_MESSAGE) instead of dispatching empty args.
                 args_dict = {}
+                truncated = True
             if not isinstance(args_dict, dict):
                 args_dict = {}
+                truncated = True
             tool_calls.append(
                 ToolCall(
                     name=getattr(fn, "name", ""),
                     args=args_dict,
                     call_id=getattr(tc, "id", "") or "",
+                    truncated=truncated or finish_reason == "length",
                 )
             )
     if not use_native_tools:

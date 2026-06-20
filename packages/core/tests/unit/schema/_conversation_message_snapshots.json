@@ -101,7 +101,8 @@
           "args": {
             "query": "mould"
           },
-          "call_id": "call_0"
+          "call_id": "call_0",
+          "truncated": false
         }
       ]
     }
@@ -148,7 +149,8 @@
           "args": {
             "query": "mould"
           },
-          "call_id": "tu_1"
+          "call_id": "tu_1",
+          "truncated": false
         }
       ]
     }
@@ -358,7 +360,8 @@
           "args": {
             "q": "x"
           },
-          "call_id": "call_1"
+          "call_id": "call_1",
+          "truncated": false
         }
       ]
     }

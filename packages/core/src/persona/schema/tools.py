@@ -21,7 +21,43 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["PersistedArtifact", "Tool", "ToolCall", "ToolResult"]
+__all__ = [
+    "TRUNCATED_TOOL_CALL_MESSAGE",
+    "PersistedArtifact",
+    "Tool",
+    "ToolCall",
+    "ToolResult",
+    "truncated_tool_call_message",
+]
+
+
+#: Model-facing guidance fed back as the tool result when a tool call's
+#: ``arguments`` JSON could not be parsed because the provider truncated the
+#: response (typically ``finish_reason="length"`` — the model wrote a payload,
+#: e.g. a large ``code`` string, that exceeded the response budget and was cut
+#: off mid-JSON). Without this, the truncated call would dispatch with empty
+#: args and the ``@tool`` validator would return the cryptic "Field required",
+#: prompting the model to retry the same too-long payload in a loop. The message
+#: tells the model to shorten or split the work so it adapts instead of looping.
+TRUNCATED_TOOL_CALL_MESSAGE = (
+    "Your '{tool}' call was cut off — the arguments (likely the 'code') exceeded "
+    "the response budget and were truncated before the JSON finished. Nothing was "
+    "executed. Send shorter code, or split the work across multiple smaller "
+    "'{tool}' calls."
+)
+
+
+def truncated_tool_call_message(tool_name: str) -> str:
+    """Render :data:`TRUNCATED_TOOL_CALL_MESSAGE` for a specific tool.
+
+    Args:
+        tool_name: The tool whose call was truncated. Falls back to a generic
+            ``"tool"`` label when the name itself was lost to truncation.
+
+    Returns:
+        Actionable, model-facing guidance to shorten or split the call.
+    """
+    return TRUNCATED_TOOL_CALL_MESSAGE.format(tool=tool_name or "tool")
 
 
 class ToolCall(BaseModel):
@@ -32,6 +68,11 @@ class ToolCall(BaseModel):
         args: Keyword arguments to pass to the tool. JSON-serialisable.
         call_id: Provider-supplied identifier so the matching ``ToolResult``
             can be correlated. Empty string if the provider doesn't supply one.
+        truncated: True when the provider truncated the response mid-JSON so the
+            ``arguments`` could not be parsed (typically ``finish_reason
+            ="length"``). The runtime must NOT dispatch a truncated call with
+            empty args — it returns :data:`TRUNCATED_TOOL_CALL_MESSAGE` as the
+            tool result so the model shortens/splits instead of looping.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -39,6 +80,7 @@ class ToolCall(BaseModel):
     name: str
     args: dict[str, Any] = Field(default_factory=dict)
     call_id: str = ""
+    truncated: bool = False
 
 
 class PersistedArtifact(BaseModel):

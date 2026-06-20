@@ -44,7 +44,7 @@ from persona.errors import SkillCompositionDepthError, SkillCycleError
 from persona.logging import get_logger
 from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
 from persona.schema.conversation import ConversationMessage
-from persona.schema.tools import ToolCall, ToolResult
+from persona.schema.tools import ToolCall, ToolResult, truncated_tool_call_message
 from persona.skills import collect_skill_supplements, count_tokens, render_skill_index
 from persona.skills.composition import AdmissionResult, SkillCompositionState
 from persona.tools import format_tool_result
@@ -1351,6 +1351,18 @@ class ConversationLoop:
         """
         from persona.errors import ToolExecutionError, ToolNotAllowedError
 
+        # The provider truncated the call mid-JSON (finish_reason="length" or
+        # unparseable arguments). Dispatching with empty args yields the cryptic
+        # "Field required" and an identical-retry loop; return actionable
+        # guidance so the model shortens/splits instead.
+        if call.truncated:
+            return ToolResult(
+                tool_name=call.name,
+                call_id=call.call_id,
+                is_error=True,
+                content=truncated_tool_call_message(call.name),
+            )
+
         try:
             return await self._toolbox.dispatch(call)
         except ToolNotAllowedError:
@@ -1371,13 +1383,21 @@ class ConversationLoop:
 
     @staticmethod
     def _build_call(call_id: str, name: str, raw_args: str) -> ToolCall:
+        truncated = False
         try:
             args = json.loads(raw_args) if raw_args else {}
         except json.JSONDecodeError:
-            args = {}  # fail-safe (D-05-13); the @tool decorator validates
+            # Streamed ``arguments`` fragments never assembled into valid JSON —
+            # the provider cut the response off mid-payload (D-05-13). Do NOT
+            # dispatch empty args; mark truncated so ``_dispatch`` returns
+            # actionable "shorten it" guidance instead of the cryptic
+            # "Field required" that triggers an identical-retry loop.
+            args = {}
+            truncated = True
         if not isinstance(args, dict):
             args = {}
-        return ToolCall(name=name, args=args, call_id=call_id)
+            truncated = True
+        return ToolCall(name=name, args=args, call_id=call_id, truncated=truncated)
 
     def _write_episodic(self, persona_id: str, user_text: str, assistant_text: str) -> None:
         """Write one combined episodic chunk per turn (D-05-12; mirrors the CLI)."""

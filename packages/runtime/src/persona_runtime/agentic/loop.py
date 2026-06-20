@@ -609,6 +609,19 @@ class AgenticLoop:
         unchanged.
         """
         from persona.errors import ToolExecutionError, ToolNotAllowedError
+        from persona.schema.tools import truncated_tool_call_message
+
+        # The provider truncated the call mid-JSON (finish_reason="length" or
+        # unparseable arguments). Dispatching with empty args yields the cryptic
+        # "Field required" and an identical-retry loop; return actionable
+        # guidance so the model shortens/splits instead.
+        if call.truncated:
+            return ToolResult(
+                tool_name=call.name,
+                call_id=call.call_id,
+                is_error=True,
+                content=truncated_tool_call_message(call.name),
+            )
 
         try:
             return await self._toolbox.dispatch(call)

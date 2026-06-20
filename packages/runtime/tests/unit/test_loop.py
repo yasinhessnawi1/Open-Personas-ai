@@ -24,7 +24,7 @@ from persona.history import ConversationHistoryManager
 from persona.schema.conversation import Conversation, ConversationMessage
 from persona.schema.persona import Persona, PersonaIdentity
 from persona.schema.skills import SkillSpec
-from persona.schema.tools import ToolResult
+from persona.schema.tools import ToolCall, ToolResult
 from persona.skills import SkillInjector, SkillScanner, make_use_skill_tool
 from persona.skills._tokens import count_tokens
 from persona.tools import Toolbox
@@ -56,6 +56,18 @@ def _persona() -> Persona:
 @tool(name="echo", description="Echo a message back.")
 async def _echo_tool(message: str) -> ToolResult:
     return ToolResult(tool_name="echo", content=f"echoed: {message}", is_error=False)
+
+
+_code_exec_calls: list[str] = []
+
+
+@tool(name="code_execution", description="Run Python code.")
+async def _code_execution_tool(code: str) -> ToolResult:
+    # Records each real dispatch so a test can prove a TRUNCATED call never
+    # reaches the tool (no empty-args dispatch). ``code`` is required, mirroring
+    # the real sandbox tool whose validator returns "Field required (at code)".
+    _code_exec_calls.append(code)
+    return ToolResult(tool_name="code_execution", content="ran", is_error=False)
 
 
 def _make_loop(
@@ -196,6 +208,68 @@ class TestToolCallLoop:
         # the bad call was dispatched once (and recovered), then the model re-answered
         assert writer.logs[0].tool_calls == 1
         assert backend.chat_stream_calls == 2
+
+
+class TestTruncatedToolCallStreaming:
+    """Streaming parse: a tool call whose ``arguments`` JSON was truncated.
+
+    The model wrote a long ``code`` payload that exceeded the response budget,
+    so the streamed ``arguments`` fragments never assembled into valid JSON. The
+    loop must NOT dispatch ``code_execution`` with empty args (which yields the
+    cryptic "Field required" and an identical-retry loop); it must feed back
+    actionable "your call was cut off — shorten it" guidance so the model adapts.
+    """
+
+    def test_build_call_marks_truncated_on_invalid_json(self) -> None:
+        # Truncated mid-object: opening brace + an unterminated string.
+        call = ConversationLoop._build_call("c0", "code_execution", '{"code": "print(1')
+        assert call.truncated is True
+        assert call.args == {}
+
+    def test_build_call_wellformed_not_truncated(self) -> None:
+        # Regression: complete arguments parse and dispatch normally.
+        call = ConversationLoop._build_call("c0", "code_execution", '{"code": "print(1)"}')
+        assert call.truncated is False
+        assert call.args == {"code": "print(1)"}
+
+    @pytest.mark.asyncio
+    async def test_truncated_call_not_dispatched_empty_and_surfaces_guidance(self) -> None:
+        _code_exec_calls.clear()
+        # Round 1: a code_execution call whose arguments JSON is truncated.
+        # Round 2: the model (having seen the guidance) answers directly.
+        backend = ScriptedBackend(
+            [
+                ScriptedRound(
+                    tool_name="code_execution",
+                    raw_arguments='{"code": "import pandas as pd\\nfor i in range(100',
+                    call_id="c0",
+                ),
+                ScriptedRound(text="Understood — I'll split that into smaller chunks."),
+            ]
+        )
+        loop, _stores, writer = _make_loop(backend, extra_tools=[_code_execution_tool])
+
+        chunks = [c async for c in loop.turn(_conv(0), "make a styled PDF")]  # must NOT raise
+
+        accumulated = "".join(c.delta for c in chunks)
+        assert chunks[-1].is_final is True
+        assert "smaller chunks" in accumulated
+        # The truncated call was NEVER dispatched with empty args.
+        assert _code_exec_calls == []
+        assert backend.chat_stream_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_dispatch_truncated_returns_actionable_message(self) -> None:
+        loop, _stores, _writer = _make_loop(ScriptedBackend([]), extra_tools=[_code_execution_tool])
+        call = ToolCall(name="code_execution", args={}, call_id="c0", truncated=True)
+
+        result = await loop._dispatch(call)
+
+        assert result.is_error is True
+        # Actionable text — NOT the cryptic "Field required".
+        assert "cut off" in result.content
+        assert "code_execution" in result.content
+        assert "Field required" not in result.content
 
 
 class TestMaxToolRoundsCap:

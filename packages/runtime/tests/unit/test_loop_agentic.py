@@ -171,6 +171,27 @@ class TestErrorRecovery:
         assert "503" in run.steps[0].results[0].content
 
     @pytest.mark.asyncio
+    async def test_truncated_tool_call_surfaces_shorten_guidance_not_field_required(self) -> None:
+        # The non-streaming parse marked the call truncated (provider cut the
+        # arguments JSON off mid-payload). The loop must feed back actionable
+        # "your call was cut off — shorten it" guidance and NOT dispatch the
+        # tool with empty args (which would yield the cryptic "Field required"
+        # and an identical-retry loop).
+        truncated = ToolCall(name="code_execution", args={}, call_id="c1", truncated=True)
+        script = [
+            _resp(tool_calls=[truncated]),
+            _resp("[FINAL] understood — splitting into smaller code blocks"),
+        ]
+        loop, _, _ = _make_loop(script)
+        run = await loop.run("make a styled PDF")
+        result = run.steps[0].results[0]
+        assert result.is_error is True
+        assert "cut off" in result.content
+        assert "code_execution" in result.content
+        assert "Field required" not in result.content
+        assert run.status is RunStatus.COMPLETED
+
+    @pytest.mark.asyncio
     async def test_hallucinated_tool_feeds_back_available_tools(self) -> None:
         # Acceptance #4: an unknown tool name → "not available. Available tools: ..."
         script = [

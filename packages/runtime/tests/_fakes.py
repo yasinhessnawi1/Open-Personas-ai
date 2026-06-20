@@ -43,6 +43,7 @@ class ScriptedRound:
         text_deltas: list[str] | None = None,
         tool_name: str | None = None,
         tool_args: dict[str, Any] | None = None,
+        raw_arguments: str | None = None,
         call_id: str = "call-1",
     ) -> None:
         self.text = text
@@ -51,6 +52,11 @@ class ScriptedRound:
         self.text_deltas = text_deltas
         self.tool_name = tool_name
         self.tool_args = tool_args or {}
+        # When set, the tool-call round emits this EXACT string as the
+        # ``arguments_delta`` (bypassing json.dumps) — lets a test simulate a
+        # provider that truncated the arguments JSON mid-object so the loop's
+        # final parse fails and the call is marked truncated.
+        self.raw_arguments = raw_arguments
         self.call_id = call_id
 
 
@@ -184,12 +190,15 @@ class ScriptedBackend:
         elif rnd.text:
             yield StreamChunk(delta=rnd.text)
         if rnd.tool_name is not None:
+            arguments_delta = (
+                rnd.raw_arguments if rnd.raw_arguments is not None else json.dumps(rnd.tool_args)
+            )
             yield StreamChunk(
                 delta="",
                 tool_call_delta=ToolCallDelta(
                     call_id=rnd.call_id,
                     name_delta=rnd.tool_name,
-                    arguments_delta=json.dumps(rnd.tool_args),
+                    arguments_delta=arguments_delta,
                 ),
             )
         yield StreamChunk(
