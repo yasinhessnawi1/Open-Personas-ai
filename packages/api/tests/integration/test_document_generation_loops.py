@@ -283,6 +283,13 @@ class _FakeStore:
     ) -> list[Any]:
         return []
 
+    def recent(
+        self,
+        persona_id: str,  # noqa: ARG002
+        limit: int,  # noqa: ARG002
+    ) -> list[Any]:
+        return []
+
     def get_all(
         self,
         persona_id: str,  # noqa: ARG002
