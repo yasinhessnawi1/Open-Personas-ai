@@ -6,22 +6,34 @@
  * Behavioural mutation wiring (duplicate / delete server roundtrips) lands
  * at T11 with richer Sheet-based confirmations.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmProvider } from "@/components/providers/confirm-provider";
 import { NotificationProvider } from "@/components/providers/notification-provider";
 import { PersonaLibraryCard } from "./persona-library-card";
+
+const h = vi.hoisted(() => ({
+  push: vi.fn(),
+  requestCall: vi.fn(() => "started" as "started" | "current" | "switch"),
+  post: vi.fn(async () => ({ data: { id: "new-conv" } })),
+}));
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: async () => null }),
 }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: h.push }),
 }));
 vi.mock("@/app/actions", () => ({
   startChat: vi.fn(),
   startVoice: vi.fn(),
+}));
+vi.mock("@/lib/api/use-api", () => ({
+  useApi: () => ({ POST: h.post, GET: vi.fn(), DELETE: vi.fn() }),
+}));
+vi.mock("@/lib/voice/call-session-context", () => ({
+  useCallSession: () => ({ requestCall: h.requestCall }),
 }));
 
 const messages = {
@@ -77,6 +89,35 @@ function renderCard() {
 }
 
 describe("PersonaLibraryCard — T09 structural surface", () => {
+  beforeEach(() => {
+    h.push.mockReset();
+    h.requestCall.mockReset();
+    h.requestCall.mockReturnValue("started");
+    h.post.mockClear();
+  });
+
+  it("call entry routes through the session (mints a conversation → requestCall → navigate)", async () => {
+    renderCard();
+    fireEvent.click(screen.getByRole("button", { name: "Voice call" }));
+    await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+    expect(h.requestCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        personaId: "astrid",
+        conversationId: "new-conv",
+        personaName: "Astrid",
+      }),
+    );
+    expect(h.push).toHaveBeenCalledWith("/chat/new-conv/voice");
+  });
+
+  it("call entry does NOT navigate when a switch confirm is pending (no bypass)", async () => {
+    h.requestCall.mockReturnValue("switch");
+    renderCard();
+    fireEvent.click(screen.getByRole("button", { name: "Voice call" }));
+    await waitFor(() => expect(h.requestCall).toHaveBeenCalled());
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
   it("renders the menu trigger with persona-named aria-label", () => {
     renderCard();
     const trigger = screen.getByLabelText("Actions for Astrid");

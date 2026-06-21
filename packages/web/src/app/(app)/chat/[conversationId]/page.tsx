@@ -1,4 +1,3 @@
-import { Phone } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -6,7 +5,9 @@ import { ChatPresenceOrb } from "@/components/chat/chat-presence-orb";
 import { ChatWindow } from "@/components/chat/chat-window";
 import { ConversationFiles } from "@/components/chat/conversation-files";
 import type { ChatMessageView } from "@/components/chat/message-element";
-import { buttonVariants } from "@/components/ui/button";
+import { ActiveCallIndicator } from "@/components/voice/active-call-indicator";
+import { CallControl } from "@/components/voice/call-control";
+import { CallRecap } from "@/components/voice/call-recap";
 import { unwrap } from "@/lib/api";
 import { serverApi } from "@/lib/api/server";
 import { parsePersonaYaml } from "@/lib/persona";
@@ -31,7 +32,6 @@ export default async function ChatPage({
   params: Promise<{ conversationId: string }>;
 }) {
   const { conversationId } = await params;
-  const t = await getTranslations("voice");
   const tc = await getTranslations("chat");
   const api = await serverApi();
 
@@ -107,6 +107,8 @@ export default async function ChatPage({
             </div>
           </div>
         </Link>
+        {/* V7 D-V7-5: live cue + one-tap return, only when this persona is on a call. */}
+        <ActiveCallIndicator personaId={conv.persona_id} />
         {/* Spec 35 — conversation Files viewer (next to Call, per the v1 design):
             the unified uploads + generated-artifact index with inline preview. */}
         <ConversationFiles
@@ -114,14 +116,22 @@ export default async function ChatPage({
           conversationId={conversationId}
           personaName={name}
         />
-        {/* V6 D-V6-4 — "Talk to {persona}" entry; binds this conversation. */}
-        <Link
-          href={`/chat/${conversationId}/voice`}
-          aria-label={t("talk", { name })}
-          className={buttonVariants({ variant: "secondary", size: "icon" })}
-        >
-          <Phone />
-        </Link>
+        {/* V7 D-V7-4 — one-click "Talk to {persona}" entry: drives the hoisted
+            session (start / return-to-call / end-and-switch), not a bare route
+            link (the V6 link relied on the surface auto-starting, removed in T3). */}
+        <CallControl
+          persona={{
+            id: conv.persona_id,
+            name,
+            avatarUrl: personaRes.data?.avatar_url ?? undefined,
+            role,
+          }}
+          conversationId={conversationId}
+        />
+      </div>
+      {/* V7 D-V7-7: a web-derived "call ended · N min · view transcript" trace. */}
+      <div className="px-4 pt-2">
+        <CallRecap conversationId={conversationId} />
       </div>
       <ChatWindow
         conversationId={conversationId}

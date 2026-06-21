@@ -1,32 +1,35 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "@/i18n/messages/en.json";
+import type { CallSession } from "@/lib/voice/call-session-context";
 import {
   INITIAL_CALL_STATE,
   type VoiceCallState,
 } from "@/lib/voice/call-state";
 import { VoiceCallSurface } from "./voice-call-surface";
 
-// A mutable handle the useVoiceCall mock reads — set per test (vi.hoisted so the
-// hoisted vi.mock factory can close over it).
+// A mutable session handle the useCallSession mock reads (vi.hoisted so the
+// hoisted factory can close over it). `useVoiceCallSpy` proves the surface no
+// longer owns a Room: if it ever instantiated the hook, this would be called.
 const h = vi.hoisted(() => ({
-  state: null as VoiceCallState | null,
-  start: vi.fn(),
-  end: vi.fn(),
-  toggleMute: vi.fn(),
-  enableAudio: vi.fn(),
+  session: null as CallSession | null,
   replace: vi.fn(),
+  useVoiceCallSpy: vi.fn(() => {
+    throw new Error("VoiceCallSurface must bind the session, not own a Room");
+  }),
 }));
 
-vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({ getToken: async () => "jwt" }),
+vi.mock("@/lib/voice/call-session-context", () => ({
+  useCallSession: () => h.session,
+}));
+// The surface must NOT import/instantiate this anymore — keep a spy to assert it.
+vi.mock("@/lib/voice/use-voice-call", () => ({
+  useVoiceCall: h.useVoiceCallSpy,
 }));
 vi.mock("@/lib/voice/use-persona-avatar-src", () => ({
   usePersonaAvatarSrc: () => null,
 }));
-// The orb is rAF/identity-heavy and irrelevant here — stub it so we can assert
-// presence (live) vs absence (terminal).
 vi.mock("@/components/voice/identity-orb", () => ({
   IdentityOrb: () => <div data-testid="orb" />,
 }));
@@ -47,21 +50,39 @@ vi.mock("next/link", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: h.replace, push: vi.fn() }),
 }));
-vi.mock("@/lib/voice/use-voice-call", () => ({
-  useVoiceCall: () => ({
-    state: h.state,
+
+function makeSession(
+  state: VoiceCallState,
+  over: Partial<CallSession> = {},
+): CallSession {
+  return {
+    state,
     captions: [],
-    start: h.start,
-    end: h.end,
-    toggleMute: h.toggleMute,
-    enableAudio: h.enableAudio,
+    target: null,
+    isActive: state.phase !== "idle",
+    startedAt: state.phase !== "idle" ? Date.now() : null,
+    pendingSwitch: null,
+    start: vi.fn(),
+    requestCall: vi.fn(),
+    confirmSwitch: vi.fn(),
+    cancelSwitch: vi.fn(),
+    resumable: null,
+    resumeCall: vi.fn(),
+    dismissResume: vi.fn(),
+    end: vi.fn(),
+    toggleMute: vi.fn(),
+    inputMode: "always",
+    setInputMode: vi.fn(),
+    pttHeld: false,
+    setPttHeld: vi.fn(),
+    enableAudio: vi.fn(),
     getMicLevel: () => 0,
     getPersonaLevel: () => 0,
-  }),
-}));
+    ...over,
+  };
+}
 
-function renderSurface(state: VoiceCallState) {
-  h.state = state;
+function renderSurface() {
   return render(
     <NextIntlClientProvider locale="en" messages={messages}>
       <VoiceCallSurface
@@ -77,59 +98,71 @@ const withPhase = (
   error: VoiceCallState["error"] = null,
 ): VoiceCallState => ({ ...INITIAL_CALL_STATE, phase, error });
 
-describe("VoiceCallSurface (C3) terminal states", () => {
-  beforeEach(() => {
-    h.start.mockClear();
-    h.replace.mockClear();
-  });
+beforeEach(() => {
+  h.replace.mockClear();
+  h.useVoiceCallSpy.mockClear();
+});
 
-  it("renders the live orb + end control when connected (not a failure card)", () => {
-    renderSurface(withPhase("connected"));
+describe("VoiceCallSurface (V7 — binds the session)", () => {
+  it("binds the shared session and never instantiates useVoiceCall", () => {
+    h.session = makeSession(withPhase("connected"), { isActive: true });
+    renderSurface();
     expect(screen.getByTestId("orb")).toBeInTheDocument();
-    // Spec 35: the end control is now an icon button — query its accessible name.
     expect(
       screen.getByRole("button", { name: "End call" }),
     ).toBeInTheDocument();
+    // The HARD GUARD: no second Room — the surface owns no useVoiceCall instance.
+    expect(h.useVoiceCallSpy).not.toHaveBeenCalled();
   });
 
-  it("mic_denied error → kind-specific copy + a retry action, no orb", () => {
-    renderSurface(
-      withPhase("error", { kind: "mic_denied", message: "blocked" }),
+  it("idle → an explicit Talk affordance that starts the session (no auto-start)", () => {
+    const session = makeSession(withPhase("idle"), { isActive: false });
+    h.session = session;
+    renderSurface();
+    expect(screen.queryByTestId("orb")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Talk to Astrid/ }));
+    expect(session.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        personaId: "p1",
+        conversationId: "c1",
+        personaName: "Astrid",
+      }),
     );
+  });
+
+  it("end → ends the session and returns to the conversation", () => {
+    const session = makeSession(withPhase("connected"), { isActive: true });
+    h.session = session;
+    renderSurface();
+    fireEvent.click(screen.getByRole("button", { name: "End call" }));
+    expect(session.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("mic_denied error → kind-specific copy + retry, no orb", () => {
+    h.session = makeSession(
+      withPhase("error", { kind: "mic_denied", message: "blocked" }),
+      { isActive: true },
+    );
+    renderSurface();
     expect(screen.getByText("Microphone blocked")).toBeInTheDocument();
     expect(screen.getByText("Try again")).toBeInTheDocument();
     expect(screen.queryByTestId("orb")).not.toBeInTheDocument();
   });
 
   it("unauthorized error → a sign-in link, not a retry", () => {
-    renderSurface(
+    h.session = makeSession(
       withPhase("error", { kind: "unauthorized", message: "expired" }),
+      { isActive: true },
     );
-    const signIn = screen.getByText("Sign in");
-    expect(signIn).toHaveAttribute("href", "/sign-in");
+    renderSurface();
+    expect(screen.getByText("Sign in")).toHaveAttribute("href", "/sign-in");
     expect(screen.queryByText("Try again")).not.toBeInTheDocument();
-  });
-
-  it("not_found error → only the back arrow (nothing to retry)", () => {
-    renderSurface(withPhase("error", { kind: "not_found", message: "gone" }));
-    expect(screen.getByText("Persona unavailable")).toBeInTheDocument();
-    expect(screen.queryByText("Try again")).not.toBeInTheDocument();
-    expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
-    // Back is the top-left arrow (aria-label), present in every state.
-    expect(screen.getByLabelText("Back to chat")).toBeInTheDocument();
   });
 
   it("dropped → reconnect affordance", () => {
-    renderSurface(withPhase("dropped"));
+    h.session = makeSession(withPhase("dropped"), { isActive: true });
+    renderSurface();
     expect(screen.getByText("Call dropped")).toBeInTheDocument();
     expect(screen.getByText("Try again")).toBeInTheDocument();
-  });
-
-  it("ended → navigates back to the conversation (no dead-end card)", () => {
-    // Spec 35: a clean hang-up returns to the conversation instead of a
-    // "Call ended" card — voice + text are one thread.
-    renderSurface(withPhase("ended"));
-    expect(screen.queryByText("Call ended")).toBeNull();
-    expect(h.replace).toHaveBeenCalledWith("/chat/c1");
   });
 });

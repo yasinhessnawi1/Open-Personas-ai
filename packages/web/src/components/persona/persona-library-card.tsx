@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { startChat, startVoice } from "@/app/actions";
+import { startChat } from "@/app/actions";
 import { PersonaAvatar } from "@/components/persona/persona-avatar";
 import type { PersonaCardPersona } from "@/components/persona/persona-card";
 import { useConfirm } from "@/components/providers/confirm-provider";
@@ -24,10 +24,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ActiveCallIndicator } from "@/components/voice/active-call-indicator";
 import { useApi } from "@/lib/api/use-api";
 import { renameInIdentity } from "@/lib/persona";
 import { personaIdentityStyle } from "@/lib/persona-identity";
 import { cn } from "@/lib/utils";
+import {
+  type CallTarget,
+  useCallSession,
+} from "@/lib/voice/call-session-context";
 
 /**
  * Spec F5 T09 — Persona library card wrapper.
@@ -69,7 +74,38 @@ export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
   const { notify } = useNotify();
   const router = useRouter();
   const api = useApi();
+  const { requestCall } = useCallSession();
   const [busy, setBusy] = useState(false);
+
+  // Spec V7 D-V7-4 / T4b — route the library "call" entry through the hoisted
+  // session so it CAN'T bypass the one-call rule. Voice hangs off a conversation,
+  // so we mint one first (as the old `startVoice` server action did), then ask
+  // the session to place the call: if another call is live, `requestCall` opens
+  // the end-and-switch confirm (which navigates on confirm) instead of redirecting
+  // into a dead voice page behind the active call's Room.
+  async function handleCall() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const conv = await api.POST("/v1/personas/{persona_id}/conversations", {
+        params: { path: { persona_id: persona.id } },
+        body: { title: "" },
+      });
+      if (!conv.data) return;
+      const target: CallTarget = {
+        personaId: persona.id,
+        conversationId: conv.data.id,
+        personaName: persona.name,
+        personaAvatarUrl: persona.avatar_url ?? undefined,
+        personaRole: persona.role,
+      };
+      if (requestCall(target) !== "switch") {
+        router.push(`/chat/${conv.data.id}/voice`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleDuplicate() {
     if (busy) return;
@@ -193,20 +229,23 @@ export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
         ) : null}
       </div>
 
-      {/* Footer: chat count + real server actions (start a chat / voice call). */}
+      {/* Footer: chat count + entry actions — voice routes through the call
+          session (T4b, one-call-safe); text chat via the startChat server action. */}
       <footer className="mt-4 flex items-center gap-2 border-t pt-3.5">
         <span className="type-caption normal-case tracking-normal text-muted-foreground">
           {t("library.chats", { count: persona.conversation_count ?? 0 })}
         </span>
-        <form action={startVoice.bind(null, persona.id)} className="ml-auto">
-          <button
-            type="submit"
-            className="v-btn v-btn--ghost v-btn--sm"
-            aria-label={t("library.call")}
-          >
-            <Phone className="size-4" aria-hidden="true" />
-          </button>
-        </form>
+        {/* V7 D-V7-5: a live cue + one-tap return, only when THIS persona is on a call. */}
+        <ActiveCallIndicator personaId={persona.id} />
+        <button
+          type="button"
+          onClick={handleCall}
+          disabled={busy}
+          className="v-btn v-btn--ghost v-btn--sm ml-auto"
+          aria-label={t("library.call")}
+        >
+          <Phone className="size-4" aria-hidden="true" />
+        </button>
         <form action={startChat.bind(null, persona.id)}>
           <button type="submit" className="v-btn v-btn--outline v-btn--sm">
             <MessageSquare className="size-4" aria-hidden="true" />

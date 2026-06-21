@@ -17,7 +17,11 @@ import { NotificationProvider } from "@/components/providers/notification-provid
 import { CommandPalette } from "@/components/shell/command-palette";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { Sidebar } from "@/components/shell/sidebar";
+import { MiniCallBar } from "@/components/voice/mini-call-bar";
+import { ResumeCallPrompt } from "@/components/voice/resume-call-prompt";
+import { SwitchCallDialog } from "@/components/voice/switch-call-dialog";
 import { cn } from "@/lib/utils";
+import { CallSessionProvider } from "@/lib/voice/call-session-context";
 import { MobileNav } from "./mobile-nav";
 import type { SidebarData } from "./sidebar-data";
 import { fetchSidebarData } from "./sidebar-fetch";
@@ -37,21 +41,50 @@ export async function AppShell({
     // page. Both are client components; the server-rendered children pass
     // through as a prop (standard Next 16 server-child-of-client pattern, like
     // ThemeProvider in the root layout).
+    //
+    // Spec V7 D-V7-1: the app-level call session is hoisted here too — mounted
+    // ONCE, above the routed pages, so a voice call survives in-app navigation.
+    // CallSessionProvider is nested INSIDE Confirm/Notification so any descendant
+    // (and the hoisted voice surfaces) can reach useConfirm()/useNotify(); those
+    // providers must sit above any component that consumes them. AppShell stays
+    // an async server component: each provider is a client boundary that takes
+    // the server-rendered routes as `children`, so a call-state change re-renders
+    // only the client subtree and never re-runs `fetchSidebarData`.
+    // NOTE: SwitchCallDialog keeps its own state-driven modal (not useConfirm) —
+    // its serialized end→start + post-confirm navigation are bound to the session's
+    // `pendingSwitch`, which an imperative confirm() boolean can't express without
+    // risking the "never two Rooms" guarantee.
+    // HARD GUARD: the call's Room + <audio> + mic live inside CallSessionProvider,
+    // never a route. The mini-bar (T2) renders inside it, bound to the session.
     <NotificationProvider>
       <ConfirmProvider>
-        <div className={cn("flex min-h-svh", className)} data-slot="app-shell">
-          <Sidebar data={data} />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <ShellHeader data={data} />
-            <main className="flex flex-1 flex-col" data-slot="app-shell-main">
-              {children}
-            </main>
+        <CallSessionProvider>
+          <div
+            className={cn("flex min-h-svh", className)}
+            data-slot="app-shell"
+          >
+            <Sidebar data={data} />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <ShellHeader data={data} />
+              <main className="flex flex-1 flex-col" data-slot="app-shell-main">
+                {children}
+              </main>
+            </div>
+            {/* F2 T23: single toast surface for the auth'd app. */}
+            <ToastProvider />
+            {/* Spec 35 D-35-14: the ⌘K command palette, mounted once for the app. */}
+            <CommandPalette data={data} />
+            {/* Spec V7 D-V7-2: the persistent mini call-bar — hidden until a call is
+                active; binds the hoisted session, never owns a Room. */}
+            <MiniCallBar />
+            {/* Spec V7 D-V7-4: the end-and-switch confirm — shown only when a call is
+                requested while a different one is active. */}
+            <SwitchCallDialog />
+            {/* Spec V7 D-V7-3: the resume-after-reload prompt — shown only when a
+                recent call is found in sessionStorage on load. */}
+            <ResumeCallPrompt />
           </div>
-          {/* F2 T23: single toast surface for the auth'd app. */}
-          <ToastProvider />
-          {/* Spec 35 D-35-14: the ⌘K command palette, mounted once for the app. */}
-          <CommandPalette data={data} />
-        </div>
+        </CallSessionProvider>
       </ConfirmProvider>
     </NotificationProvider>
   );

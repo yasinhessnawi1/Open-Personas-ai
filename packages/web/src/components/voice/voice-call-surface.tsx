@@ -1,43 +1,40 @@
 "use client";
 
 /**
- * Spec V6 B5 + C3 — the call surface: the live-call screen that hosts the orb.
+ * Spec V6 B5 + C3 / Spec V7 D-V7-2 — the full call surface.
  *
  * The full-surface "call with the persona" view (D-V6-4): the Identity Orb is
  * the hero, with the persona's identity present, honest phase/failure states
- * (D-V6-5), the autoplay "tap to enable audio" affordance, and mute / end
- * controls. It binds the open `conversationId` (voice + text are one thread) and
- * drives everything from the {@link useVoiceCall} hook.
+ * (D-V6-5), the autoplay affordance, and mute / end controls.
  *
- * C3 layers the **honest failure surface** on top of B5's live view: every
- * terminal phase (pre-connect error, dropped, clean end) renders through F2's
- * `EmptyState` pattern with kind-specific copy + the right recovery affordance
- * (retry / sign-in / call-again), and the layout is responsive for the mobile
- * contexts where voice naturally lives (D-V6-5 criteria 7 + 10).
+ * **V7 (T3): this surface BINDS the hoisted call session — it no longer owns a
+ * `Room`.** It reads the live state from {@link useCallSession} instead of
+ * instantiating `useVoiceCall`, so the call lives in the app-level provider and
+ * survives navigation; this surface is just its expanded projection (the mini-bar
+ * is the collapsed one). **Auto-start-on-mount is removed:** arriving with no
+ * active call shows an explicit "Talk to {persona}" affordance, and `start()` is
+ * an explicit session action fired from that user gesture (which also unlocks
+ * audio autoplay + the mic permission — better than V6's start-on-navigation).
+ * HARD GUARD: this surface holds NO `Room` and NO `<audio>` — those live in the
+ * provider (and the audio sinks in `document.body`), never in this route — so the
+ * route unmounting (or being hidden by a future Cache Components `<Activity>`)
+ * cannot pause the call.
  */
 
-import {
-  ArrowLeft,
-  Captions,
-  Mic,
-  MicOff,
-  Phone,
-  PhoneOff,
-} from "lucide-react";
+import { ArrowLeft, Captions, Phone, PhoneOff } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "@/auth";
+import { useState } from "react";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { IdentityOrb } from "@/components/voice/identity-orb";
+import { InputModeToggle, MicControl } from "@/components/voice/mic-control";
 import { VoiceCaptions } from "@/components/voice/voice-captions";
 import { personaIdentityStyle } from "@/lib/persona-identity";
+import type { CallTarget } from "@/lib/voice/call-session-context";
+import { useCallSession } from "@/lib/voice/call-session-context";
 import { usePersonaAvatarSrc } from "@/lib/voice/use-persona-avatar-src";
-import { useVoiceCall } from "@/lib/voice/use-voice-call";
-
-const TEMPLATE = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;
 
 export interface VoiceCallSurfaceProps {
   persona: {
@@ -55,49 +52,83 @@ export function VoiceCallSurface({
 }: VoiceCallSurfaceProps): React.JSX.Element | null {
   const t = useTranslations("voice");
   const router = useRouter();
-  const { getToken } = useAuth();
+  const {
+    state,
+    captions,
+    isActive,
+    start,
+    end,
+    enableAudio,
+    getMicLevel,
+    getPersonaLevel,
+  } = useCallSession();
   const [captionsOn, setCaptionsOn] = useState(true);
-  const token = useCallback(
-    () => getToken(TEMPLATE ? { template: TEMPLATE } : undefined),
-    [getToken],
-  );
 
   // Resolve the persona's avatar (a Spec-29 Bearer-auth workspace ref, or a
   // direct URL) to a loadable src so it can be the orb's core (D-V6-3).
   const avatarSrc = usePersonaAvatarSrc(persona.id, persona.avatarUrl);
 
-  const call = useVoiceCall({
+  const target: CallTarget = {
     personaId: persona.id,
     conversationId,
-    getToken: token,
-  });
-  const {
-    state,
-    start,
-    end,
-    toggleMute,
-    enableAudio,
-    getMicLevel,
-    getPersonaLevel,
-  } = call;
+    personaName: persona.name,
+    personaAvatarUrl: persona.avatarUrl ?? undefined,
+    personaRole: persona.role,
+  };
 
-  // The call starts as soon as the surface mounts — reaching here IS the user's
-  // "call" click (the chat-header phone control navigated in). No separate
-  // "Start call" step. `start()` is idempotent (no-ops if a room exists), and
-  // the autoplay-gesture fallback covers the rare case audio needs a tap.
-  useEffect(() => {
-    void start();
-  }, [start]);
+  const backHref = `/chat/${conversationId}`;
 
-  // Spec 35: a clean hang-up drops straight back into the conversation — voice
-  // + text are one thread, so a "Call ended" card is dead-end noise. `replace`
-  // keeps the spent voice route out of history. Honest failure phases
-  // (dropped / error) still render their recovery card below.
-  useEffect(() => {
-    if (state.phase === "ended") {
-      router.replace(`/chat/${conversationId}`);
-    }
-  }, [state.phase, conversationId, router]);
+  const header = (
+    <>
+      <Link
+        href={backHref}
+        aria-label={t("back")}
+        className="v-iconbtn absolute top-4 left-4 z-10"
+      >
+        <ArrowLeft aria-hidden />
+      </Link>
+      <header className="v-voice__head">
+        <div className="v-voice__title">
+          {t.rich("callWith", {
+            name: persona.name,
+            hl: (chunks) => <span className="v-id-underline">{chunks}</span>,
+          })}
+        </div>
+        {persona.role ? (
+          <div className="v-voice__role">{persona.role}</div>
+        ) : null}
+      </header>
+    </>
+  );
+
+  // No active call — an explicit "Talk to {persona}" affordance. The click is the
+  // user gesture that starts the session (and unlocks audio autoplay). NO
+  // auto-start on mount: this surface only ever projects an already-running call.
+  if (!isActive) {
+    return (
+      <div className="v-voice" style={personaIdentityStyle(persona)}>
+        <div
+          className="v-voice__bg"
+          style={{
+            background:
+              "radial-gradient(50% 50% at 50% 42%, oklch(0.62 0.13 var(--identity-h) / 0.14), transparent 70%)",
+          }}
+        />
+        {header}
+        <Button
+          size="lg"
+          className="relative z-[1]"
+          onClick={() => start(target)}
+        >
+          <Phone aria-hidden /> {t("talk", { name: persona.name })}
+        </Button>
+        <div className="relative z-[1] flex items-center gap-2 font-mono text-muted-foreground type-caption normal-case tracking-normal">
+          <span className="v-id-dot" />
+          {t("memoryNote")}
+        </div>
+      </div>
+    );
+  }
 
   const stateLabel =
     state.agentState === "thinking"
@@ -122,13 +153,7 @@ export function VoiceCallSurface({
           ? t("reconnecting")
           : stateLabel;
 
-  // A clean end is already navigating away (effect above) — render nothing
-  // meanwhile so the "Call ended" card never flashes.
-  if (state.phase === "ended") return null;
-
-  // Terminal phases (D-V6-5) — render an honest EmptyState instead of a dead
-  // orb. `error` carries a typed kind so the copy + the recovery action are
-  // specific (retry vs sign-in vs nothing); `dropped` offers reconnect.
+  // Terminal phases (D-V6-5) — render an honest EmptyState instead of a dead orb.
   const terminal = buildTerminal();
 
   return (
@@ -141,25 +166,7 @@ export function VoiceCallSurface({
             "radial-gradient(50% 50% at 50% 42%, oklch(0.62 0.13 var(--identity-h) / 0.14), transparent 70%)",
         }}
       />
-      <Link
-        href={`/chat/${conversationId}`}
-        aria-label={t("back")}
-        className="v-iconbtn absolute top-4 left-4 z-10"
-      >
-        <ArrowLeft aria-hidden />
-      </Link>
-
-      <header className="v-voice__head">
-        <div className="v-voice__title">
-          {t.rich("callWith", {
-            name: persona.name,
-            hl: (chunks) => <span className="v-id-underline">{chunks}</span>,
-          })}
-        </div>
-        {persona.role ? (
-          <div className="v-voice__role">{persona.role}</div>
-        ) : null}
-      </header>
+      {header}
 
       {terminal ? (
         <EmptyState
@@ -189,10 +196,7 @@ export function VoiceCallSurface({
 
           {captionsOn ? (
             <div className="v-voice__caption">
-              <VoiceCaptions
-                captions={call.captions}
-                personaName={persona.name}
-              />
+              <VoiceCaptions captions={captions} personaName={persona.name} />
             </div>
           ) : null}
 
@@ -208,20 +212,12 @@ export function VoiceCallSurface({
 
           {live ? (
             <div className="v-voice__controls">
-              <button
-                type="button"
-                className="v-voice-ctl"
-                onClick={() => void toggleMute()}
-                aria-label={state.micActive ? t("mute") : t("unmute")}
-                title={state.micActive ? t("mute") : t("unmute")}
-                aria-pressed={!state.micActive}
-              >
-                {state.micActive ? <Mic aria-hidden /> : <MicOff aria-hidden />}
-              </button>
+              {/* D-V7-6: mute toggle, or a hold-to-talk button in push-to-talk. */}
+              <MicControl className="v-voice-ctl" />
               <button
                 type="button"
                 className="v-voice-ctl v-voice-ctl--end"
-                onClick={() => void end()}
+                onClick={() => void handleEnd()}
                 aria-label={t("end")}
                 title={t("end")}
               >
@@ -237,6 +233,8 @@ export function VoiceCallSurface({
               >
                 <Captions aria-hidden />
               </button>
+              {/* D-V7-6: switch always-listening ↔ push-to-talk (persisted). */}
+              <InputModeToggle className="v-voice-ctl" />
             </div>
           ) : null}
 
@@ -250,6 +248,12 @@ export function VoiceCallSurface({
     </div>
   );
 
+  /** End the call and leave the call screen (voice + text are one thread). */
+  async function handleEnd(): Promise<void> {
+    await end();
+    router.replace(backHref);
+  }
+
   /** Resolve the terminal-phase copy + recovery action, or null if live. */
   function buildTerminal(): {
     title: string;
@@ -260,7 +264,6 @@ export function VoiceCallSurface({
       const kind = state.error.kind;
       let action: React.ReactNode = null;
       if (kind === "unauthorized") {
-        // Re-auth is the only fix — link to sign-in, styled as the primary.
         action = (
           <Link
             href="/sign-in"
@@ -270,11 +273,9 @@ export function VoiceCallSurface({
           </Link>
         );
       } else if (kind !== "not_found" && kind !== "credits_exhausted") {
-        // mic_* / service_unavailable / unknown — retry is meaningful (the user
-        // can grant the mic, or the service can recover). not_found + credits
-        // can't be retried away, so they get only the back link.
+        // mic_* / service_unavailable / unknown — retry is meaningful.
         action = (
-          <Button size="lg" onClick={() => void start()}>
+          <Button size="lg" onClick={() => start(target)}>
             {t("retry")}
           </Button>
         );
@@ -290,14 +291,12 @@ export function VoiceCallSurface({
         title: t("dropped"),
         body: t("droppedBody"),
         action: (
-          <Button size="lg" onClick={() => void start()}>
+          <Button size="lg" onClick={() => start(target)}>
             {t("retry")}
           </Button>
         ),
       };
     }
-    // `ended` (a clean hang-up) is intentionally NOT a terminal card — the
-    // effect above navigates back to the conversation instead.
     return null;
   }
 }

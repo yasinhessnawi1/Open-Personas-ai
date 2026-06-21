@@ -52,7 +52,12 @@ build never pulls `@clerk/*` into the bundle (enforced by CI gates +
 - **Agentic run viewer** — run timeline over SSE (catch-up + reconcile-on-drop),
   inline ask-user, Markdown final answer, cancel.
 - **Voice** — a browser voice client (LiveKit `livekit-client`) wired to the
-  `/v1/voice/token` flow; a voice orb surface (V6, in flight).
+  `/v1/voice/token` flow: an Identity-Orb call surface, plus a **persistent call
+  experience** — the call lives in an app-level session above the router, so it
+  survives in-app navigation; a draggable, collapsible mini call-bar controls it
+  from anywhere; active-call indicators mark the on-call persona; one call at a
+  time (end-and-switch); best-effort resume-after-reload (prompt, never silent);
+  mute + push-to-talk; and a post-call recap in the chat thread.
 - **Settings** — credit balance + per-turn usage, theme, tier-badge
   visibility, language toggle, conversations list.
 - **Notifications + consent** — one app-wide notification façade (`useNotify`)

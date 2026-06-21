@@ -28,6 +28,27 @@ Per-spec entries are added by the close-out phase of each spec.
 - **Chat notifications unified** — the composer/chat surface no longer calls the toast layer directly; consequential events persist in the bell, transient validation toasts without it.
 - **Fully internationalised** — new `confirm` + `notifications` next-intl namespaces; every call site passes localised copy.
 
+### Persistent voice experience (2026-06-22)
+
+#### Added
+
+- **Persistent voice experience** (`persistent-voice-experience`, web) — a voice
+  call now behaves like a real call. The call is hoisted into an app-level session
+  mounted once in the shell, above the App Router, so it survives in-app
+  navigation (the `Room` + audio sinks + mic live in the layout provider, never a
+  route). A draggable, collapsible **mini call-bar** controls the call from
+  anywhere; **active-call indicators** mark the on-call persona on its card and
+  chat header with one-tap return; exactly **one call at a time** with an
+  **end-and-switch** confirm (serialized teardown — never two rooms);
+  **resume-after-reload** offers (a prompt, never a silent auto-dial; a fresh call
+  on the same conversation, bounded by a freshness window); input controls add
+  **push-to-talk** for noisy environments (persisted preference); and a finished
+  call leaves a **web-derived recap** ("call ended · N min · view transcript") in
+  the chat thread. Pure `packages/web` — consumes the V1–V6 voice stack unchanged.
+  Deferred to documented forward seams: warm reconnect to the same room, the
+  durable `origin=call` marker (→ call-history spec), the TTS-unavailable wire
+  signal, and in-app input-device selection.
+
 ---
 
 ## [1.0.0] - 2026-06-20
