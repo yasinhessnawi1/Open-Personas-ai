@@ -652,5 +652,22 @@
     "voicesLoading": "Loading voices…",
     "voicesUnavailable": "Voice selection is unavailable right now.",
     "voicesError": "Couldn’t load voices."
+  },
+  "confirm": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "duplicate": "Duplicate",
+    "deleteTitle": "Delete {name}?",
+    "duplicateTitle": "Duplicate {name}?"
+  },
+  "notifications": {
+    "open": "Notifications",
+    "title": "Notifications",
+    "empty": "Nothing yet — run results and alerts will show up here.",
+    "clear": "Clear all",
+    "unreadLabel": "{count} unread",
+    "deleted": "{name} deleted",
+    "duplicated": "{name} duplicated"
   }
 }

@@ -4,6 +4,8 @@ import { Download, FileText, ImageIcon, Trash2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
+import { useConfirm } from "@/components/providers/confirm-provider";
+import { useNotify } from "@/components/providers/notification-provider";
 import { Card } from "@/components/ui/card";
 import { useApi } from "@/lib/api/use-api";
 import { cn } from "@/lib/utils";
@@ -57,6 +59,10 @@ const TYPE_CHIPS = ["all", "image", "chart", "doc", "data"] as const;
  */
 export function ArtifactGallery({ personaId, initial }: ArtifactGalleryProps) {
   const t = useTranslations("artifacts");
+  const tc = useTranslations("confirm");
+  const tn = useTranslations("notifications");
+  const confirm = useConfirm();
+  const { notify } = useNotify();
   const router = useRouter();
   const search = useSearchParams();
   const api = useApi();
@@ -92,12 +98,19 @@ export function ArtifactGallery({ personaId, initial }: ArtifactGalleryProps) {
 
   async function handleDelete(ref: string) {
     if (deleting) return;
-    if (!confirm(t("deleteConfirm", { ref }))) return;
+    const ok = await confirm({
+      title: tc("deleteTitle", { name: ref }),
+      description: t("deleteConfirm", { ref }),
+      confirmLabel: tc("delete"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setDeleting(ref);
     try {
       await api.DELETE("/v1/personas/{persona_id}/artifacts/{ref}", {
         params: { path: { persona_id: personaId, ref } },
       });
+      notify({ level: "success", title: tn("deleted", { name: ref }) });
       router.refresh();
     } finally {
       setDeleting(null);

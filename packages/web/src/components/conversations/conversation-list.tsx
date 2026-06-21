@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
 import { PersonaAvatar } from "@/components/persona/persona-avatar";
+import { useConfirm } from "@/components/providers/confirm-provider";
+import { useNotify } from "@/components/providers/notification-provider";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,6 +48,10 @@ export function ConversationList({
   personaById,
 }: ConversationListProps) {
   const t = useTranslations("conversations");
+  const tc = useTranslations("confirm");
+  const tn = useTranslations("notifications");
+  const confirm = useConfirm();
+  const { notify } = useNotify();
   // next-intl's formatter is pinned to the active locale on both server + client,
   // so the rendered date matches (a bare `toLocaleDateString()` used the runtime
   // default locale, which differs SSR↔browser → hydration mismatch).
@@ -69,12 +75,20 @@ export function ConversationList({
 
   async function handleDelete(id: string, title: string) {
     if (deletingId) return;
-    if (!confirm(t("deleteConfirm", { title: title || t("untitled") }))) return;
+    const label = title || t("untitled");
+    const ok = await confirm({
+      title: tc("deleteTitle", { name: label }),
+      description: t("deleteConfirm", { title: label }),
+      confirmLabel: tc("delete"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setDeletingId(id);
     try {
       await api.DELETE("/v1/conversations/{conversation_id}", {
         params: { path: { conversation_id: id } },
       });
+      notify({ level: "success", title: tn("deleted", { name: label }) });
       router.refresh();
     } finally {
       setDeletingId(null);

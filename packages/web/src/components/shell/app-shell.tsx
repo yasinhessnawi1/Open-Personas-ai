@@ -12,7 +12,10 @@
 
 import type { ReactNode } from "react";
 import { ToastProvider } from "@/components/patterns/toast";
+import { ConfirmProvider } from "@/components/providers/confirm-provider";
+import { NotificationProvider } from "@/components/providers/notification-provider";
 import { CommandPalette } from "@/components/shell/command-palette";
+import { NotificationBell } from "@/components/shell/notification-bell";
 import { Sidebar } from "@/components/shell/sidebar";
 import { cn } from "@/lib/utils";
 import { MobileNav } from "./mobile-nav";
@@ -29,19 +32,28 @@ export async function AppShell({
   const data = await fetchSidebarData();
 
   return (
-    <div className={cn("flex min-h-svh", className)} data-slot="app-shell">
-      <Sidebar data={data} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <ShellHeader data={data} />
-        <main className="flex flex-1 flex-col" data-slot="app-shell-main">
-          {children}
-        </main>
-      </div>
-      {/* F2 T23: single toast surface for the auth'd app. */}
-      <ToastProvider />
-      {/* Spec 35 D-35-14: the ⌘K command palette, mounted once for the app. */}
-      <CommandPalette data={data} />
-    </div>
+    // Spec 35 clusters L + M: the global notification (D-35-10/11) + confirm
+    // (D-35-12) systems wrap the shell so useNotify()/useConfirm() reach every
+    // page. Both are client components; the server-rendered children pass
+    // through as a prop (standard Next 16 server-child-of-client pattern, like
+    // ThemeProvider in the root layout).
+    <NotificationProvider>
+      <ConfirmProvider>
+        <div className={cn("flex min-h-svh", className)} data-slot="app-shell">
+          <Sidebar data={data} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <ShellHeader data={data} />
+            <main className="flex flex-1 flex-col" data-slot="app-shell-main">
+              {children}
+            </main>
+          </div>
+          {/* F2 T23: single toast surface for the auth'd app. */}
+          <ToastProvider />
+          {/* Spec 35 D-35-14: the ⌘K command palette, mounted once for the app. */}
+          <CommandPalette data={data} />
+        </div>
+      </ConfirmProvider>
+    </NotificationProvider>
   );
 }
 
@@ -60,6 +72,9 @@ function ShellHeader({ data }: { data: SidebarData }) {
     >
       <MobileNav data={data} />
       <div className="flex-1" />
+      {/* Spec 35 cluster L: the notification bell — reachable on mobile without
+       * opening the nav sheet (the sidebar header carries it on desktop). */}
+      <NotificationBell />
     </header>
   );
 }

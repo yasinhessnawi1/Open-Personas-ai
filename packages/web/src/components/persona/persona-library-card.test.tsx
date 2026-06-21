@@ -9,6 +9,8 @@
 import { render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, vi } from "vitest";
+import { ConfirmProvider } from "@/components/providers/confirm-provider";
+import { NotificationProvider } from "@/components/providers/notification-provider";
 import { PersonaLibraryCard } from "./persona-library-card";
 
 vi.mock("@clerk/nextjs", () => ({
@@ -41,6 +43,14 @@ const messages = {
       deleteConfirm: "del",
     },
   },
+  confirm: {
+    cancel: "Cancel",
+    confirm: "Confirm",
+    delete: "Delete",
+    duplicate: "Duplicate",
+    deleteTitle: "Delete {name}?",
+    duplicateTitle: "Duplicate {name}?",
+  },
 };
 
 const FIXTURE = {
@@ -57,7 +67,11 @@ const FIXTURE = {
 function renderCard() {
   return render(
     <NextIntlClientProvider locale="en" messages={messages}>
-      <PersonaLibraryCard persona={FIXTURE} />
+      <NotificationProvider>
+        <ConfirmProvider>
+          <PersonaLibraryCard persona={FIXTURE} />
+        </ConfirmProvider>
+      </NotificationProvider>
     </NextIntlClientProvider>,
   );
 }

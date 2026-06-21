@@ -10,6 +10,7 @@
 import { render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, vi } from "vitest";
+import { NotificationProvider } from "@/components/providers/notification-provider";
 import { Sidebar } from "./sidebar";
 import type { SidebarConversation, SidebarData } from "./sidebar-data";
 
@@ -45,6 +46,13 @@ const messages = {
     account: { menu: "Account", plan: "Account" },
   },
   theme: { light: "Light", dark: "Dark", system: "System" },
+  notifications: {
+    open: "Notifications",
+    title: "Notifications",
+    empty: "Nothing yet.",
+    clear: "Clear all",
+    unreadLabel: "{count} unread",
+  },
 };
 
 /** A long conversation list — the case that used to push Settings off-screen. */
@@ -66,7 +74,7 @@ const data: SidebarData = {
 function wrap(ui: React.ReactNode) {
   return render(
     <NextIntlClientProvider locale="en" messages={messages}>
-      {ui}
+      <NotificationProvider>{ui}</NotificationProvider>
     </NextIntlClientProvider>,
   );
 }

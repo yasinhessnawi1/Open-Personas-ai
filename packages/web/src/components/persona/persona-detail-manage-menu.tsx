@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useConfirm } from "@/components/providers/confirm-provider";
+import { useNotify } from "@/components/providers/notification-provider";
 import { buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -37,13 +39,22 @@ export function PersonaDetailManageMenu({
   personaName,
 }: PersonaDetailManageMenuProps) {
   const t = useTranslations("personas");
+  const tc = useTranslations("confirm");
+  const tn = useTranslations("notifications");
+  const confirm = useConfirm();
+  const { notify } = useNotify();
   const router = useRouter();
   const api = useApi();
   const [busy, setBusy] = useState(false);
 
   async function handleDuplicate() {
     if (busy) return;
-    if (!confirm(t("library.duplicateConfirm", { name: personaName }))) return;
+    const ok = await confirm({
+      title: tc("duplicateTitle", { name: personaName }),
+      description: t("library.duplicateConfirm", { name: personaName }),
+      confirmLabel: tc("duplicate"),
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       // Fetch the original full YAML + mutate identity.name per D-F5-4.
@@ -58,6 +69,10 @@ export function PersonaDetailManageMenu({
       await api.POST("/v1/personas", {
         body: { yaml: newYaml, avatar_url: null },
       });
+      notify({
+        level: "success",
+        title: tn("duplicated", { name: personaName }),
+      });
       router.push("/personas");
       router.refresh();
     } finally {
@@ -67,12 +82,19 @@ export function PersonaDetailManageMenu({
 
   async function handleDelete() {
     if (busy) return;
-    if (!confirm(t("library.deleteConfirm", { name: personaName }))) return;
+    const ok = await confirm({
+      title: tc("deleteTitle", { name: personaName }),
+      description: t("library.deleteConfirm", { name: personaName }),
+      confirmLabel: tc("delete"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.DELETE("/v1/personas/{persona_id}", {
         params: { path: { persona_id: personaId } },
       });
+      notify({ level: "success", title: tn("deleted", { name: personaName }) });
       router.push("/personas");
       router.refresh();
     } finally {

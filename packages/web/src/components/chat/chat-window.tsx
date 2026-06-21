@@ -4,8 +4,8 @@ import { ArrowUp } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/auth";
-import { useToast } from "@/components/patterns/toast";
 import type { AvatarPersona } from "@/components/persona/persona-avatar";
+import { useNotify } from "@/components/providers/notification-provider";
 import { buttonVariants } from "@/components/ui/button";
 import { DocumentChip } from "@/components/ui/document-chip";
 import { Textarea } from "@/components/ui/textarea";
@@ -82,7 +82,10 @@ export function ChatWindow({
   capabilities?: PersonaCapabilities | null;
 }) {
   const t = useTranslations("chat");
-  const toast = useToast();
+  // Every chat notification routes through useNotify (the single façade, D-35-10):
+  // consequential events (a document landed / failed) persist in the bell;
+  // transient validation passes persist:false so it toasts without the bell.
+  const { notify } = useNotify();
   const { getToken } = useAuth();
   const { messages, streaming, error, send, respondToProactive } = useChat(
     conversationId,
@@ -127,13 +130,14 @@ export function ChatWindow({
         prev.some((d) => d.doc_ref === ref.doc_ref) ? prev : [...prev, ref],
       );
       notifyConversationFilesChanged();
-      toast.success(
-        t("composer.attach.feedback.documentAttached", {
+      notify({
+        level: "success",
+        title: t("composer.attach.feedback.documentAttached", {
           filename: ref.filename,
         }),
-      );
+      });
     },
-    onDocumentError: (detail) => toast.error(detail),
+    onDocumentError: (detail) => notify({ level: "error", title: detail }),
   });
 
   // D-F3-X-no-vision-surface-shape (a): attach disabled when the
@@ -143,9 +147,19 @@ export function ChatWindow({
 
   const handleReject = useCallback(
     (reason: ValidationReason, detail: string) => {
-      surfaceValidationFailure(reason, detail, toast, t);
+      // Transient: routes through useNotify but stays out of the bell. The sink
+      // shim adapts notify to the { error } shape the helper expects.
+      surfaceValidationFailure(
+        reason,
+        detail,
+        {
+          error: (msg) =>
+            notify({ level: "error", title: msg, persist: false }),
+        },
+        t,
+      );
     },
-    [toast, t],
+    [notify, t],
   );
 
   // T08 — drag-and-drop + paste handlers (desktop-only enhancements).
@@ -171,7 +185,8 @@ export function ChatWindow({
         }
       }
     },
-    onReject: (detail) => toast.error(detail),
+    onReject: (detail) =>
+      notify({ level: "error", title: detail, persist: false }),
   });
   usePasteImage(textareaRef, {
     onFile: (file) => {

@@ -42,6 +42,7 @@ import { AccountMenu } from "./account-menu";
 import { Brand } from "./brand";
 import { CommandTrigger } from "./command-palette";
 import { Nav } from "./nav";
+import { NotificationBell } from "./notification-bell";
 import type { SidebarData } from "./sidebar-data";
 import { MessagesList, PersonasRail } from "./sidebar-sections";
 
@@ -193,7 +194,7 @@ export function Sidebar({ data }: { data: SidebarData }) {
         )}
       >
         <div className="flex min-h-0 flex-1 flex-col gap-4 p-3">
-          {/* (1) Header: brand + collapse toggle. */}
+          {/* (1) Header: brand + notification bell (Spec 35 L) + collapse. */}
           <div
             className={cn(
               "flex items-center",
@@ -201,11 +202,16 @@ export function Sidebar({ data }: { data: SidebarData }) {
             )}
           >
             {collapsed ? null : <Brand className="min-w-0 px-1" />}
-            <CollapseToggle
-              collapsed={collapsed}
-              onToggle={() => setCollapsed(!collapsed)}
-              label={collapsed ? t("sidebar.expand") : t("sidebar.collapse")}
-            />
+            <div
+              className={cn("flex items-center gap-1", collapsed && "flex-col")}
+            >
+              <NotificationBell />
+              <CollapseToggle
+                collapsed={collapsed}
+                onToggle={() => setCollapsed(!collapsed)}
+                label={collapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+              />
+            </div>
           </div>
 
           {/* (2) ⌘K command / search (Spec 35 D-35-14). */}

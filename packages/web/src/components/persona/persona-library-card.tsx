@@ -15,6 +15,8 @@ import { useState } from "react";
 import { startChat, startVoice } from "@/app/actions";
 import { PersonaAvatar } from "@/components/persona/persona-avatar";
 import type { PersonaCardPersona } from "@/components/persona/persona-card";
+import { useConfirm } from "@/components/providers/confirm-provider";
+import { useNotify } from "@/components/providers/notification-provider";
 import { buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -61,13 +63,22 @@ export interface PersonaLibraryCardProps {
 
 export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
   const t = useTranslations("personas");
+  const tc = useTranslations("confirm");
+  const tn = useTranslations("notifications");
+  const confirm = useConfirm();
+  const { notify } = useNotify();
   const router = useRouter();
   const api = useApi();
   const [busy, setBusy] = useState(false);
 
   async function handleDuplicate() {
     if (busy) return;
-    if (!confirm(t("library.duplicateConfirm", { name: persona.name }))) return;
+    const ok = await confirm({
+      title: tc("duplicateTitle", { name: persona.name }),
+      description: t("library.duplicateConfirm", { name: persona.name }),
+      confirmLabel: tc("duplicate"),
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       // Fetch the original persona's full YAML, mutate identity.name to add
@@ -85,6 +96,10 @@ export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
       await api.POST("/v1/personas", {
         body: { yaml: newYaml, avatar_url: null },
       });
+      notify({
+        level: "success",
+        title: tn("duplicated", { name: persona.name }),
+      });
       router.refresh();
     } finally {
       setBusy(false);
@@ -93,11 +108,21 @@ export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
 
   async function handleDelete() {
     if (busy) return;
-    if (!confirm(t("library.deleteConfirm", { name: persona.name }))) return;
+    const ok = await confirm({
+      title: tc("deleteTitle", { name: persona.name }),
+      description: t("library.deleteConfirm", { name: persona.name }),
+      confirmLabel: tc("delete"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.DELETE("/v1/personas/{persona_id}", {
         params: { path: { persona_id: persona.id } },
+      });
+      notify({
+        level: "success",
+        title: tn("deleted", { name: persona.name }),
       });
       router.refresh();
     } finally {
