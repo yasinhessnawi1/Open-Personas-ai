@@ -45,7 +45,7 @@ describe("CallRecap", () => {
     expect(container.querySelector('[data-slot="call-recap"]')).toBeNull();
   });
 
-  it("shows the duration + a view-transcript link for a recorded call", async () => {
+  it("shows the call duration as a trace (no transcript link — that's V9)", async () => {
     saveRecap({
       conversationId: "c-1",
       personaName: "Ada",
@@ -56,9 +56,9 @@ describe("CallRecap", () => {
     await waitFor(() =>
       expect(screen.getByText(/Call ended · 2 min/)).toBeInTheDocument(),
     );
-    expect(
-      screen.getByRole("link", { name: "View transcript" }),
-    ).toHaveAttribute("href", "/chat/c-1");
+    // V7 ships the trace, not a transcript view (forward Seam B / V9) — so there
+    // is no misleading "view transcript" link back into the same thread.
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("dismiss clears the recap", async () => {

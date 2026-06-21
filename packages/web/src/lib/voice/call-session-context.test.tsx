@@ -166,6 +166,20 @@ function Harness() {
       >
         ptt
       </button>
+      <button
+        type="button"
+        data-testid="ptt-hold"
+        onClick={() => s.setPttHeld(true)}
+      >
+        hold
+      </button>
+      <button
+        type="button"
+        data-testid="ptt-release"
+        onClick={() => s.setPttHeld(false)}
+      >
+        release
+      </button>
     </div>
   );
 }
@@ -427,6 +441,37 @@ describe("CallSessionProvider", () => {
       room.emit("dataReceived", encodeState("listening", "preparing"));
     });
     // The greeting un-gated the mic, but PTT (unheld) reconciles it back to muted.
+    await waitFor(() =>
+      expect(screen.getByTestId("mic-active").textContent).toBe("false"),
+    );
+  });
+
+  it("ptt hold opens the mic while held, closes it on release", async () => {
+    render(
+      <CallSessionProvider>
+        <Harness />
+      </CallSessionProvider>,
+    );
+    fireEvent.click(screen.getByTestId("set-ptt"));
+    fireEvent.click(screen.getByTestId("start-a"));
+    await waitFor(() => expect(lk.rooms).toHaveLength(1));
+    const room = lk.rooms[0];
+    await act(async () => {
+      room.emit("dataReceived", encodeState("preparing", "listening"));
+      room.emit("dataReceived", encodeState("listening", "preparing"));
+    });
+    // Muted by default in ptt.
+    await waitFor(() =>
+      expect(screen.getByTestId("mic-active").textContent).toBe("false"),
+    );
+    // Hold → the mic opens; release → it closes again. (The live FAIL was the
+    // button's pointer handling, not this reconcile — this proves the session
+    // layer drives the mic correctly off `pttHeld`.)
+    fireEvent.click(screen.getByTestId("ptt-hold"));
+    await waitFor(() =>
+      expect(screen.getByTestId("mic-active").textContent).toBe("true"),
+    );
+    fireEvent.click(screen.getByTestId("ptt-release"));
     await waitFor(() =>
       expect(screen.getByTestId("mic-active").textContent).toBe("false"),
     );

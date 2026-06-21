@@ -10,7 +10,6 @@
  */
 
 import { Phone, X } from "lucide-react";
-import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import {
@@ -53,13 +52,11 @@ export function CallRecap({
       className="mx-auto flex w-fit items-center gap-2 rounded-full border bg-muted/40 px-3 py-1 type-caption normal-case tracking-normal text-muted-foreground"
     >
       <Phone className="size-3.5" aria-hidden="true" />
+      {/* The trace itself — "Call ended · N min" — IS the navigable mark in the
+          thread (deliverable #7). A full transcript VIEW is V9 (call history &
+          transcripts), forward Seam B — V7 doesn't link to a transcript it can't
+          honestly provide. */}
       <span>{t("recap.summary", { duration })}</span>
-      <Link
-        href={`/chat/${conversationId}`}
-        className="text-foreground underline-offset-2 hover:underline"
-      >
-        {t("recap.view")}
-      </Link>
       <button
         type="button"
         onClick={dismiss}

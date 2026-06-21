@@ -634,7 +634,6 @@
       "summary": "Call ended · {duration}",
       "minutes": "{count, plural, one {# min} other {# min}}",
       "short": "less than a minute",
-      "view": "View transcript",
       "dismiss": "Dismiss"
     },
     "enableAudio": "Tap to enable audio",

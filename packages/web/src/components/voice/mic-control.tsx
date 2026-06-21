@@ -27,22 +27,27 @@ export function MicControl({
     useCallSession();
 
   if (inputMode === "ptt") {
-    const release = () => setPttHeld(false);
     const isHoldKey = (key: string) => key === " " || key === "Enter";
     return (
-      // Pointer/touch = the primary hold path; the keyboard handlers make the
-      // button itself hold-to-talk for keyboard users (criterion #7) — Space/Enter
-      // down opens the mic, up closes it (repeat ignored so auto-repeat doesn't thrash).
+      // Hold-to-talk: the mic is open ONLY while this is held. We capture the
+      // pointer on press so the hold is reliable — without capture, a touch
+      // pointercancel (or sliding a finger/cursor) would fire a premature release
+      // and the button would appear to "do nothing". Release ONLY on pointerup /
+      // pointercancel (NOT on leave) so sliding off mid-sentence doesn't cut you
+      // off. Space/Enter give the same hold for keyboard users (criterion #7).
       <button
         type="button"
         className={className}
+        data-held={pttHeld}
         aria-label={t("ptt.hold")}
         title={t("ptt.hold")}
         aria-pressed={pttHeld}
-        onPointerDown={() => setPttHeld(true)}
-        onPointerUp={release}
-        onPointerLeave={release}
-        onPointerCancel={release}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+          setPttHeld(true);
+        }}
+        onPointerUp={() => setPttHeld(false)}
+        onPointerCancel={() => setPttHeld(false)}
         onKeyDown={(e) => {
           if (isHoldKey(e.key) && !e.repeat) {
             e.preventDefault();
