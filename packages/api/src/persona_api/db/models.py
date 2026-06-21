@@ -27,13 +27,16 @@ from __future__ import annotations
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     MetaData,
@@ -44,7 +47,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, REAL, TSVECTOR
 
 
 def _json() -> JSON:
@@ -64,6 +67,10 @@ __all__ = [
     "conversations",
     "credit_transactions",
     "credits",
+    "graph_edges",
+    "graph_entities",
+    "graph_node_entities",
+    "graph_nodes",
     "memory_chunks",
     "messages",
     "metadata",
@@ -390,4 +397,132 @@ persona_mcp_assignments = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     PrimaryKeyConstraint("persona_id", "server_id", name="pk_persona_mcp_assignments"),
     Index("idx_persona_mcp_assignments_server", "server_id"),
+)
+
+# ---------------------------------------------------------------------------
+# Spec K0 — the user-scoped knowledge graph (direction 3).
+#
+# Three Postgres-only tables (pgvector ``Vector`` + ``tsvector``); user-scoped via
+# direct ``owner_id`` (NOT the persona FK-chain — the graph is per *user*). Their
+# RLS lives ENTIRELY in migration ``011_knowledge_graph`` (mirroring migration
+# 009 — so ``001``'s downgrade never ALTERs a later table) and is therefore NOT
+# in ``db.rls._POLICIES``. They are excluded from the community SQLite build
+# (``db.community._CLOUD_ONLY_TABLES``) — vectors/FTS are cloud-only, like
+# ``memory_chunks``. The persona-core transport (``persona.graph._schema``)
+# defines its own view of these; a contract test asserts the two agree (D-K0-3).
+# ---------------------------------------------------------------------------
+
+graph_nodes = Table(
+    "graph_nodes",
+    metadata,
+    Column("id", Text, primary_key=True),
+    # The turbovec uint64 index key (D-K0-3): collision-free + monotonic.
+    Column("surrogate", BigInteger, Identity(always=True), nullable=False, unique=True),
+    Column("owner_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("node_kind", Text, nullable=False),
+    Column("concept_name", Text, nullable=False),
+    Column("content", Text, nullable=False),
+    Column("metadata", JSONB, nullable=False),
+    Column("wellbeing_category", Text),
+    Column("embedding", Vector(EMBEDDING_DIM), nullable=False),
+    Column("embedding_model", Text, nullable=False),
+    Column("content_hash", Text, nullable=False),
+    # The accumulation trail (D-K0-4): a JSONB array of NodeProvenance dumps.
+    Column("provenance", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column(
+        "fts",
+        TSVECTOR,
+        Computed("to_tsvector('english', concept_name || ' ' || content)", persisted=True),
+    ),
+    # Lets graph_edges reference (id, owner_id) so an edge can never cross tenants.
+    UniqueConstraint("id", "owner_id", name="uq_graph_nodes_id_owner"),
+    Index("ix_graph_nodes_owner", "owner_id"),
+    Index(
+        "ix_graph_nodes_embedding_hnsw",
+        "embedding",
+        postgresql_using="hnsw",
+        postgresql_ops={"embedding": "vector_cosine_ops"},
+    ),
+    Index("ix_graph_nodes_fts", "fts", postgresql_using="gin"),
+)
+
+graph_edges = Table(
+    "graph_edges",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("owner_id", Text, nullable=False),
+    Column("src_node_id", Text, nullable=False),
+    Column("dst_node_id", Text, nullable=False),
+    Column("link_type", Text, nullable=False),
+    Column("weight", REAL),
+    Column("provenance", JSONB),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint(
+        "link_type IN ('semantic', 'entity', 'temporal', 'causal')",
+        name="graph_edges_link_type_check",
+    ),
+    # Composite FKs: both endpoints belong to the SAME owner (finding-1
+    # defense-in-depth); ON DELETE CASCADE removes a node's edges with it.
+    ForeignKeyConstraint(
+        ["src_node_id", "owner_id"],
+        ["graph_nodes.id", "graph_nodes.owner_id"],
+        ondelete="CASCADE",
+        name="fk_graph_edges_src_owner",
+    ),
+    ForeignKeyConstraint(
+        ["dst_node_id", "owner_id"],
+        ["graph_nodes.id", "graph_nodes.owner_id"],
+        ondelete="CASCADE",
+        name="fk_graph_edges_dst_owner",
+    ),
+    Index("ix_graph_edges_src", "owner_id", "src_node_id", "link_type"),
+    Index("ix_graph_edges_dst", "owner_id", "dst_node_id", "link_type"),
+)
+
+graph_entities = Table(
+    "graph_entities",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("owner_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("canonical_name", Text, nullable=False),
+    Column("aliases", JSONB, nullable=False),
+    Column("name_embedding", Vector(EMBEDDING_DIM), nullable=False),
+    Column("provenance", JSONB),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("id", "owner_id", name="uq_graph_entities_id_owner"),
+    Index("ix_graph_entities_owner", "owner_id"),
+    Index(
+        "ix_graph_entities_name_hnsw",
+        "name_embedding",
+        postgresql_using="hnsw",
+        postgresql_ops={"name_embedding": "vector_cosine_ops"},
+    ),
+)
+
+# node ↔ canonical-entity associations (Spec K0, T6b). Substrate for entity links
+# (criterion 2); ENTITY traversal resolves through this table on-the-fly (no
+# materialized node↔node entity edges). RLS via direct owner_id (migration 011).
+graph_node_entities = Table(
+    "graph_node_entities",
+    metadata,
+    Column("owner_id", Text, nullable=False),
+    Column("node_id", Text, nullable=False),
+    Column("entity_id", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("node_id", "entity_id", name="pk_graph_node_entities"),
+    ForeignKeyConstraint(
+        ["node_id", "owner_id"],
+        ["graph_nodes.id", "graph_nodes.owner_id"],
+        ondelete="CASCADE",
+        name="fk_gne_node_owner",
+    ),
+    ForeignKeyConstraint(
+        ["entity_id", "owner_id"],
+        ["graph_entities.id", "graph_entities.owner_id"],
+        ondelete="CASCADE",
+        name="fk_gne_entity_owner",
+    ),
+    Index("ix_gne_entity", "owner_id", "entity_id"),
+    Index("ix_gne_node", "owner_id", "node_id"),
 )

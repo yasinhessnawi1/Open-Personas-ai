@@ -3173,6 +3173,9 @@ sandbox = [
 test = [
     { name = "pypdf" },
 ]
+turbovec = [
+    { name = "turbovec" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3202,10 +3205,11 @@ requires-dist = [
     { name = "torch", marker = "extra == 'local'", specifier = ">=2.3,<3" },
     { name = "trafilatura", specifier = ">=2.0,<3" },
     { name = "transformers", marker = "extra == 'local'", specifier = ">=4.42,<5" },
+    { name = "turbovec", marker = "extra == 'turbovec'", specifier = ">=0.8.0,<0.9" },
     { name = "typer", specifier = ">=0.12,<1" },
     { name = "tzdata", specifier = ">=2024.1" },
 ]
-provides-extras = ["local", "postgres", "sandbox", "test"]
+provides-extras = ["local", "postgres", "turbovec", "sandbox", "test"]
 
 [[package]]
 name = "persona-runtime"
@@ -5114,6 +5118,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/af/9904ec6d3c93d9b24e5ec360445bbdf758b7f00bfbeedb89cb0eb64eb8bb/triton-3.7.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b9b85e72968a9d8bba5ddb24e9b64aaabaf48affb042f2755cb7cfa92b7531ce", size = 201460637 },
     { url = "https://files.pythonhosted.org/packages/a1/f9/4835a8ea746b88727d8899f4e3ccce4f9cacb38abfc3bb0a638266c53111/triton-3.7.0-cp314-cp314t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:18a160de426fd99f92b0baf509045360afbd3bfaa0b4a5171dde800ec9f09684", size = 188608706 },
     { url = "https://files.pythonhosted.org/packages/c1/68/fa86e5a39608000f645535b2c124920126327ab731f8c4fafd5b07ff8d4b/triton-3.7.0-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ce061073102714b725f3660ec6939d94a1da7984b3aa99c921417cae273672f5", size = 201546766 },
+]
+
+[[package]]
+name = "turbovec"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1e/d4/e3735c9144d4d674f9188bc46e3a7b5d2102fa26517963447f28b1206de2/turbovec-0.8.0.tar.gz", hash = "sha256:4ff24956ef159cd8ccdb19c561b07eea3c191c344a23368cd0adad9cdd87382c", size = 183036 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/d6/cabba621300d06e0d496f3af5edc0048a0796cec17e1fb656d682b4c64ae/turbovec-0.8.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:323f8e1775865e9c9ed1ac33b3d44b82eae725c5e3f5473a8a423eec9e82d387", size = 843172 },
+    { url = "https://files.pythonhosted.org/packages/6c/e9/923fe79602f5b51dde1f7d1d631990b2fba1719e4ae0c5b33ca15c6461df/turbovec-0.8.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d6e3dbeda655f3bb7fcaa68474ae105dd99c3f13ab7da6e980fe4d939667a26a", size = 6121226 },
+    { url = "https://files.pythonhosted.org/packages/f8/00/971e9d614f145d9363415aec000cf09eae2cd26639478887637ece9d4fe1/turbovec-0.8.0-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:1195d4e15ee6f1404c1390817cce1f134561bbe6d3b3462c32e091a45a0f7e6d", size = 13118923 },
+    { url = "https://files.pythonhosted.org/packages/da/9d/2687d4e4c8fedf4d8ed8dfa4d4d6ea26c77c38bd9e56ad00fe20c46e6270/turbovec-0.8.0-cp39-abi3-win_amd64.whl", hash = "sha256:9b5d713f619597dc4e5f9614cac0adc167e861bca3272c66b7b2ba90f67b298f", size = 666929 },
 ]
 
 [[package]]

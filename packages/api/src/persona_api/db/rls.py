@@ -53,6 +53,14 @@ _POLICIES: dict[str, str] = {
 #   user_mcp_servers          → owner_id = current_user
 #   persona_mcp_assignments   → persona_id IN (personas WHERE owner_id = current_user)
 
+# Spec K0 (migration 011): the knowledge-graph tables' RLS lives ENTIRELY in
+# migration 011 (it creates graph_nodes/graph_edges/graph_entities AND their
+# policies; its downgrade removes both together). Deliberately NOT in
+# ``_POLICIES`` — same rationale as the MCP tables. 011 owns their full
+# lifecycle; the predicate is the direct user-scope form (the graph is per
+# *user*, not the persona FK-chain):
+#   graph_nodes / graph_edges / graph_entities → owner_id = current_user
+
 # Spec 14 + F3 follow-up — auxiliary RLS policies for the DocumentStore path.
 # CSA-1 calling-convention discipline: DocumentStore calls
 # ``MemoryStore.write(persona_id=<conversation_id>, ...)`` which fails the

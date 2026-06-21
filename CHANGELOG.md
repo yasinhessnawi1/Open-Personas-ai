@@ -49,6 +49,40 @@ Per-spec entries are added by the close-out phase of each spec.
   durable `origin=call` marker (→ call-history spec), the TTS-unavailable wire
   signal, and in-app input-device selection.
 
+### Added — Shared knowledge-graph store (`persona.graph`, direction-3 foundation)
+
+The user-scoped "bigger brain" all of a user's personas read from and write to —
+the trunk of the K-track (K1 hybrid retrieval, K2 write paths, K3 graph-aware
+prompts, K4 wellbeing, K5 graph UI build on it).
+
+- **Concept-node + typed-link model** (`persona.graph.models`): frozen-Pydantic
+  `ConceptNode` (a sibling of `PersonaChunk`, not a subclass), `TypedLink` over four
+  relationships (semantic / entity / temporal / causal), `CanonicalEntity` + alias
+  set, `NodeProvenance` (accumulation trail with `superseded_content` for
+  contradiction history). Nodes **accumulate via merge**, not duplicate.
+- **Two-layer storage**: Postgres is the source of truth (`graph_nodes` /
+  `graph_edges` / `graph_entities` / `graph_node_entities`, float32 `vector(384)` +
+  generated FTS, **direct-`owner_id` RLS**, Alembic migration extending Spec 07); an
+  optional **turbovec** quantized in-RAM dense index (`persona-core[turbovec]`,
+  lazy-imported, never a hard dep). **pgvector is the default + only-wired prod path.**
+- **Dense retrieval**: a `GraphIndex` protocol with both adapters; on the turbovec
+  path the exact-rerank is structurally mandatory (ANN→float32-rerank→top-k) so
+  **4-bit recall@10 ≥ 0.95** holds (validated; CI-gated). Identical allowlist
+  semantics across backends.
+- **Merge engine** (the coherence heart): canonicalise → extend-vs-create (tuned,
+  config-driven threshold) → accumulate-with-provenance (no silent overwrite) →
+  auto semantic links (capped, re-evaluated on extend) → typed-link attachment.
+  Idempotent re-merge.
+- **Canonical entity resolution**: deterministic three-way verdict
+  (`MERGE`/`SEPARATE`/`AMBIGUOUS`) — Fellegi-Sunter zones over embedding + lexical
+  (hand-rolled Jaro-Winkler), **LLM-free** (K2 owns the judge on the ambiguous band);
+  a config-driven sweep harness for re-tuning.
+- **`GraphStore`** assembly with same-path index sync (Postgres-authoritative;
+  index drift surfaced, recoverable via `rebuild_index`), one `AuditEvent` per
+  mutation (`store="knowledge_graph"`), and the K1 read legs (dense / FTS / typed
+  neighbours).
+- Config via `PERSONA_GRAPH_*` (thresholds, index backend, bit-width, rerank-N).
+
 ---
 
 ## [1.0.0] - 2026-06-20

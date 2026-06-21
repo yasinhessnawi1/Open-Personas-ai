@@ -117,6 +117,14 @@ postgres = [
     "sqlalchemy>=2.0,<3",
     "pgvector>=0.3,<1",
 ]
+# Spec K0 T7 (D-K0-6/7) — turbovec is the OPTIONAL quantized in-RAM dense index for
+# the knowledge graph. NEVER a hard dependency: lazy-imported, env-selected
+# (PERSONA_GRAPH_INDEX_BACKEND=turbovec), with pgvector the default + only wired
+# prod path. Pinned >=0.8.0 for the x86 scalar-fallback correctness fix (research
+# §6); tight upper bound for the alpha on-disk-format churn. MIT; numpy-only tree.
+turbovec = [
+    "turbovec>=0.8.0,<0.9",
+]
 # Spec 12 T05 LocalDockerSandbox — docker SDK pulled here, NOT in the base
 # install (D-12-5 + spec-12 kickoff: "users who only use the hosted sandbox
 # via the API don't need it"). The module lazy-imports docker so it stays

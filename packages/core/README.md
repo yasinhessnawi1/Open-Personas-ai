@@ -38,6 +38,7 @@ pip install persona-core                 # core + Chroma + frontier provider SDK
 pip install persona-core[local]          # + torch / transformers for local HF inference
 pip install persona-core[postgres]       # + psycopg + pgvector for the Postgres backend
 pip install persona-core[sandbox]        # + docker SDK for the LocalDockerSandbox
+pip install persona-core[turbovec]       # + turbovec for the optional quantized graph index
 ```
 
 Python ≥ 3.11. For workspace development from the monorepo:
@@ -130,6 +131,14 @@ per-turn logging — compose `persona-core` with
 - **Vision + documents + sandbox.** `ImageContent` vision input, document ingestion
   and generation, and a `CodeSandbox` protocol with a `LocalDockerSandbox`
   reference implementation.
+- **Knowledge graph** (`persona.graph`). A user-scoped "bigger brain" all of a
+  user's personas read from and write to: concept-nodes connected by typed links
+  (semantic / entity / temporal / causal), kept coherent by canonical-entity
+  resolution (deterministic, LLM-free) + accumulate-via-merge, with Postgres as the
+  source of truth and an optional turbovec quantized in-RAM dense index (pgvector is
+  the default; 4-bit + mandatory exact-rerank). RLS-isolated per user; configured
+  via `PERSONA_GRAPH_*` env vars. The foundation of the K-track (hybrid retrieval,
+  write paths, graph-aware prompts, wellbeing, graph UI).
 
 ## Architecture role
 

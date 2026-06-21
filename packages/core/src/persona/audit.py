@@ -37,7 +37,10 @@ __all__ = [
     "StoreKind",
 ]
 
-StoreKind = Literal["identity", "self_facts", "worldview", "episodic"]
+# The four typed stores (Spec 01) + the user-scoped knowledge graph (Spec K0 T8 —
+# additive: every graph mutation emits exactly one AuditEvent through this same
+# port; existing stores are unaffected).
+StoreKind = Literal["identity", "self_facts", "worldview", "episodic", "knowledge_graph"]
 
 
 class AuditAction(StrEnum):

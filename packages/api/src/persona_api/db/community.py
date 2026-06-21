@@ -46,9 +46,13 @@ __all__ = [
     "make_community_engine",
 ]
 
-# Tables that exist only as the cloud PostgresBackend's transport — never part
-# of the community relational store (their data lives in Chroma).
-_CLOUD_ONLY_TABLES = frozenset({"memory_chunks"})
+# Tables that exist only in the cloud relational store — never part of the
+# community SQLite store. ``memory_chunks``' vectors live in Chroma in community;
+# the Spec K0 graph tables carry pgvector ``Vector`` + ``tsvector`` columns
+# (Postgres-only) and the graph is a cloud feature, so they are excluded too.
+_CLOUD_ONLY_TABLES = frozenset(
+    {"memory_chunks", "graph_nodes", "graph_edges", "graph_entities", "graph_node_entities"}
+)
 
 
 def _new_uuid() -> str:

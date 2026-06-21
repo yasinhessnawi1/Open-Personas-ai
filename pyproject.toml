@@ -131,6 +131,12 @@ disallow_incomplete_defs = true
 module = ["pgvector.*"]
 ignore_missing_imports = true
 
+# turbovec (Spec K0 optional [turbovec] extra) is a Rust/PyO3 lib with no py.typed
+# marker. Ignore missing imports rather than vendoring stubs for an optional dep.
+[[tool.mypy.overrides]]
+module = ["turbovec", "turbovec.*"]
+ignore_missing_imports = true
+
 # python-jose (persona-api, spec 08 auth) ships no stubs. Ignore missing imports
 # rather than depend on the partial third-party types-python-jose stubs.
 [[tool.mypy.overrides]]
