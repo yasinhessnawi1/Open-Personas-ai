@@ -23,6 +23,7 @@ from persona.graph.errors import (
     GraphRebuildError,
     NodeMergeError,
 )
+from persona.graph.fusion import HybridResult, reciprocal_rank_fusion
 from persona.graph.index import make_graph_index
 from persona.graph.index_pgvector import PgvectorGraphIndex
 from persona.graph.index_turbovec import TurbovecGraphIndex, exact_rerank
@@ -53,6 +54,7 @@ from persona.graph.protocol import (
     ResolutionVerdict,
     UpdateIntent,
 )
+from persona.graph.retrieval import HybridRetriever
 from persona.graph.store import PostgresGraphStore, build_graph_store
 
 __all__ = [
@@ -69,6 +71,8 @@ __all__ = [
     "GraphRebuildError",
     "GraphSettings",
     "GraphStore",
+    "HybridResult",
+    "HybridRetriever",
     "KnowledgeCandidate",
     "LinkType",
     "MergeAction",
@@ -90,6 +94,7 @@ __all__ = [
     "best_threshold",
     "build_graph_store",
     "exact_rerank",
+    "reciprocal_rank_fusion",
     "make_edge_id",
     "make_entity_id",
     "make_graph_index",

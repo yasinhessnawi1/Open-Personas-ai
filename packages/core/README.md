@@ -140,8 +140,11 @@ per-turn logging — compose `persona-core` with
   resolution (deterministic, LLM-free) + accumulate-via-merge, with Postgres as the
   source of truth and an optional turbovec quantized in-RAM dense index (pgvector is
   the default; 4-bit + mandatory exact-rerank). RLS-isolated per user; configured
-  via `PERSONA_GRAPH_*` env vars. The foundation of the K-track (hybrid retrieval,
-  write paths, graph-aware prompts, wellbeing, graph UI).
+  via `PERSONA_GRAPH_*` env vars. **Hybrid retrieval** (`HybridRetriever`) fuses the
+  dense (semantic) and sparse (BM25/FTS) legs via reciprocal-rank fusion — parallel,
+  never gated — with bounded type-aware traversal and an allowlist seam for
+  user-scope + wellbeing subtraction. The foundation of the K-track (write paths,
+  graph-aware prompts, wellbeing, graph UI).
 
 ## Architecture role
 

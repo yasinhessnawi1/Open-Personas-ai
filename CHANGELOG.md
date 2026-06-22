@@ -36,6 +36,47 @@ Per-spec entries are added by the close-out phase of each spec.
   `WORKER_DISPATCH_DATABASE_URL`, `PERSONA_API_AVATAR_VIA_QUEUE`. No new runtime
   dependencies (built in-house on SQLAlchemy Core + sync psycopg3).
 
+### Hybrid retrieval over the knowledge graph (2026-06-22)
+
+> Close-out of `hybrid-retrieval` (persona-core). The retrieval layer that makes
+> the K0 knowledge graph usable: dense (semantic) and sparse (lexical/BM25)
+> retrieval fused so precise facts about a person are findable — dense for meaning
+> ("prefers worked examples" without the word "learning"), sparse for exact terms
+> ("metformin" decisively). **Pure orchestration over K0's landed read contract —
+> zero new dependency, no K0 fork, no re-rerank.**
+
+#### Added
+- **`HybridRetriever`** (`persona.graph.retrieval`) — `retrieve(owner_id, query,
+  *, allowlist=None, top_k=None) -> list[HybridResult]`. Runs K0's dense
+  (already exact-reranked) and sparse (Postgres FTS) legs independently over the
+  same scope, fuses via weighted **RRF** (parallel, **never gated** — a
+  paraphrase-only match survives fusion), expands one bounded **type-aware** hop
+  along the typed links (ENTITY > CAUSAL ≈ TEMPORAL > SEMANTIC, augment-never-
+  displace), and returns hybrid-ranked nodes within a result budget.
+- **`reciprocal_rank_fusion`** + **`HybridResult`** (`persona.graph.fusion`) —
+  rank-based fusion (`Σ_leg weight·1/(rrf_k+rank)`, k=60, no score
+  normalization) and the frozen K3-facing result shape (fused rank + per-leg
+  `dense_rank`/`sparse_rank` provenance + node), which makes the no-gating
+  property observable.
+- **The wellbeing (K4) allowlist seam** — user-scope isolation stays in K0 (RLS +
+  in-kernel dense allowlist); the K4 *subtraction* (`user_nodes − flagged`) is
+  enforced as a **post-fusion filter over all legs** (isolation/safety, not
+  relevance — no-gating preserved), closing the sparse-leg gap (`search_fts` has
+  no allowlist param) without re-opening K0.
+- **Additive `GraphSettings`** (`PERSONA_GRAPH_*`) — `rrf_k`, `dense_weight`,
+  `sparse_weight`, `result_budget`, `dense_pool`, `sparse_pool`, and the
+  traversal knobs (`traversal_seed_count`, `traversal_per_node`,
+  `traversal_budget`, per-link-type weights). A both-weights-zero config is
+  rejected.
+
+#### Notes
+- No model-callable tool surface — **operator pass exempt** (pure-library spec).
+- Tuning defaults are **measured, not asserted** by an `@external` full-stack
+  scale test (dense+rerank + FTS + RRF + traversal + K4 filter over a ~1800-node
+  multi-user graph): latency p95 within a per-turn budget, dense recall@10 vs a
+  float32 baseline, and confirmation the K4 filter + budget truncation never drop
+  a relevant node.
+
 ### Web v1 redesign — global notification + consent systems (2026-06-21)
 
 > Close-out of the web v1 production redesign. The screen/shell restyle landed

@@ -72,6 +72,38 @@ class GraphSettings(BaseSettings):
     # mechanism is GraphStore.rebuild_index.
     turbovec_calibration_min: int = Field(default=1000, gt=0)
 
+    # --- hybrid retrieval (K1, D-K1-2/-4/-5) -------------------------------
+    # RRF fuses the dense (already exact-reranked) + sparse (FTS) legs in
+    # parallel, never gated (spec §4). rank-based — no score normalization. k=60
+    # is the Cormack 2009 / Persona-RAG default; per-leg weights default to parity
+    # and exist so a real-data re-tune is a config change (the D-K0-1 posture).
+    # The per-leg over-fetch pools are deliberately larger than result_budget so
+    # fusion + the post-fusion K4 subtraction filter (D-K1-7) + truncation still
+    # fill the budget without starving on subtractions.
+    rrf_k: int = Field(default=60, gt=0)
+    dense_weight: float = Field(default=1.0, ge=0.0)
+    sparse_weight: float = Field(default=1.0, ge=0.0)
+    result_budget: int = Field(default=10, gt=0)
+    dense_pool: int = Field(default=50, gt=0)
+    sparse_pool: int = Field(default=50, gt=0)
+
+    # --- link-aware traversal (K1, D-K1-3) ---------------------------------
+    # Bounded one-hop expansion over the top fused nodes, TYPE-weighted, with a
+    # two-level cap (per-node `neighbors` limit at the source + a per-query budget)
+    # so a densely-linked entity cannot flood. Neighbours enter at a discounted
+    # rank AFTER the fused core (augment-never-displace; the final truncation
+    # enforces it). seed_count=0 OR budget=0 disables traversal with no code change.
+    # Type weights default ENTITY > CAUSAL ≈ TEMPORAL > SEMANTIC (semantic
+    # neighbours are already what the dense leg surfaces → lowest, avoid
+    # double-counting meaning).
+    traversal_seed_count: int = Field(default=3, ge=0)
+    traversal_per_node: int = Field(default=5, gt=0)
+    traversal_budget: int = Field(default=10, ge=0)
+    traversal_weight_entity: float = Field(default=1.0, ge=0.0)
+    traversal_weight_causal: float = Field(default=0.8, ge=0.0)
+    traversal_weight_temporal: float = Field(default=0.8, ge=0.0)
+    traversal_weight_semantic: float = Field(default=0.4, ge=0.0)
+
     @model_validator(mode="after")
     def _bands_ordered(self) -> GraphSettings:
         if self.alias_separate_threshold > self.alias_merge_threshold:
@@ -79,5 +111,14 @@ class GraphSettings(BaseSettings):
                 "alias_separate_threshold must be <= alias_merge_threshold "
                 f"(got {self.alias_separate_threshold} > {self.alias_merge_threshold})"
             )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _at_least_one_leg_weighted(self) -> GraphSettings:
+        # Both weights ge 0 individually, but both-zero is a no-signal config that
+        # collapses RRF scoring to a constant — reject it (every node would tie).
+        if self.dense_weight == 0.0 and self.sparse_weight == 0.0:
+            msg = "dense_weight and sparse_weight cannot both be 0 (it collapses RRF scoring)"
             raise ValueError(msg)
         return self
