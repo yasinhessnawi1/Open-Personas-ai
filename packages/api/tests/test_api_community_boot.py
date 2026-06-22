@@ -63,6 +63,64 @@ def test_community_relational_store_works_through_a_route(community_client: Test
     assert resp.json() == []
 
 
+def test_community_persona_create_populates_memory_on_chroma_not_postgres(
+    community_client: TestClient,
+) -> None:
+    """Persona-create on the community edition must populate memory via Chroma.
+
+    Regression guard. ``persona_service`` used to hardcode ``PostgresBackend`` when
+    composing the four typed stores for create/update, so on the community edition
+    (SQLite relational store + Chroma vectors) the create-time memory population
+    failed with ``no such table: memory_chunks`` — that table only exists on the
+    Postgres relational store; community keeps typed-memory vectors in Chroma. The
+    fix threads the app's edition-appropriate ``memory_backend`` (the one the
+    lifespan wired at boot) into the store composition.
+
+    This exercises the service layer directly with the engine + Chroma backend the
+    app booted — the exact ``no such table: memory_chunks`` failure point — without
+    coupling the guard to the persona-detail capability hydration (a separate
+    rough edge that needs a model key, irrelevant to the storage bug). Pre-fix the
+    ``registry.load_persona`` call below raises ``OperationalError`` against SQLite;
+    post-fix the chunks land in Chroma and are queryable.
+    """
+    from persona_api.services import persona_service
+
+    app_state = community_client.app.state
+    # The app must expose the edition's memory backend; community = Chroma.
+    backend = app_state.memory_backend
+    assert backend is not None
+    assert type(backend).__name__ == "ChromaBackend"
+
+    yaml_str = (
+        "schema_version: '1.0'\n"
+        "identity:\n"
+        "  name: Sigrid\n"
+        "  role: research assistant\n"
+        "  background: A research assistant built to help with literature reviews.\n"
+        "self_facts:\n"
+        "  - fact: I was built to help with literature reviews.\n"
+    )
+    persona_id = persona_service.create_persona(
+        rls_engine=app_state.rls_engine,
+        embedder=app_state.embedder,
+        audit_root=app_state.audit_root,
+        owner_id="local-owner",
+        yaml_str=yaml_str,
+        memory_backend=backend,  # the edition backend the route now threads
+    )
+
+    # The persona's typed memory was actually written to Chroma (not a no-op):
+    # identity + the self-fact are queryable through the edition backend.
+    identity_hits = backend.query(
+        persona_id=persona_id, store_kind="identity", text="Sigrid", top_k=5
+    )
+    self_fact_hits = backend.query(
+        persona_id=persona_id, store_kind="self_facts", text="literature reviews", top_k=5
+    )
+    assert identity_hits, "identity chunks should have been populated in Chroma"
+    assert self_fact_hits, "self_facts chunks should have been populated in Chroma"
+
+
 def test_community_owner_is_seeded(community_client: TestClient) -> None:
     from persona_api.db.community import build_community_metadata
     from sqlalchemy import select

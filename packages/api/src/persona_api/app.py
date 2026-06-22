@@ -232,6 +232,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             memory_backend = PostgresBackend(engine=rls_engine, embedder=app.state.embedder)
     app.state.rls_engine = rls_engine
     app.state.admin_engine = admin_engine
+    # Spec 33 (D-33-X-memory-chroma-community): expose the edition's typed-memory
+    # backend so the persona-create/update service composes its four typed stores
+    # over the edition-appropriate transport (Chroma for community, Postgres for
+    # cloud) — never a hardcoded PostgresBackend, which has no ``memory_chunks``
+    # table on the community SQLite path.
+    app.state.memory_backend = memory_backend
     # A0 (T9): the durable enqueue surface. A JobQueue on the cross-tenant dispatch
     # engine (admin/superuser for v0.1; a job_dispatcher role to harden). Present
     # only when a dispatch engine exists; the create path uses it iff

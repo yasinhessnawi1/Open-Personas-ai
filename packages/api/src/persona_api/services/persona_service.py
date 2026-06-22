@@ -43,6 +43,7 @@ from persona_api.schemas import PersonaSummary
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from persona.stores.backend import Backend
     from persona.stores.embedder import Embedder
     from sqlalchemy import Engine
 
@@ -168,9 +169,22 @@ def _guard_default_capabilities(persona: Persona, yaml_str: str) -> tuple[Person
     return guarded, guarded_yaml
 
 
-def _build_registry(engine: Engine, embedder: Embedder, audit_root: Path) -> PersonaRegistry:
-    """Compose the four typed stores over PostgresBackend (RLS-scoped engine)."""
-    backend = PostgresBackend(engine=engine, embedder=embedder)
+def _build_registry(
+    engine: Engine,
+    embedder: Embedder,
+    audit_root: Path,
+    memory_backend: Backend | None = None,
+) -> PersonaRegistry:
+    """Compose the four typed stores over the edition's memory backend.
+
+    Cloud injects ``PostgresBackend`` (RLS-scoped engine); community injects a
+    file-based ``ChromaBackend`` (Spec 33 D-33-X-memory-chroma-community). When no
+    backend is injected, defaults to ``PostgresBackend`` (the historical CLI-style
+    composition) so existing callers are unaffected. A hardcoded ``PostgresBackend``
+    here would fail on the community SQLite path with ``no such table:
+    memory_chunks`` — the create/update routes pass the app's edition backend.
+    """
+    backend = memory_backend or PostgresBackend(engine=engine, embedder=embedder)
     audit = JSONLAuditLogger(audit_root)
     stores = {
         "identity": IdentityStore(backend=backend, audit_logger=audit),
@@ -189,6 +203,7 @@ def create_persona(
     owner_id: str,
     yaml_str: str,
     avatar_url: str | None = None,
+    memory_backend: Backend | None = None,
 ) -> str:
     """Create a persona: insert the row + populate memory stores (D-08-8).
 
@@ -219,7 +234,7 @@ def create_persona(
             )
         )
     # Persona row committed → its FK target is visible to the store connections.
-    registry = _build_registry(rls_engine, embedder, audit_root)
+    registry = _build_registry(rls_engine, embedder, audit_root, memory_backend)
     registry.load_persona(persona)
     return persona_id
 
@@ -233,6 +248,7 @@ def update_persona(
     persona_id: str,
     yaml_str: str,
     avatar_url: str | None = None,
+    memory_backend: Backend | None = None,
 ) -> None:
     """Replace a persona's YAML (re-validated) and re-index its memory.
 
@@ -255,7 +271,7 @@ def update_persona(
         )
         if result.first() is None:
             raise PersonaNotFoundError("persona not found", context={"id": persona_id})
-    registry = _build_registry(rls_engine, embedder, audit_root)
+    registry = _build_registry(rls_engine, embedder, audit_root, memory_backend)
     registry.load_persona(persona)
 
 

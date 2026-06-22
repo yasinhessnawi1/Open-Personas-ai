@@ -335,6 +335,10 @@ async def create_persona(
         owner_id=user.id,
         yaml_str=body.yaml,
         avatar_url=body.avatar_url,
+        # The edition's typed-memory backend (Chroma for community, Postgres for
+        # cloud); a hardcoded PostgresBackend has no memory_chunks table on the
+        # community SQLite path (Spec 33 D-33-X-memory-chroma-community).
+        memory_backend=getattr(request.app.state, "memory_backend", None),
     )
     audit_service.record(
         engine=request.app.state.rls_engine,
@@ -609,6 +613,9 @@ async def grant_tool(
         written_by=user.id,
         now=datetime.now(UTC),
         turn_index=body.turn_index,
+        # Edition's typed-memory backend (Chroma community / Postgres cloud) — the
+        # self_facts consent audit must not hardcode PostgresBackend on SQLite.
+        memory_backend=getattr(request.app.state, "memory_backend", None),
     )
     audit_service.record(
         engine=request.app.state.rls_engine,
@@ -698,6 +705,9 @@ async def update_persona(
         persona_id=persona_id,
         yaml_str=body.yaml,
         avatar_url=body.avatar_url,
+        # Edition's typed-memory backend (Chroma community / Postgres cloud) — see
+        # create_persona; never a hardcoded PostgresBackend on the SQLite path.
+        memory_backend=getattr(request.app.state, "memory_backend", None),
     )
     audit_service.record(
         engine=request.app.state.rls_engine,

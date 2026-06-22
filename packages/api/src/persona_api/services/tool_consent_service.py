@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from persona.stores.backend import Backend
     from persona.stores.embedder import Embedder
     from sqlalchemy.engine import Engine
 
@@ -82,6 +83,7 @@ def grant_tool_consent(
     written_by: str,
     now: datetime,
     turn_index: int | None = None,
+    memory_backend: Backend | None = None,
 ) -> bool:
     """Enable ``tool_name`` on the persona's allow-list with a persona_self audit.
 
@@ -96,6 +98,10 @@ def grant_tool_consent(
         written_by: The acting user id (recorded on the audit chunk).
         now: tz-aware UTC timestamp.
         turn_index: Optional conversation turn the consent came from (audit).
+        memory_backend: The edition's typed-memory backend (Chroma for community,
+            Postgres for cloud). When ``None``, defaults to ``PostgresBackend``
+            (cloud behavior); the community SQLite path MUST inject Chroma or the
+            self_facts audit write fails with ``no such table: memory_chunks``.
 
     Returns:
         ``True`` if the tool was newly added; ``False`` if the persona already
@@ -147,8 +153,13 @@ def grant_tool_consent(
 
     # 2. persona_self audit into the versioned self_facts store (force + ≥0.8 +
     #    reason, per D-26-X-self-facts-consent-write-contract).
+    # The edition's typed-memory backend (Chroma for community, Postgres for
+    # cloud); a hardcoded PostgresBackend has no memory_chunks table on the
+    # community SQLite path (Spec 33 D-33-X-memory-chroma-community). Defaults to
+    # PostgresBackend when none is injected (existing cloud callers unaffected).
+    backend = memory_backend or PostgresBackend(engine=rls_engine, embedder=embedder)
     store = SelfFactsStore(
-        backend=PostgresBackend(engine=rls_engine, embedder=embedder),
+        backend=backend,
         audit_logger=JSONLAuditLogger(audit_root),
     )
     logical_id = _logical_id(tool_name)
