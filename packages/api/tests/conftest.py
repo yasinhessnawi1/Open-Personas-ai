@@ -146,22 +146,20 @@ def pg_engine(database_url: str) -> Iterator[Engine]:
     engine.dispose()
 
 
-@pytest.fixture
-def migrated_engine(database_url: str) -> Iterator[Engine]:
-    """A superuser engine on a schema built by the real Alembic migration.
+def _migrate_to_head(database_url: str) -> None:
+    """``DROP SCHEMA public CASCADE`` + ``alembic upgrade head`` + grant persona_app.
 
-    Unlike :func:`pg_engine` (tables only), this runs ``alembic upgrade head``
-    so RLS ENABLE/FORCE + policies are present — required for the RLS-isolation
-    tests. It also (re-)grants table privileges to the non-superuser
-    ``persona_app`` role if that role exists, since the schema is rebuilt each
-    test.
+    Builds the full schema (tables, indexes, RLS ENABLE/FORCE + policies) and
+    grants the non-superuser ``persona_app`` role if it exists. Used once at
+    session start by :func:`_session_migrated_db`, and again as a self-repair
+    if a migration test (which manipulates the shared schema directly) left it
+    away from head.
     """
     from pathlib import Path
 
     from alembic import command
     from alembic.config import Config
     from sqlalchemy import create_engine, text
-    from sqlalchemy.exc import OperationalError
 
     engine = create_engine(database_url)
     api_dir = Path(__file__).resolve().parents[1]
@@ -182,7 +180,126 @@ def migrated_engine(database_url: str) -> Iterator[Engine]:
                         "ON ALL TABLES IN SCHEMA public TO persona_app"
                     )
                 )
+    finally:
+        engine.dispose()
+
+
+def _schema_is_at_head(engine: Engine) -> bool:
+    """True iff the migrated schema is fully intact (tables + RLS + grants).
+
+    Other shared-schema consumers in the same session can leave the DB short of
+    a full migration:
+
+    - the migration up/down tests (``test_migration*.py``) drop + partially
+      re-migrate directly, so tables may be missing or at ``base``;
+    - the :func:`pg_engine` fixture rebuilds TABLES ONLY (no ``alembic_version``,
+      no RLS policies, no ``persona_app`` grants).
+
+    A bare table-existence check would treat a ``pg_engine`` rebuild as "at head"
+    and skip the re-migrate, leaving the RLS-isolation tests without policies or
+    the ``persona_app`` grants (→ ``InsufficientPrivilege``). So require all of:
+    the key table exists, Alembic stamped a revision, and the RLS policy is
+    present. Any miss → :func:`migrated_engine` re-migrates before truncating.
+
+    Every probe runs in a SINGLE connection inside one ``to_regclass`` lookup so
+    the table-existence test and the row reads observe ONE catalog snapshot.
+    Splitting them (``inspect()`` in one transaction, then a ``SELECT ... FROM
+    alembic_version`` in another) was a TOCTOU bug: a concurrent ``DROP SCHEMA``
+    via a separate engine — exactly what the migration / ``pg_engine`` tests do —
+    could vanish ``alembic_version`` between the two, so the unguarded ``SELECT``
+    raised ``UndefinedTable`` instead of the function returning "not at head".
+    ``to_regclass`` returns NULL (never raises) for a missing relation, which is
+    the whole point: a missing table means "not at head", not a crashed fixture.
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        has_chunks = (
+            conn.execute(text("SELECT to_regclass('public.memory_chunks')")).scalar() is not None
+        )
+        has_version_tbl = (
+            conn.execute(text("SELECT to_regclass('public.alembic_version')")).scalar() is not None
+        )
+        if not (has_chunks and has_version_tbl):
+            return False
+        has_rev = conn.execute(text("SELECT 1 FROM alembic_version")).first() is not None
+        has_policy = (
+            conn.execute(
+                text("SELECT 1 FROM pg_policies WHERE tablename = 'memory_chunks'")
+            ).first()
+            is not None
+        )
+    return has_rev and has_policy
+
+
+def _truncate_all_data(engine: Engine) -> None:
+    """TRUNCATE every data table (RESTART IDENTITY CASCADE), keep the schema.
+
+    Per-test data reset that PRESERVES the schema + RLS policies migrated once
+    at session start. TRUNCATE (not transaction-rollback) because the app under
+    test opens its OWN pooled connections (``make_rls_engine``) — a rollback in
+    the test's connection would not undo the app's committed writes. Runs as the
+    superuser engine (``persona_app`` cannot truncate). ``alembic_version`` is
+    preserved so the schema stays at head across tests.
+    """
+    from sqlalchemy import inspect, text
+
+    tables = [t for t in inspect(engine).get_table_names() if t != "alembic_version"]
+    if not tables:
+        return
+    quoted = ", ".join(f'"{t}"' for t in tables)
+    with engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(scope="session")
+def _session_migrated_db(database_url: str) -> Iterator[Engine]:
+    """Migrate the throwaway DB to head ONCE per test session.
+
+    The schema + RLS policies are built a single time here; per-test isolation
+    is then achieved by TRUNCATE in :func:`migrated_engine` rather than by
+    rebuilding the schema each test. Rebuilding per test raced the app's pooled
+    RLS connections (``DROP SCHEMA public CASCADE`` while a pooled connection
+    still referenced the dropped tables → sporadic ``pg_type`` duplicate-key /
+    ``relation ... does not exist`` setup errors on serial local runs).
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import OperationalError
+
+    try:
+        _migrate_to_head(database_url)
     except OperationalError as exc:
         pytest.skip(f"Postgres unreachable at DATABASE_URL: {exc}")
+    engine = create_engine(database_url)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture
+def migrated_engine(_session_migrated_db: Engine, database_url: str) -> Engine:
+    """A superuser engine on the session-migrated schema, cleaned per test.
+
+    Returns the session-scoped migrated engine (schema + RLS policies built once
+    by :func:`_session_migrated_db`) after TRUNCATE-ing all data tables, so each
+    test starts with an empty-but-fully-migrated DB. This is the drop-in
+    replacement for the former per-test ``DROP SCHEMA`` + ``alembic upgrade``
+    fixture — same interface, no per-test schema-rebuild race.
+
+    Self-repair: if a migration up/down test (``test_migration*.py``, which
+    manipulates the shared schema directly via ``database_url``) left the schema
+    away from head, re-migrate before truncating so the next consumer still sees
+    a head schema.
+
+    Stale-connection guard: migration/``pg_engine`` tests ``DROP SCHEMA`` via a
+    SEPARATE engine, which silently invalidates this session engine's pooled
+    connections (they still reference the dropped relations' OIDs → spurious
+    ``relation ... does not exist`` on the next query, even though the schema is
+    in fact rebuilt). So dispose the pool first: every check / truncate / test
+    query below then runs on a fresh connection that sees the current catalog.
+    """
+    engine = _session_migrated_db
+    engine.dispose()
+    if not _schema_is_at_head(engine):
+        _migrate_to_head(database_url)
+    _truncate_all_data(engine)
+    return engine

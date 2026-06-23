@@ -63,6 +63,9 @@ dev = [
     # Spec 33 (D-33-X-import-linter) — enforce the open-core license boundary:
     # the MIT engine packages must never import the PolyForm-NC app packages.
     "import-linter>=2.0,<3",
+    # Per-test timeout backstop so a stuck/racing test fails fast instead of
+    # hanging a serial run (see [tool.pytest.ini_options] addopts --timeout).
+    "pytest-timeout>=2.3,<3",
 ]
 
 # Spec 33 (D-33-X-import-linter): the MIT engine (persona-core / persona-runtime
@@ -266,4 +269,7 @@ markers = [
     "docker: marks tests that require a running Docker daemon (Spec 16 T09 etc.)",
     "soak: marks long-running sustained-load tests (Spec A0 T10; opt-in via -m soak)",
 ]
-addopts = "-v --tb=short -m 'not integration and not external and not soak'"
+# --timeout backstop (pytest-timeout): a stuck/racing test fails fast instead of
+# hanging the serial run. The soak suite stays excluded by default (-m below);
+# its sustained-load tests legitimately run longer and opt in via `-m soak`.
+addopts = "-v --tb=short --timeout=120 -m 'not integration and not external and not soak'"
