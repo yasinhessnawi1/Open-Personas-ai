@@ -42,7 +42,9 @@ import {
 } from "./auth-flow.cloud";
 import { ArrowIcon, MailIcon } from "./auth-icons.cloud";
 import { AuthLoading, isAuthSignalReady } from "./auth-ready.cloud";
+import { signUpRedirectTarget } from "./auth-redirect.cloud";
 import { AuthShell, authStyles as s } from "./auth-shell.cloud";
+import { useSignedInRedirect } from "./use-signed-in-redirect.cloud";
 
 const SIGN_UP_BRAND = {
   kicker: "Typed-memory AI",
@@ -64,6 +66,10 @@ type Step = "start" | "verify";
 export function SignUp() {
   const { signUp, errors, fetchStatus } = useSignUp();
   const router = useRouter();
+  // Redirect an already-signed-in visitor to the app instead of rendering a form
+  // that would 400 with `session_exists` ("You're already signed in.") on submit.
+  const redirectTarget = signUpRedirectTarget();
+  const { redirecting } = useSignedInRedirect(redirectTarget);
 
   const [step, setStep] = useState<Step>("start");
   const [email, setEmail] = useState("");
@@ -71,6 +77,12 @@ export function SignUp() {
   const [code, setCode] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const cooldown = useResendCooldown();
+
+  // An active session was detected — show the calm loading state while the
+  // redirect to the app commits, never the sign-up form.
+  if (redirecting) {
+    return <AuthLoading brand={SIGN_UP_BRAND} />;
+  }
 
   // Guard the post-logout reset window: `signUp` / `errors` can both be absent
   // while the Clerk client re-initialises (despite the typed non-null shape).
@@ -98,7 +110,9 @@ export function SignUp() {
   const finishSession: Parameters<typeof signUp.finalize>[0] = {
     navigate: ({ session, decorateUrl }) => {
       if (session?.currentTask) return;
-      const url = decorateUrl("/");
+      // Land on the configured app target (NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_
+      // REDIRECT_URL → /personas), not the bare "/" the flow used before.
+      const url = decorateUrl(redirectTarget);
       if (url.startsWith("http")) window.location.href = url;
       else router.push(url);
     },

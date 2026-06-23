@@ -19,14 +19,20 @@ import { isAuthSignalReady } from "./auth-ready.cloud";
 // the signal hooks return so we can drive the not-ready / ready shapes.
 const useSignInMock = vi.fn();
 const useSignUpMock = vi.fn();
+// SignIn / SignUp also call `useAuth()` (already-signed-in redirect guard).
+// Default to a loaded, signed-out session so the guard never fires and the form
+// renders — these tests assert the post-logout reset / ready-signal branches.
+const useAuthMock = vi.fn(() => ({ isLoaded: true, isSignedIn: false }));
 
 vi.mock("@clerk/nextjs", () => ({
   useSignIn: () => useSignInMock(),
   useSignUp: () => useSignUpMock(),
+  useAuth: () => useAuthMock(),
 }));
 
+const replaceMock = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: replaceMock }),
 }));
 
 // Imported AFTER the mocks are registered.
@@ -69,6 +75,9 @@ const READY_SIGN_UP = {
 beforeEach(() => {
   useSignInMock.mockReset();
   useSignUpMock.mockReset();
+  useAuthMock.mockReset();
+  useAuthMock.mockReturnValue({ isLoaded: true, isSignedIn: false });
+  replaceMock.mockReset();
 });
 
 describe("isAuthSignalReady", () => {
@@ -105,6 +114,40 @@ describe("SignIn — post-logout reset window", () => {
   it("renders the real form once the signal is ready", () => {
     useSignInMock.mockReturnValue(READY_SIGN_IN);
     render(<SignIn />);
+    expect(
+      screen.getByRole("heading", { name: "Welcome back" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("already-signed-in guard (session_exists fix)", () => {
+  it("SignIn redirects away (no form) when a session is already active", () => {
+    useSignInMock.mockReturnValue(READY_SIGN_IN);
+    useAuthMock.mockReturnValue({ isLoaded: true, isSignedIn: true });
+    render(<SignIn />);
+    // The configured app target is replaced into history…
+    expect(replaceMock).toHaveBeenCalledWith("/personas");
+    // …and the sign-in form is NOT rendered (calm loading shown instead).
+    expect(
+      screen.queryByRole("heading", { name: "Welcome back" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("SignUp redirects away (no form) when a session is already active", () => {
+    useSignUpMock.mockReturnValue(READY_SIGN_UP);
+    useAuthMock.mockReturnValue({ isLoaded: true, isSignedIn: true });
+    render(<SignUp />);
+    expect(replaceMock).toHaveBeenCalledWith("/personas");
+    expect(
+      screen.queryByRole("heading", { name: "Create your account" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("SignIn renders the form when loaded but signed out", () => {
+    useSignInMock.mockReturnValue(READY_SIGN_IN);
+    useAuthMock.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    render(<SignIn />);
+    expect(replaceMock).not.toHaveBeenCalled();
     expect(
       screen.getByRole("heading", { name: "Welcome back" }),
     ).toBeInTheDocument();
