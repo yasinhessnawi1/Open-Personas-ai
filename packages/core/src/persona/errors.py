@@ -24,6 +24,7 @@ __all__ = [
     "ChannelUnreachableError",
     "CreditsExhaustedError",
     "DuplicateJobTypeError",
+    "InvalidRecurrenceRuleError",
     "JobStateError",
     "MCPBuiltinServerError",
     "MCPConnectionError",
@@ -36,6 +37,8 @@ __all__ = [
     "PersonaSelfWriteForbiddenError",
     "RuntimeWriteForbiddenError",
     "SandboxViolationError",
+    "ScheduleNotFoundError",
+    "ScheduleStateError",
     "SchemaVersionMismatchError",
     "SkillArgumentValidationError",
     "SkillCompositionDepthError",
@@ -391,4 +394,33 @@ class PermanentJobError(PersonaError):
     A handler raises this when the failure will never succeed on retry (malformed
     input, a permanent provider rejection) — the executor moves the job straight
     to the terminal ``failed`` state, no retries. ``context`` carries the cause.
+    """
+
+
+class InvalidRecurrenceRuleError(PersonaError):
+    """Raised when an RFC-5545 recurrence rule is malformed or unsupported.
+
+    Spec A1 (D-A1-1). A :class:`~persona.schedules.RecurrenceRule` parsed from an
+    RRULE string that is unparseable, or that names a ``FREQ`` outside A1's
+    supported set, fails loud at the boundary rather than mis-firing in the tick.
+    ``context`` carries the offending rule string and/or the rejected token.
+    """
+
+
+class ScheduleNotFoundError(PersonaError):
+    """Raised when a schedule id is looked up and does not exist (or is not visible).
+
+    Spec A1. The durable schedule store raises this on a miss — including a
+    cross-tenant lookup that RLS scopes to zero rows, so a missing row and a
+    foreign row are indistinguishable to the caller (no existence oracle).
+    ``context`` carries the requested ``schedule_id``.
+    """
+
+
+class ScheduleStateError(PersonaError):
+    """Raised when an illegal operation is attempted on a schedule's state.
+
+    Spec A1. E.g. recording a fire against a one-time schedule that has already
+    completed, or otherwise driving a schedule through a transition its current
+    state forbids. ``context`` carries the schedule id and the rejected operation.
     """

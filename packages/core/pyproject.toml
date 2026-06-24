@@ -86,6 +86,16 @@ dependencies = [
     # maintained — it makes timezone behaviour deterministic across platforms.
     # (R-26-2 / D-26-X-launch-deps.)
     "tzdata>=2024.1",
+    # Spec A1 (scheduling) — RRULE-class recurrence. ``python-dateutil`` is the
+    # de-facto RFC-5545 ``rrule`` engine (the pattern computation A1's next-fire
+    # rides) plus the ``dateutil.tz`` DST-edge predicates (``datetime_exists`` /
+    # ``resolve_imaginary`` / ``datetime_ambiguous``) the next-fire localization
+    # step uses to define the spring-forward gap + fall-back fold. Load-bearing
+    # for A1, so declared direct (not relied on transitively). Transitive audit
+    # (``uv tree``): ZERO new surface — ``python-dateutil → six`` only, both
+    # already present. Apache-2.0/BSD-3 dual (clean per D-15-X-license-stack).
+    # (A1-R-1 / D-A1-X-dateutil-dep.)
+    "python-dateutil>=2.9,<3",
     # Spec 26 T05 — the ``json_query`` built-in tool runs JMESPath queries over
     # JSON. ``jmespath`` is pure Python with ZERO transitive dependencies (the
     # AWS-CLI query language); lighter than ``jsonpath-ng`` (pulls ``ply``).

@@ -33,6 +33,12 @@ you can drive from Python or the terminal. It ships:
 - a **durable-job contract** (`persona.jobs`) — the job model + state machine,
   frozen payloads, lease/retry policies, and a typed handler registry that the
   hosted worker composes (the queue + worker live in `persona-api`).
+- a **schedule contract** (`persona.schedules`) — the frozen schedule entity
+  (RRULE-class recurrence or a one-time future, with the user's IANA timezone),
+  the pure **DST-correct next-fire computation** (spring-forward gap → adjusted
+  instant; fall-back fold → fire once), the missed-fire policy decision, and the
+  `schedule_id + fire_time` idempotency-key/handoff contract (the durable store +
+  the single-leader tick live in `persona-api`).
 
 ## Install
 

@@ -198,8 +198,19 @@ def _schema_is_at_head(engine: Engine) -> bool:
     A bare table-existence check would treat a ``pg_engine`` rebuild as "at head"
     and skip the re-migrate, leaving the RLS-isolation tests without policies or
     the ``persona_app`` grants (→ ``InsufficientPrivilege``). So require all of:
-    the key table exists, Alembic stamped a revision, and the RLS policy is
-    present. Any miss → :func:`migrated_engine` re-migrates before truncating.
+    the key table exists, Alembic stamped a revision, the RLS policy is present,
+    AND the ``persona_app`` role (when it exists) still holds its schema/table
+    grants. Any miss → :func:`migrated_engine` re-migrates before truncating.
+
+    The grant check closes a real bleed: ``test_migration_graph`` ends by running
+    a raw ``alembic upgrade head`` on a freshly recreated ``public`` schema (via a
+    SEPARATE engine), which rebuilds the tables + RLS but does NOT re-run
+    :func:`_migrate_to_head`'s ``GRANT … TO persona_app``. Without the grant probe,
+    ``_schema_is_at_head`` returned True (tables + version + policy all present), so
+    the self-repair was skipped and the next ``persona_app``-driven RLS test saw
+    every table as ``relation … does not exist`` (Postgres masks a missing
+    schema-USAGE grant as a missing relation). Re-granting is exactly what
+    :func:`_migrate_to_head` does, so failing the head check here triggers it.
 
     Every probe runs in a SINGLE connection inside one ``to_regclass`` lookup so
     the table-existence test and the row reads observe ONE catalog snapshot.
@@ -229,7 +240,26 @@ def _schema_is_at_head(engine: Engine) -> bool:
             ).first()
             is not None
         )
-    return has_rev and has_policy
+        # Grants: only meaningful when the non-superuser role exists. If it does,
+        # require BOTH schema USAGE and SELECT on a representative migrated table —
+        # a grant-less rebuild (test_migration_graph's raw upgrade) trips this and
+        # forces a re-migrate (which re-grants), so persona_app RLS tests don't see
+        # the post-rebuild tables as "does not exist".
+        role_exists = (
+            conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'persona_app'")).first()
+            is not None
+        )
+        has_grants = True
+        if role_exists:
+            has_grants = bool(
+                conn.execute(
+                    text(
+                        "SELECT has_schema_privilege('persona_app', 'public', 'USAGE') "
+                        "AND has_table_privilege('persona_app', 'public.personas', 'SELECT')"
+                    )
+                ).scalar()
+            )
+    return has_rev and has_policy and has_grants
 
 
 def _truncate_all_data(engine: Engine) -> None:

@@ -27,6 +27,34 @@ def _alembic_config(database_url: str) -> Config:
     return cfg
 
 
+def _grant_persona_app(database_url: str) -> None:
+    """Re-grant the non-superuser ``persona_app`` role on the freshly-built schema.
+
+    This file rebuilds ``public`` from scratch (DROP SCHEMA + raw ``alembic
+    upgrade head``), which restores the tables/RLS but NOT the role grants that
+    ``conftest._migrate_to_head`` applies at session start. When this file is no
+    longer the LAST shared-schema consumer in a run (e.g. an A1 schema test runs
+    first, so the session is already migrated, then a ``persona_app``-driven RLS
+    test runs AFTER this rebuild), the conftest's ``_schema_is_at_head`` sees the
+    schema at head and skips a re-migrate — so without re-granting here, that next
+    test sees every table as ``relation … does not exist`` (Postgres masks a
+    missing schema-USAGE grant as a missing relation). Mirror the conftest grant.
+    """
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as conn:
+            if conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'persona_app'")).first():
+                conn.execute(text("GRANT USAGE ON SCHEMA public TO persona_app"))
+                conn.execute(
+                    text(
+                        "GRANT SELECT, INSERT, UPDATE, DELETE "
+                        "ON ALL TABLES IN SCHEMA public TO persona_app"
+                    )
+                )
+    finally:
+        engine.dispose()
+
+
 def test_migration_creates_graph_tables_indexes_and_rls(database_url: str) -> None:
     engine = create_engine(database_url)
     with engine.begin() as conn:
@@ -67,6 +95,10 @@ def test_migration_creates_graph_tables_indexes_and_rls(database_url: str) -> No
     assert forced >= _GRAPH_TABLES
     assert policied >= _GRAPH_TABLES
     engine.dispose()
+    # This rebuild left a grant-less schema; re-grant so a persona_app RLS test
+    # running after this one (when the session is already migrated) still sees the
+    # tables. See _grant_persona_app.
+    _grant_persona_app(database_url)
 
 
 def test_graph_migration_downgrade_drops_only_graph(database_url: str) -> None:
@@ -81,3 +113,4 @@ def test_graph_migration_downgrade_drops_only_graph(database_url: str) -> None:
     assert {"users", "personas", "memory_chunks"}.issubset(tables)  # spec-07 tables survive
     engine.dispose()
     command.upgrade(cfg, "head")  # leave migrated for later session tests
+    _grant_persona_app(database_url)  # …with the persona_app grants restored too

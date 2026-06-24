@@ -80,6 +80,7 @@ __all__ = [
     "personas",
     "rate_limit_buckets",
     "runs",
+    "schedules",
     "turn_logs",
     "user_mcp_servers",
     "users",
@@ -328,6 +329,70 @@ jobs_archive = Table(
     Index("idx_jobs_archive_owner", "owner_id"),
     # Retention sweeps delete by age.
     Index("idx_jobs_archive_archived_at", "archived_at"),
+)
+
+# ``schedules`` is A1's durable clock: a recurring RRULE-class rule OR a one-time
+# future instant, with the user's captured IANA timezone on the row. The
+# single-leader tick (in the worker) claims due rows and materialises each fire
+# into an A0 ``jobs`` row keyed by ``sched:{id}:{fire_time}`` (riding A0's
+# effectively-once). Unlike ``jobs`` this is a LOW-VOLUME entity table (one row
+# per schedule, updated once per fire) — no queue-hygiene reloptions; default
+# autovacuum is right. Owner-scoped + RLS like every tenant table (the worker's
+# dispatch engine reads/updates it cross-tenant; the RLS engine owner-scopes
+# creation). The recurrence/one-time XOR is enforced at the DB, mirroring the
+# ``persona.schedules.Schedule`` validator. RLS policy created in migration
+# ``014_schedules``.
+schedules = Table(
+    "schedules",
+    metadata,
+    Column("id", Text, primary_key=True, server_default=_uuid_pk),
+    Column("owner_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("timezone", Text, nullable=False),
+    # The RFC-5545 RRULE string (NULL for a one-time schedule).
+    Column("recurrence", Text),
+    # The one-time future instant (NULL for a recurring schedule).
+    Column("one_time_at", DateTime(timezone=True)),
+    Column("target_job_type", Text, nullable=False),
+    Column("payload_template", _json(), nullable=False, server_default=text("'{}'")),
+    Column("enabled", Boolean, nullable=False, server_default=text("true")),
+    Column("paused", Boolean, nullable=False, server_default=text("false")),
+    Column(
+        "missed_fire_policy",
+        Text,
+        nullable=False,
+        server_default=text("'fire-late-once'"),
+    ),
+    Column("grace_seconds", Integer),
+    Column("last_fire_at", DateTime(timezone=True)),
+    Column("next_fire_at", DateTime(timezone=True)),
+    Column("fire_count", Integer, nullable=False, server_default=text("0")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # The recurrence/one-time XOR — exactly one of the two is set. Mirrors the
+    # Schedule entity's model validator so the invariant holds even for a direct
+    # SQL write (defence in depth).
+    CheckConstraint(
+        "(recurrence IS NOT NULL) <> (one_time_at IS NOT NULL)",
+        name="schedules_recurrence_xor_one_time",
+    ),
+    CheckConstraint(
+        "missed_fire_policy IN ('fire-late-once', 'skip-and-note')",
+        name="schedules_missed_fire_policy_check",
+    ),
+    CheckConstraint(
+        "grace_seconds IS NULL OR grace_seconds >= 0",
+        name="schedules_grace_seconds_check",
+    ),
+    CheckConstraint("fire_count >= 0", name="schedules_fire_count_check"),
+    # The tick's due-claim: WHERE enabled AND NOT paused AND next_fire_at IS NOT NULL
+    #                       AND next_fire_at <= now()  ORDER BY next_fire_at.
+    Index(
+        "idx_schedules_due",
+        "next_fire_at",
+        postgresql_where=text("enabled AND NOT paused AND next_fire_at IS NOT NULL"),
+    ),
+    # The RLS predicate filters on owner_id.
+    Index("idx_schedules_owner", "owner_id"),
 )
 
 # D-07-4: memory_chunks promotes provenance/versioning to indexed columns.

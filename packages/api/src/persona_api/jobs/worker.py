@@ -45,6 +45,11 @@ if TYPE_CHECKING:
 
     from persona_api.config import APIConfig
 
+    # A1's scheduler tick plugs into the loop additively (Spec A1, T6). Imported
+    # under TYPE_CHECKING only, so the A0 worker keeps ZERO runtime dependency on
+    # A1 — a worker built without a tick behaves exactly as A0 shipped.
+    from persona_api.schedules.tick import SchedulerTick
+
 # Signals that initiate a graceful drain: Fly sends SIGINT by default and
 # SIGTERM when configured (we trap both — D-A0-5).
 _DRAIN_SIGNALS = (signal.SIGTERM, signal.SIGINT)
@@ -92,6 +97,8 @@ class Worker:
         maintenance_interval_seconds: float = 30.0,
         archive_after_seconds: float = 86_400.0,
         archive_retention_seconds: float = 2_592_000.0,
+        scheduler_tick: SchedulerTick | None = None,
+        scheduler_tick_interval_seconds: float = 30.0,
     ) -> None:
         self._dispatch_engine = dispatch_engine
         self._rls_engine = rls_engine
@@ -113,9 +120,13 @@ class Worker:
         self._maintenance_interval = maintenance_interval_seconds
         self._archive_after = archive_after_seconds
         self._archive_retention = archive_retention_seconds
+        # A1 scheduler tick (additive; None on a plain A0 worker — D-A1-X-worker-additive).
+        self._scheduler_tick = scheduler_tick
+        self._scheduler_tick_interval = scheduler_tick_interval_seconds
         self._draining = asyncio.Event()
         self._in_flight: set[asyncio.Task[object]] = set()
         self._last_maintenance = 0.0
+        self._last_scheduler_tick = 0.0
 
     @property
     def worker_id(self) -> str:
@@ -166,6 +177,7 @@ class Worker:
         )
         while not self._draining.is_set():
             self._maybe_run_maintenance()
+            self._maybe_run_scheduler_tick()
             free = self._concurrency - len(self._in_flight)
             # Claim ONE at a time (not a batch of ``free``): the fairness count is
             # evaluated against committed state, so a batch would let all its
@@ -232,6 +244,24 @@ class Worker:
         if elapsed >= self._maintenance_interval:
             self.run_maintenance()
             self._last_maintenance = time.monotonic()
+
+    def _maybe_run_scheduler_tick(self) -> None:
+        """Run the A1 scheduler tick if wired + its cadence has elapsed (additive).
+
+        A no-op on a plain A0 worker (no tick wired). The tick is itself
+        leader-gated (only the advisory-lock holder fires), so every worker may
+        call this safely — at most one process actually ticks. Sync DB work, like
+        the maintenance sweep; a failure is logged, never crashing the loop.
+        """
+        if self._scheduler_tick is None:
+            return
+        if time.monotonic() - self._last_scheduler_tick < self._scheduler_tick_interval:
+            return
+        try:
+            self._scheduler_tick.run_once()
+        except Exception:  # noqa: BLE001 — a tick failure must not crash the worker loop
+            _log.exception("scheduler tick failed", worker_id=self._worker_id)
+        self._last_scheduler_tick = time.monotonic()
 
     def run_maintenance(self) -> None:
         """Rescuer + cleaner + retention sweep (D-A0-4). Idempotent; safe per-worker.

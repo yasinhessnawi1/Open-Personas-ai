@@ -162,6 +162,28 @@ class APIConfig(BaseSettings):
     worker_archive_retention_seconds: float = Field(
         default=2_592_000.0, gt=0, validation_alias="WORKER_ARCHIVE_RETENTION_SECONDS"
     )
+    # Spec A1 — the scheduler tick (hosted in the worker; leader-gated). All
+    # config-driven (D-A1-2/D-A1-3). The tick runs every ``tick_interval`` (jittered
+    # by the worker loop), claims up to ``batch_size`` due schedules, and applies the
+    # missed-fire policy: ``on_time_tolerance`` = how late still counts as "caught
+    # promptly" (fire regardless of policy); ``default_grace`` / ``one_time_grace`` =
+    # the fire-late-once catch-up window (kind-relative — daily ≈ 3h, one-time ≈ 1h),
+    # overridable per schedule. Beyond grace (or skip-and-note) → skip + durable note.
+    scheduler_tick_interval_seconds: float = Field(
+        default=30.0, gt=0, validation_alias="PERSONA_SCHEDULER_TICK_INTERVAL_SECONDS"
+    )
+    scheduler_batch_size: int = Field(
+        default=100, ge=1, validation_alias="PERSONA_SCHEDULER_BATCH_SIZE"
+    )
+    scheduler_default_grace_seconds: float = Field(
+        default=10_800.0, ge=0, validation_alias="PERSONA_SCHEDULER_DEFAULT_GRACE_SECONDS"
+    )
+    scheduler_one_time_grace_seconds: float = Field(
+        default=3_600.0, ge=0, validation_alias="PERSONA_SCHEDULER_ONE_TIME_GRACE_SECONDS"
+    )
+    scheduler_on_time_tolerance_seconds: float = Field(
+        default=120.0, ge=0, validation_alias="PERSONA_SCHEDULER_ON_TIME_TOLERANCE_SECONDS"
+    )
     # A0 T9 enqueue→worker cutover flag. OFF (default) → avatar generation runs the
     # legacy in-process BackgroundTasks path (contract unchanged). ON → the create
     # path ENQUEUES a durable avatar job for the worker (survives an api restart).

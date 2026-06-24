@@ -64,13 +64,24 @@ identical across editions — community just feeds them a constant.
   caps, terminal-job archival, graceful drain. At-least-once delivery with
   idempotent-by-contract handlers; avatar generation is the first tenant (behind
   `PERSONA_API_AVATAR_VIA_QUEUE`).
+- **Scheduling — the clock** — a durable, RLS-scoped `schedules` table (RRULE-class
+  recurrence or a one-time future, with the user's timezone on the row) and a
+  single-leader **scheduler tick** hosted in the worker (`persona_api.schedules`).
+  The tick (leadership via a Postgres advisory lock) claims due schedules and
+  materialises each into an A0 job keyed by `schedule_id + fire_time`, so a double
+  tick / leader handover / crash-rerun fire exactly once. DST-correct next-fire
+  (the user's 7am across both transitions), a missed-fire policy
+  (`fire-late-once` within a grace window / `skip-and-note`) that never
+  burst-replays, and one `AuditEvent` per mutation. Scheduler knobs are
+  `PERSONA_SCHEDULER_*` env vars.
 
 The **api** runs as a single uvicorn worker by design — its in-process run event
 bus and in-memory rate limiter assume one worker. The **job worker** is a separate
 process class and scales horizontally (N processes); durable job state lives in
 Postgres, so it is multi-worker-correct. Worker knobs are `WORKER_*` env vars (see
 `.env.example`); `WORKER_DISPATCH_DATABASE_URL` points the worker's cross-tenant
-dispatch engine at a least-privilege `job_dispatcher` role to harden.
+dispatch engine at a least-privilege `job_dispatcher` role to harden. The scheduler
+tick rides the worker loop (leader-gated, additive) and shares those engines.
 
 ## Install / run
 

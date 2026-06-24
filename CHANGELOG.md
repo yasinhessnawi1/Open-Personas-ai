@@ -11,6 +11,38 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Scheduling — the clock (2026-06-23)
+
+- A durable, RLS-scoped **schedule** entity (RRULE-class recurrence — daily/weekly/
+  monthly/yearly, intervals, `BYDAY`/`BYHOUR`/`BYMINUTE`, "first Monday", `COUNT`/
+  `UNTIL` — **or** a one-time future instant) with the **user's IANA timezone
+  captured on the row**, plus a single-leader **scheduler tick** hosted in the
+  worker. "Every morning at 7" means the user's 7, reliably, across DST and travel.
+- `persona-core` `persona.schedules`: the frozen `Schedule` entity + `RecurrenceRule`
+  (round-trips to/from an RFC-5545 `RRULE` string), and the pure, **DST-correct**
+  `next_fire_after` — the spring-forward gap fires at the adjusted instant, the
+  fall-back fold fires once (the first occurrence); the missed-fire policy decision
+  (`decide_fire`); and the `schedule_id + fire_time` idempotency-key + handoff-payload
+  contract. Exhaustive DST fixture suite (both transitions × both edges, a
+  reversed-DST southern-hemisphere zone, `COUNT`/`UNTIL` exhaustion).
+- `persona-api` `persona_api.schedules`: the RLS-scoped, audited `ScheduleStore`
+  (CRUD + pause/resume/edit + record-fire + one-time completion; an edit recomputes
+  next-fire but preserves the recurrence anchor + fire count — no COUNT-reset
+  loophole), single-leader election via a **session-scoped Postgres advisory lock**
+  on a dedicated connection, and the **scheduler tick** that claims due schedules
+  cross-tenant and materialises each into an A0 job owner-scoped, keyed by
+  `schedule_id + fire_time` (effectively-once — a double tick / leader handover /
+  crash-rerun fire exactly once). Missed-fire policy: `fire-late-once` (catch up
+  once within a kind-relative grace window) or `skip-and-note`, with a durable miss
+  note — **never burst-replays** a backlog. Each fired job carries the schedule
+  identity + fire time so a downstream task leg can anchor on it.
+- The tick rides the existing worker loop **additively** (an optional, leader-gated
+  step — a worker without it behaves exactly as before; zero runtime coupling).
+- New `schedules` table (migration `013`), under RLS, with a partial due-claim
+  index. New env vars: `PERSONA_SCHEDULER_*` (tick interval, batch size, grace
+  windows, on-time tolerance). One new dependency: `python-dateutil` (the RFC-5545
+  recurrence engine; zero new transitive surface). No new infrastructure.
+
 ### Durable execution & the job system (2026-06-22)
 
 - A Postgres-backed job queue (`SELECT … FOR UPDATE SKIP LOCKED`, claim-then-commit)
