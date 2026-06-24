@@ -19,12 +19,23 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from persona.stores.embedder import Embedder
+
 
 @pytest.fixture
-def community_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def community_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, embedder: Embedder
+) -> Iterator[TestClient]:
     # No DATABASE_URL, no model key, no Clerk — pure zero-infra community boot.
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("APP_DATABASE_URL", raising=False)
+    # Unit boot must not load torch/sentence-transformers: the real embedder pulls
+    # torch (whose Linux CI wheel is broken), and these tests assert STORE routing
+    # (Chroma vs Postgres), not embedding quality. Inject the deterministic fake so
+    # create-time indexing and the readback query share one torch-free embedder.
+    from persona_api.services import persona_service
+
+    monkeypatch.setattr(persona_service, "default_embedder", lambda *_a, **_k: embedder)
     config = APIConfig(
         edition=Edition.community,
         community_db_path=tmp_path / "community.db",
