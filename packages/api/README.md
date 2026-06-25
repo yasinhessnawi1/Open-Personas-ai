@@ -63,7 +63,14 @@ identical across editions — community just feeds them a constant.
   lease + heartbeat crash-resume, retry/backoff/dead-letter, claim-time fairness
   caps, terminal-job archival, graceful drain. At-least-once delivery with
   idempotent-by-contract handlers; avatar generation is the first tenant (behind
-  `PERSONA_API_AVATAR_VIA_QUEUE`).
+  `PERSONA_API_AVATAR_VIA_QUEUE`), knowledge-graph **synthesis** the second.
+- **Knowledge-graph write paths** — the graph fills two ways. A model-callable
+  `record_user_fact` tool (on by default) lets a persona record an explicit durable
+  fact mid-conversation via one fast inline write; and a durable **synthesis** job —
+  enqueued off the critical path at interaction boundaries (turn-end, completed
+  agentic run) — distils the emergent understanding into the graph with provenance.
+  Grounded-extraction is measured + gated on the wired model tier; self-harm
+  method/means are rejected before any write.
 - **Scheduling — the clock** — a durable, RLS-scoped `schedules` table (RRULE-class
   recurrence or a one-time future, with the user's timezone on the row) and a
   single-leader **scheduler tick** hosted in the worker (`persona_api.schedules`).

@@ -45,6 +45,11 @@ the CLI for local use, the tests in CI. The loop itself is stateless per request
 - **`TurnLog`** + `JSONLTurnLogWriter` / `MemoryTurnLogWriter` — per-turn telemetry
   (model, tokens, cost, routing decision, latency, fallback), durable to JSONL or
   held in memory for tests.
+- **`persona_runtime.extraction`** — the knowledge-graph write paths' LLM half: the
+  grounded-extraction pipeline (versioned prompt → one model call → grounded,
+  restrained candidates), entity resolution + the AMBIGUOUS-band judge, the
+  `Synthesizer` (the off-critical-path reflection assembly), and the on-by-default
+  `record_user_fact` direct-write tool. Feeds the core graph's one merge.
 
 ## Install
 

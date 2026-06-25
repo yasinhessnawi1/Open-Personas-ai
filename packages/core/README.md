@@ -151,6 +151,11 @@ per-turn logging — compose `persona-core` with
   never gated — with bounded type-aware traversal and an allowlist seam for
   user-scope + wellbeing subtraction. The foundation of the K-track (write paths,
   graph-aware prompts, wellbeing, graph UI).
+- **Write-path contracts** (`persona.extraction`, `persona.wellbeing`). The frozen,
+  LLM-free shapes the graph's two feeders produce: the grounded `ExtractionCandidate`
+  (a verbatim evidence span is required — no quotable basis, no candidate), the
+  `Extractor`/`EntityRecognizer` ports, and the shared `WellbeingCategory` vocabulary
+  tagged at write. The LLM extraction pipeline that fills them lives in the runtime.
 
 ## Architecture role
 

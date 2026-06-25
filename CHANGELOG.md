@@ -11,6 +11,48 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Graph write paths — every interaction extends the shared memory (2026-06-25)
+
+> Close-out of `graph-write-paths` (Spec K2). How the shared knowledge graph (K0)
+> gets **filled**: two paths converging on K0's one merge. A persona can record an
+> explicit, durable fact about you mid-conversation (a silent note), and a
+> background **synthesis** pass distils the *emergent* understanding a completed
+> conversation or agentic run carried but never stated as a single fact — both
+> off the critical path, so the reply is never blocked. The heart is **grounded
+> extraction**: only what you actually conveyed enters the graph — never a
+> speculated diagnosis, an inferred cause, or self-harm method/means. Measured and
+> gated on the wired model tier (hallucination ≈ 0). Zero new dependency; one
+> additive migration (`synthesis_markers`).
+
+#### Added
+- **`record_user_fact` — a direct-write tool**, on by default for every persona:
+  the persona records a discrete, durable fact in your own words via ONE fast inline
+  graph write (no model call — fire-and-forget, never slows the reply). Grounded by
+  construction (`source=persona_self`), owner-scoped (RLS).
+- **Off-critical-path synthesis** — a durable, idempotent background job (A0's second
+  tenant) runs at interaction boundaries (web turn-end, completed agentic run — Spec 06
+  reflection metadata) and distils durable knowledge into the graph with provenance.
+  Long interactions are windowed (compacted summary as context, the verbatim tail as
+  the only grounding source — a summary never becomes a fact).
+- **Grounded-extraction safety, measured + gated** — a committed labelled corpus (EN +
+  Norwegian Bokmål) + deterministic metrics; the build-failing gates (hallucinated-
+  knowledge ≈ 0, self-harm-means in zero candidates, speculative causation declined,
+  sensitive-disclosure tagging) are **green on the wired synthesis tier**.
+- **Self-harm means backstop** — a deterministic, non-blocking guard that rejects
+  method/means specifics on the direct path before the write (and as defense-in-depth
+  in synthesis), so the graph never stores them — only the care-relevant struggle.
+- **Wellbeing-category tagging at write** — sensitive disclosures carry K4's category
+  tag the moment they are written (the shared `WellbeingCategory` vocabulary).
+- **Entity resolution + typed links** — alias-heavy mentions ("my doctor… Dr. Hansen…
+  she…") resolve to one canonical entity; temporal/causal links are asserted only on
+  the user's stated ordering/causation.
+
+#### Notes
+- The synthesis cost is metered + attributable per job (`job.spend`, `surface=synthesis`);
+  the precise per-job micros figure is a follow-up refinement.
+- Voice-conversation synthesis is a one-line follow-up once the voice service composes a
+  job queue; the web + agentic boundaries are live.
+
 ### Persistent & resumable sessions — turns + runs survive navigation (2026-06-24)
 
 > Close-out of `persistent-resumable-sessions`. A chat turn or an agentic run keeps
