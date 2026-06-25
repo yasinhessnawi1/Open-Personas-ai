@@ -44,9 +44,19 @@ pytestmark = [pytest.mark.integration]
 
 
 def _superuser_url() -> str:
+    # Prefer the standard DATABASE_URL the rest of the integration suite (and CI
+    # + scripts/ci-local.sh) sets, so the superuser insert and the persona_app
+    # query (``_app_url`` -> APP_DATABASE_URL) target the SAME database. Reading
+    # a voice-specific var here let the two diverge: with only the standard vars
+    # set, this fell back to the hardcoded dev DB while the engine queried the
+    # test DB, so the fixture-seeded persona was invisible (row_a is None). The
+    # voice-specific override + dev fallback remain for back-compat.
     return os.environ.get(
-        "PERSONA_VOICE_TEST_DATABASE_URL",
-        "postgresql+psycopg://persona:persona@localhost:5436/persona",
+        "DATABASE_URL",
+        os.environ.get(
+            "PERSONA_VOICE_TEST_DATABASE_URL",
+            "postgresql+psycopg://persona:persona@localhost:5436/persona",
+        ),
     )
 
 
