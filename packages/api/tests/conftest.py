@@ -184,6 +184,30 @@ def _migrate_to_head(database_url: str) -> None:
         engine.dispose()
 
 
+_HEAD_REVISION: str | None = None
+
+
+def _alembic_head_revision() -> str:
+    """The single head revision id of the alembic migration scripts.
+
+    Memoised for the session (the scripts don't change mid-run). Used by
+    :func:`_schema_is_at_head` to detect a DB stamped at an OLDER head — the case
+    a structural-only check misses when a new migration lands.
+    """
+    global _HEAD_REVISION
+    if _HEAD_REVISION is None:
+        from pathlib import Path
+
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        api_dir = Path(__file__).resolve().parents[1]
+        cfg = Config(str(api_dir / "alembic.ini"))
+        cfg.set_main_option("script_location", str(api_dir / "alembic"))
+        _HEAD_REVISION = ScriptDirectory.from_config(cfg).get_current_head() or ""
+    return _HEAD_REVISION
+
+
 def _schema_is_at_head(engine: Engine) -> bool:
     """True iff the migrated schema is fully intact (tables + RLS + grants).
 
@@ -233,7 +257,15 @@ def _schema_is_at_head(engine: Engine) -> bool:
         )
         if not (has_chunks and has_version_tbl):
             return False
-        has_rev = conn.execute(text("SELECT 1 FROM alembic_version")).first() is not None
+        # The DB must be at the CURRENT head, not merely stamped at SOME revision.
+        # Without this, a DB stale at an OLDER head — after a new migration lands
+        # (e.g. ``019_task_model`` adds ``tasks``), or after ``test_migration_graph``
+        # leaves it sub-head — passes every structural probe below (the old tables,
+        # policy, and grants are all present) so the session re-migrate is SKIPPED
+        # and the new migration's tables are never created → the new spec's
+        # integration tests fail with ``relation … does not exist``.
+        rev_row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
+        at_head_rev = rev_row is not None and rev_row[0] == _alembic_head_revision()
         has_policy = (
             conn.execute(
                 text("SELECT 1 FROM pg_policies WHERE tablename = 'memory_chunks'")
@@ -259,7 +291,7 @@ def _schema_is_at_head(engine: Engine) -> bool:
                     )
                 ).scalar()
             )
-    return has_rev and has_policy and has_grants
+    return at_head_rev and has_policy and has_grants
 
 
 def _truncate_all_data(engine: Engine) -> None:
