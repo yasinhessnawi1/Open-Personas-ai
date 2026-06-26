@@ -44,6 +44,7 @@ import { ArrowIcon, MailIcon } from "./auth-icons.cloud";
 import { AuthLoading, isAuthSignalReady } from "./auth-ready.cloud";
 import { signUpRedirectTarget } from "./auth-redirect.cloud";
 import { AuthShell, authStyles as s } from "./auth-shell.cloud";
+import { useInFlightGuard } from "./use-in-flight-guard.cloud";
 import { useSignedInRedirect } from "./use-signed-in-redirect.cloud";
 
 const SIGN_UP_BRAND = {
@@ -77,6 +78,10 @@ export function SignUp() {
   const [code, setCode] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const cooldown = useResendCooldown();
+  // Single-flight latch: the OTP `onComplete` and the form `onSubmit` both target
+  // `submitCode`, and `busy`/`fetchStatus` flips too late to gate the second
+  // call. The ref closes that window so the code is verified exactly once.
+  const { runGuarded } = useInFlightGuard();
 
   // An active session was detected — show the calm loading state while the
   // redirect to the app commits, never the sign-up form.
@@ -121,40 +126,53 @@ export function SignUp() {
   /** Step 1: create the account with email + password, then send the code. */
   const handleStart = async (event: React.FormEvent) => {
     event.preventDefault();
-    setFormError(null);
-    const { error } = await signUp.password({
-      emailAddress: email.trim(),
-      password,
+    await runGuarded(async () => {
+      setFormError(null);
+      const { error } = await signUp.password({
+        emailAddress: email.trim(),
+        password,
+      });
+      if (error) {
+        setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+        return;
+      }
+      const { error: sendError } = await signUp.verifications.sendEmailCode();
+      if (sendError) {
+        setFormError(clerkErrorToMessage(sendError as ClerkErrorLike));
+        return;
+      }
+      cooldown.start();
+      setStep("verify");
     });
-    if (error) {
-      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
-      return;
-    }
-    const { error: sendError } = await signUp.verifications.sendEmailCode();
-    if (sendError) {
-      setFormError(clerkErrorToMessage(sendError as ClerkErrorLike));
-      return;
-    }
-    cooldown.start();
-    setStep("verify");
   };
 
-  /** Step 2: verify the 6-digit code, then finalize on completion. */
-  const submitCode = async (value: string) => {
-    setFormError(null);
-    const { error } = await signUp.verifications.verifyEmailCode({
-      code: value,
+  /**
+   * Step 2: verify the 6-digit code, then finalize on completion.
+   *
+   * Guarded single-flight: the OTP auto-submit and the form submit can both fire
+   * for one code entry; without the latch the second call hits Clerk's
+   * "already verified" → 400. Defense-in-depth: if the verify call returns an
+   * error BUT the resource is already verified/complete (the first, winning call
+   * landed it), treat that as success and proceed to finalize rather than
+   * surfacing the spurious error.
+   */
+  const submitCode = (value: string) =>
+    runGuarded(async () => {
+      setFormError(null);
+      const { error } = await signUp.verifications.verifyEmailCode({
+        code: value,
+      });
+      const alreadyComplete = signUp.status === "complete";
+      if (error && !alreadyComplete) {
+        setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+        return;
+      }
+      if (signUp.status === "complete") {
+        await signUp.finalize(finishSession);
+      } else {
+        setFormError(clerkErrorToMessage(null));
+      }
     });
-    if (error) {
-      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
-      return;
-    }
-    if (signUp.status === "complete") {
-      await signUp.finalize(finishSession);
-    } else {
-      setFormError(clerkErrorToMessage(null));
-    }
-  };
 
   const handleVerify = async (event: React.FormEvent) => {
     event.preventDefault();

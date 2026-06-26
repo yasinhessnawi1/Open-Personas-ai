@@ -43,6 +43,7 @@ import {
 import { ArrowIcon } from "./auth-icons.cloud";
 import { AuthLoading, isAuthSignalReady } from "./auth-ready.cloud";
 import { AuthShell, authStyles as s } from "./auth-shell.cloud";
+import { useInFlightGuard } from "./use-in-flight-guard.cloud";
 
 const RESET_BRAND = {
   kicker: "Account recovery",
@@ -64,6 +65,10 @@ export function ResetPassword() {
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const cooldown = useResendCooldown();
+  // Single-flight latch: the OTP `onComplete` and the form `onSubmit` both target
+  // `submitCode`, and `busy`/`fetchStatus` flips too late to gate the second
+  // call — same double-fire as the sign-up verify step. Verify the code once.
+  const { runGuarded } = useInFlightGuard();
 
   // Guard the post-logout reset window: `signIn` / `errors` can both be absent
   // while the Clerk client re-initialises (despite the typed non-null shape).
@@ -99,37 +104,50 @@ export function ResetPassword() {
   /** Step 1: bind the identifier, then send the reset code. */
   const handleRequest = async (event: React.FormEvent) => {
     event.preventDefault();
-    setFormError(null);
-    const { error: createError } = await signIn.create({
-      identifier: email.trim(),
+    await runGuarded(async () => {
+      setFormError(null);
+      const { error: createError } = await signIn.create({
+        identifier: email.trim(),
+      });
+      if (createError) {
+        setFormError(clerkErrorToMessage(createError as ClerkErrorLike));
+        return;
+      }
+      const { error: sendError } =
+        await signIn.resetPasswordEmailCode.sendCode();
+      if (sendError) {
+        setFormError(clerkErrorToMessage(sendError as ClerkErrorLike));
+        return;
+      }
+      cooldown.start();
+      setStep("code");
     });
-    if (createError) {
-      setFormError(clerkErrorToMessage(createError as ClerkErrorLike));
-      return;
-    }
-    const { error: sendError } = await signIn.resetPasswordEmailCode.sendCode();
-    if (sendError) {
-      setFormError(clerkErrorToMessage(sendError as ClerkErrorLike));
-      return;
-    }
-    cooldown.start();
-    setStep("code");
   };
 
-  /** Step 2: verify the reset code (moves status to needs_new_password). */
-  const submitCode = async (value: string) => {
-    setFormError(null);
-    const { error } = await signIn.resetPasswordEmailCode.verifyCode({
-      code: value,
+  /**
+   * Step 2: verify the reset code (moves status to needs_new_password).
+   *
+   * Guarded single-flight: the OTP auto-submit and the form submit can both fire
+   * for one code entry; the latch verifies the code once. Defense-in-depth: if
+   * the verify call returns an error BUT the resource already advanced past the
+   * code step (the first, winning call landed it), advance the UI rather than
+   * surfacing the spurious "already verified" error.
+   */
+  const submitCode = (value: string) =>
+    runGuarded(async () => {
+      setFormError(null);
+      const { error } = await signIn.resetPasswordEmailCode.verifyCode({
+        code: value,
+      });
+      const advanced = signIn.status === "needs_new_password";
+      if (error && !advanced) {
+        setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+        return;
+      }
+      if (signIn.status === "needs_new_password") {
+        setStep("newPassword");
+      }
     });
-    if (error) {
-      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
-      return;
-    }
-    if (signIn.status === "needs_new_password") {
-      setStep("newPassword");
-    }
-  };
 
   const handleCode = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -139,19 +157,22 @@ export function ResetPassword() {
   /** Step 3: submit the new password, then finalize on completion. */
   const handleNewPassword = async (event: React.FormEvent) => {
     event.preventDefault();
-    setFormError(null);
-    const { error } = await signIn.resetPasswordEmailCode.submitPassword({
-      password,
+    await runGuarded(async () => {
+      setFormError(null);
+      const { error } = await signIn.resetPasswordEmailCode.submitPassword({
+        password,
+      });
+      const alreadyComplete = signIn.status === "complete";
+      if (error && !alreadyComplete) {
+        setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+        return;
+      }
+      if (signIn.status === "complete") {
+        await signIn.finalize(finishSession);
+      } else {
+        setFormError(clerkErrorToMessage(null));
+      }
     });
-    if (error) {
-      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
-      return;
-    }
-    if (signIn.status === "complete") {
-      await signIn.finalize(finishSession);
-    } else {
-      setFormError(clerkErrorToMessage(null));
-    }
   };
 
   /** Resend the reset code (throttled by the cooldown). */

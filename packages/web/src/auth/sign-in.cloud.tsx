@@ -40,6 +40,7 @@ import { ArrowIcon } from "./auth-icons.cloud";
 import { AuthLoading, isAuthSignalReady } from "./auth-ready.cloud";
 import { signInRedirectTarget } from "./auth-redirect.cloud";
 import { AuthShell, authStyles as s } from "./auth-shell.cloud";
+import { useInFlightGuard } from "./use-in-flight-guard.cloud";
 import { useSignedInRedirect } from "./use-signed-in-redirect.cloud";
 
 const SIGN_IN_BRAND = {
@@ -64,6 +65,11 @@ export function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  // Single-flight latch: a fast double-Enter / double-click can fire a submit
+  // handler twice before `busy`/`fetchStatus` flips, sending a duplicate request
+  // (the second hits an "already in progress"/"already complete" error). Guard
+  // each async step so it runs once per user action.
+  const { runGuarded } = useInFlightGuard();
 
   // An active session was detected — show the calm loading state while the
   // redirect to the app commits, never the sign-in form.
@@ -108,31 +114,36 @@ export function SignIn() {
   /** Step 1: bind the identifier so the password step has context + a userData chip. */
   const handleEmail = async (event: React.FormEvent) => {
     event.preventDefault();
-    setFormError(null);
-    const { error } = await signIn.create({ identifier: email.trim() });
-    if (error) {
-      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
-      return;
-    }
-    setStep("password");
+    await runGuarded(async () => {
+      setFormError(null);
+      const { error } = await signIn.create({ identifier: email.trim() });
+      if (error) {
+        setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+        return;
+      }
+      setStep("password");
+    });
   };
 
   /** Step 2: submit the password, then finalize on completion. */
   const handlePassword = async (event: React.FormEvent) => {
     event.preventDefault();
-    setFormError(null);
-    const { error } = await signIn.password({ password });
-    if (error) {
-      setFormError(clerkErrorToMessage(error as ClerkErrorLike));
-      return;
-    }
-    if (signIn.status === "complete") {
-      await signIn.finalize(finishSession);
-    } else {
-      // needs_second_factor / needs_client_trust etc. are not part of the v1
-      // email+password config; surface a calm prompt rather than silently stall.
-      setFormError(clerkErrorToMessage(null));
-    }
+    await runGuarded(async () => {
+      setFormError(null);
+      const { error } = await signIn.password({ password });
+      const alreadyComplete = signIn.status === "complete";
+      if (error && !alreadyComplete) {
+        setFormError(clerkErrorToMessage(error as ClerkErrorLike));
+        return;
+      }
+      if (signIn.status === "complete") {
+        await signIn.finalize(finishSession);
+      } else {
+        // needs_second_factor / needs_client_trust etc. are not part of the v1
+        // email+password config; surface a calm prompt rather than silently stall.
+        setFormError(clerkErrorToMessage(null));
+      }
+    });
   };
 
   /** Reset to the email step so the user can correct the identifier. */
