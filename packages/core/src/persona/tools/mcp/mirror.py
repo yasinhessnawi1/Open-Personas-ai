@@ -30,38 +30,26 @@ from persona.tools.mcp.catalog import (
     MCPServerCatalogEntry,
 )
 
-__all__ = ["MIRROR_PATH", "load_mirror_catalog"]
+__all__ = ["MIRROR_PATH", "load_mirror_catalog", "resolve_mirror_write_path"]
 
 _log = get_logger("tools.mcp.mirror")
 
 #: The bundled snapshot, written by the offline sync as package data beside
-#: ``catalog.toml``. Absent until a sync has run (fail-soft → builtin catalog).
+#: ``catalog.toml``. Absent until a sync has run (fail-soft → builtin catalog). On a
+#: deployed image this path is root-owned ``/app/...`` (baked-in, lost on redeploy), so
+#: the auto-sync (N2) writes to a writable ``override`` on the mounted volume instead and
+#: this stays the read-time fallback only (N2-D-1).
 MIRROR_PATH: Path = Path(__file__).parent / "mirror.json"
 
 
-def load_mirror_catalog(
-    path: Path = MIRROR_PATH,
-    *,
-    fallback: MCPCatalog = BUILTIN_MCP_CATALOG,
-) -> MCPCatalog:
-    """Load the mirror snapshot, or fall back to the builtin catalog (never raises).
+def _try_load(path: Path) -> MCPCatalog | None:
+    """Load one snapshot file, or ``None`` if absent / unreadable / structurally invalid.
 
-    The fallback chain (D-N1-4): present + valid → the mirror; absent / unreadable /
-    corrupt / structurally-invalid → ``fallback`` (the bundled ``catalog.toml``). A
-    single malformed snapshot must not break boot, so every failure mode is caught and
-    logged, and ``fallback`` is returned.
-
-    Args:
-        path: The snapshot file (defaults to the bundled :data:`MIRROR_PATH`).
-        fallback: The catalog to return when the snapshot is unusable (defaults to the
-            builtin ``catalog.toml`` catalog).
-
-    Returns:
-        The parsed mirror catalog, or ``fallback``.
+    Never raises — every failure mode is caught + logged so a malformed snapshot can never
+    break boot (D-N1-4). ``None`` is the signal to fall through to the next candidate.
     """
     if not path.exists():
-        _log.info("mcp mirror snapshot absent; using builtin catalog", path=str(path))
-        return fallback
+        return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         servers: dict[str, MCPServerCatalogEntry] = {}
@@ -70,10 +58,55 @@ def load_mirror_catalog(
             servers[entry.name] = entry
     except (OSError, ValueError, KeyError, TypeError, ValidationError) as exc:
         _log.warning(
-            "mcp mirror snapshot unreadable; falling back to builtin catalog",
+            "mcp mirror snapshot unreadable; trying the next candidate",
             path=str(path),
             error=type(exc).__name__,
         )
-        return fallback
+        return None
     _log.info("mcp mirror snapshot loaded", path=str(path), server_count=len(servers))
     return MCPCatalog(servers=servers)
+
+
+def load_mirror_catalog(
+    path: Path = MIRROR_PATH,
+    *,
+    override: Path | None = None,
+    fallback: MCPCatalog = BUILTIN_MCP_CATALOG,
+) -> MCPCatalog:
+    """Load the mirror snapshot, or fall back to the builtin catalog (never raises).
+
+    The precedence (N2-D-1, extending D-N1-4's fail-soft chain): the auto-synced
+    ``override`` (the writable mirror on the mounted volume, when set + valid) → the bundled
+    ``path`` snapshot (when valid) → ``fallback`` (the builtin ``catalog.toml``). Every
+    fall-through is fail-soft: a missing / unreadable / structurally-invalid candidate is
+    skipped (logged), never raised — so a corrupt override does NOT skip straight to the
+    builtin, it tries the bundled snapshot first.
+
+    Args:
+        path: The bundled snapshot file (defaults to the package-data :data:`MIRROR_PATH`).
+        override: The writable, operator-configured snapshot (``PERSONA_MCP_MIRROR_PATH``);
+            tried first when set. ``None`` (unset) → start from ``path``.
+        fallback: The catalog returned when no snapshot is usable (defaults to the builtin
+            ``catalog.toml`` catalog).
+
+    Returns:
+        The first usable parsed mirror catalog, or ``fallback``.
+    """
+    for candidate in (override, path):
+        if candidate is None:
+            continue
+        catalog = _try_load(candidate)
+        if catalog is not None:
+            return catalog
+    _log.info("mcp mirror snapshot absent; using builtin catalog")
+    return fallback
+
+
+def resolve_mirror_write_path(override: Path | None) -> Path:
+    """The path the auto-sync writes the reconciled snapshot to (N2-D-1).
+
+    The configured ``override`` (``PERSONA_MCP_MIRROR_PATH`` — the writable mirror on the
+    mounted volume) when set, else the bundled :data:`MIRROR_PATH` (dev / local default). In
+    production the override MUST be set: the bundled path is root-owned + lost on redeploy.
+    """
+    return override if override is not None else MIRROR_PATH

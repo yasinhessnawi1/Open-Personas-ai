@@ -191,6 +191,18 @@ class APIConfig(BaseSettings):
     scheduler_on_time_tolerance_seconds: float = Field(
         default=120.0, ge=0, validation_alias="PERSONA_SCHEDULER_ON_TIME_TOLERANCE_SECONDS"
     )
+    # Spec N2 — the MCP catalog auto-sync (hosted in the worker loop, leader-gated;
+    # N2-D-1/2/3). A daily-ish periodic task re-pulls Docker's catalog and reconciles
+    # the writable mirror (PERSONA_MCP_MIRROR_PATH). ``enabled`` is the opt-out for
+    # local/community deployments that don't want a periodic outbound git clone — OFF →
+    # availability stays at the bundled snapshot (fail-soft). The interval defaults to a
+    # day (the catalog changes slowly; one shallow clone/day from one process is plenty).
+    mcp_catalog_sync_enabled: bool = Field(
+        default=True, validation_alias="PERSONA_MCP_SYNC_ENABLED"
+    )
+    mcp_catalog_sync_interval_seconds: float = Field(
+        default=86_400.0, gt=0, validation_alias="PERSONA_MCP_SYNC_INTERVAL_SECONDS"
+    )
     # A0 T9 enqueue→worker cutover flag. OFF (default) → avatar generation runs the
     # legacy in-process BackgroundTasks path (contract unchanged). ON → the create
     # path ENQUEUES a durable avatar job for the worker (survives an api restart).

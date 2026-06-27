@@ -17,7 +17,11 @@ import textwrap
 from typing import TYPE_CHECKING
 
 from persona.tools.mcp.catalog import BUILTIN_MCP_CATALOG
-from persona.tools.mcp.mirror import load_mirror_catalog
+from persona.tools.mcp.mirror import (
+    MIRROR_PATH,
+    load_mirror_catalog,
+    resolve_mirror_write_path,
+)
 from persona.tools.mcp.mirror_sync import (
     build_mirror_entries,
     parse_server_yaml,
@@ -206,3 +210,55 @@ def test_sync_from_local_checkout_writes_snapshot(tmp_path: Path) -> None:
     count = sync_mirror(registry_root=registry, mirror_path=mirror)
     assert count == 1  # garbled skipped
     assert load_mirror_catalog(mirror).servers.keys() == {"github-official"}
+
+
+# --------------------------------------------------------------------------- #
+# load_mirror_catalog override precedence (N2-D-1: override → bundled → builtin)
+# --------------------------------------------------------------------------- #
+
+
+def test_override_snapshot_takes_precedence_over_bundled(tmp_path: Path) -> None:
+    # A valid override is preferred over the bundled `path` snapshot.
+    registry = tmp_path / "registry"
+    _write_server(registry, "github-official", _GOOD_SERVER_YAML)
+    override = tmp_path / "override" / "mirror.json"
+    sync_mirror(registry_root=registry, mirror_path=override)
+    bundled = tmp_path / "bundled.json"  # absent → would fall back to builtin if used
+
+    catalog = load_mirror_catalog(bundled, override=override)
+    assert set(catalog.servers) == {"github-official"}
+
+
+def test_corrupt_override_falls_through_to_bundled_then_builtin(tmp_path: Path) -> None:
+    # A corrupt override must NOT skip straight to builtin: it tries the bundled snapshot
+    # next, and only then the builtin fallback.
+    bad_override = tmp_path / "override.json"
+    bad_override.write_text("{ not json", encoding="utf-8")
+
+    registry = tmp_path / "registry"
+    _write_server(registry, "github-official", _GOOD_SERVER_YAML)
+    bundled = tmp_path / "bundled.json"
+    sync_mirror(registry_root=registry, mirror_path=bundled)
+
+    catalog = load_mirror_catalog(bundled, override=bad_override)
+    assert set(catalog.servers) == {"github-official"}  # the bundled snapshot, not builtin
+
+    # Both unusable → builtin.
+    bad_bundled = tmp_path / "bad_bundled.json"
+    bad_bundled.write_text("{ also not json", encoding="utf-8")
+    assert load_mirror_catalog(bad_bundled, override=bad_override) is BUILTIN_MCP_CATALOG
+
+
+def test_unset_override_uses_bundled_path(tmp_path: Path) -> None:
+    registry = tmp_path / "registry"
+    _write_server(registry, "github-official", _GOOD_SERVER_YAML)
+    bundled = tmp_path / "mirror.json"
+    sync_mirror(registry_root=registry, mirror_path=bundled)
+    catalog = load_mirror_catalog(bundled, override=None)
+    assert set(catalog.servers) == {"github-official"}
+
+
+def test_resolve_mirror_write_path_prefers_override(tmp_path: Path) -> None:
+    override = tmp_path / "vol" / "mirror.json"
+    assert resolve_mirror_write_path(override) == override
+    assert resolve_mirror_write_path(None) == MIRROR_PATH

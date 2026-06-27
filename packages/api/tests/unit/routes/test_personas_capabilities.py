@@ -167,6 +167,30 @@ class TestPersonaDetailHelper:
         assert detail_a.capabilities == detail_b.capabilities
         assert detail_a.id != detail_b.id  # they ARE different personas
 
+    def test_clean_persona_has_no_unavailable_mcp_servers(self) -> None:
+        # N2-D-4 surface c: a persona whose YAML declares no MCP enablements gets an
+        # empty flag list (the common case) — additive, never None.
+        detail = _persona_detail(_row(), tier_registry=None)
+        assert detail.unavailable_mcp_servers == []
+
+    def test_flags_enabled_mcp_server_no_longer_available(self) -> None:
+        # A persona still enabling a removed catalog server (mcp:ghost-server — never in
+        # the builtin floor or the mirror) surfaces it; a builtin (mcp:github) and a
+        # non-mcp tool (web_search) do not. The owner-visible signal (vs silent vanish).
+        row = _row() | {
+            "yaml": (
+                "schema_version: '1.0'\n"
+                "tools:\n"
+                "  - mcp:ghost-server\n"
+                "  - mcp:github\n"
+                "  - web_search\n"
+            )
+        }
+        detail = _persona_detail(row, tier_registry=None)
+        assert "ghost-server" in detail.unavailable_mcp_servers
+        assert "github" not in detail.unavailable_mcp_servers  # builtin floor → available
+        assert "web_search" not in detail.unavailable_mcp_servers  # not an mcp enablement
+
 
 # ---------------------------------------------------------------------------
 # Schema-shape sanity (PersonaCapabilities is frozen + extra=forbid)

@@ -98,6 +98,50 @@ Per-spec entries are added by the close-out phase of each spec.
   A user with no graph gets a byte-identical prompt — the graph is additive
   presence, invisible until there is knowledge.
 
+### Docker MCP catalog auto-sync (2026-06-27)
+
+> Close-out of `mcp-catalog-auto-sync`. Keeps the mirrored Docker MCP catalog **fresh
+> automatically** so new MCPs become *available* without hand-editing. A leader-gated
+> periodic task in the worker loop re-pulls `github.com/docker/mcp-registry` on a
+> daily-ish cadence and reconciles the mirror — **adds** new servers, **updates** changed
+> ones, **marks removed** ones — reusing the offline pull from the Gateway-mirror spec.
+> The hard line: the sync updates **availability**, it **never auto-enables** — enabling a
+> market MCP stays the deliberate per-persona allow-list choice (especially in cloud).
+> Reuses the durable-job / scheduling substrate (no second scheduler, no system-owner
+> sentinel). **Zero new dependency; no migration.**
+
+#### Added
+- **Automatic catalog refresh.** The worker loop runs a third ownerless periodic task
+  (alongside maintenance + the scheduler tick): `_maybe_run_catalog_sync` fires on a
+  daily-ish cadence (`PERSONA_MCP_SYNC_INTERVAL_SECONDS`, default 86400), leader-gated by
+  its own Postgres advisory lock so exactly one process pulls. The first sync fires shortly
+  after boot (a fresh mirror on deploy), then daily.
+- **Reconcile with change counts.** A new offline reconcile (`mirror_reconcile.py`) diffs the
+  freshly-pulled entries against the existing snapshot over frozen-model value-equality and
+  writes atomically — reporting **added / updated / removed** (logged each run: ran-at +
+  counts). Re-running against an unchanged registry is a provable no-op (all-zero diff +
+  byte-identical file). Reuses the shared pull seam (`build_entries_from_source`) so the
+  git clone is not reinvented.
+- **Writable, reader-visible mirror location** (`PERSONA_MCP_MIRROR_PATH`). The request-path
+  loader prefers the auto-synced override (the mirror on the mounted volume) over the bundled
+  snapshot, falling through to the built-in catalog — every step fail-soft. (Single-machine
+  in-process deploy: the sync writer and the catalog readers are the same process on the same
+  volume, so a file mirror is reader-visible with no migration.)
+- **Opt-out** (`PERSONA_MCP_SYNC_ENABLED=false`) for local/community deployments that don't
+  want a periodic outbound git clone — availability then stays at the bundled snapshot.
+- **Graceful removed-server handling + an owner-visible signal.** A removed catalog server is
+  dropped from availability (never offered as newly-enableable) and the live tool-call path
+  already degrades without crashing; a persona that still enables a now-removed server is
+  surfaced via the additive `PersonaDetail.unavailable_mcp_servers` field (the disappearance
+  is flagged, not silent).
+
+#### Security
+- **Availability ≠ enablement (no auto-enable).** The sync's entire write surface is the
+  mirror snapshot — it has no handle to any persona's allow-list, so a newly-available server
+  is never auto-enabled, never default-on, and never gained by a persona that didn't
+  explicitly enable it. Enabling stays the per-persona gate (and the operator-vetted gateway
+  boundary in cloud).
+
 ### Docker MCP Gateway integration & catalog mirror (2026-06-25)
 
 > Close-out of `docker-mcp-gateway`. Turns MCP from "configure each server, per

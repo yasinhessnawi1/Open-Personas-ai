@@ -91,6 +91,12 @@ identical across editions — community just feeds them a constant.
   task at zero cost until a reply resumes it; failure-after-retries reads the
   durable **dead-letter** queue and parks the task `waiting(on_user)` with an honest
   stuck-report; cancel/pause land cleanly.
+- **MCP catalog auto-sync** — a third leader-gated periodic task on the worker loop keeps the
+  Docker MCP catalog mirror fresh: on a daily-ish cadence it re-pulls
+  `github.com/docker/mcp-registry`, reconciles the mirror (added/updated/removed, logged), and
+  writes the writable snapshot (`PERSONA_MCP_MIRROR_PATH`) the request-path catalog reads. It
+  updates **availability** only — never a persona's enablement (no auto-enable). Knobs are
+  `PERSONA_MCP_SYNC_*` env vars; the blocking git clone is offloaded off the event loop.
 
 The **api** runs as a single uvicorn worker by design — its in-process run event
 bus and in-memory rate limiter assume one worker. The **job worker** is a separate

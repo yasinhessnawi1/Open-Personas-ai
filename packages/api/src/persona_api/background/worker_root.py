@@ -35,6 +35,7 @@ from persona.jobs import JobRegistry
 from persona.logging import get_logger
 from persona_runtime.extraction.synthesizer import build_synthesizer
 
+from persona_api.jobs.catalog_sync import build_catalog_sync
 from persona_api.jobs.handlers.synthesis import PgSynthesisRepository, register_synthesis_handler
 from persona_api.jobs.worker import build_worker
 from persona_api.schedules.tick import build_scheduler_tick
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
     from persona_api.config import APIConfig
+    from persona_api.jobs.catalog_sync import CatalogSyncTask
     from persona_api.jobs.worker import Worker
     from persona_api.schedules.tick import SchedulerTick
 
@@ -162,7 +164,17 @@ def start_in_process_worker(
             config, dispatch_engine=dispatch_engine, rls_engine=tick_rls_engine
         )
 
-    worker = build_worker(config, registry, scheduler_tick_builder=_tick_builder)
+    # N2 catalog auto-sync — additive, leader-gated, on the worker's cross-tenant dispatch
+    # engine. ``build_catalog_sync`` returns None when disabled (PERSONA_MCP_SYNC_ENABLED=false).
+    def _catalog_sync_builder(dispatch_engine: Engine) -> CatalogSyncTask | None:
+        return build_catalog_sync(config, dispatch_engine=dispatch_engine)
+
+    worker = build_worker(
+        config,
+        registry,
+        scheduler_tick_builder=_tick_builder,
+        catalog_sync_builder=_catalog_sync_builder,
+    )
     handle = InProcessWorker(worker)
     handle.start()
     return handle

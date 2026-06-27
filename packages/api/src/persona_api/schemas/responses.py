@@ -122,6 +122,12 @@ class PersonaDetail(_Output):
     # False = declined. Additive — omitted defaults to None on legacy rows.
     consent_to_auto_dispatch: bool | None = None
     consent_updated_at: datetime | None = None
+    # Spec N2 (N2-D-4 surface c): MCP servers this persona has enabled
+    # (``mcp:<name>`` in its ``tools``) that are no longer in the available catalog —
+    # e.g. the auto-sync removed them upstream. Additive; empty for the common case.
+    # The owner-visible signal that an enabled capability disappeared (vs vanishing
+    # silently); the live tool-call path already degrades without crashing (§7.3).
+    unavailable_mcp_servers: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     # Spec 35: conversations the persona has had — the source of its episodic

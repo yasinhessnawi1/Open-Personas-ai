@@ -37,6 +37,18 @@ def test_unknown_builtin_name_fails_loud() -> None:
         PersonaCoreConfig(mcp_builtin_enabled="time,nonsense")
 
 
+def test_mcp_mirror_path_unset_defaults_none() -> None:
+    # N2-D-1: unset → the bundled snapshot is used (loader override=None).
+    assert PersonaCoreConfig(mcp_builtin_enabled=None).mcp_mirror_path is None
+
+
+def test_mcp_mirror_path_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    monkeypatch.setenv("PERSONA_MCP_MIRROR_PATH", "/var/lib/persona/mcp/mirror.json")
+    assert PersonaCoreConfig().mcp_mirror_path == Path("/var/lib/persona/mcp/mirror.json")
+
+
 def test_external_server_name_points_to_mcp_servers() -> None:
     # fetch/github are BYO external — enabling them here is a misconfiguration.
     with pytest.raises(ValidationError, match="PERSONA_MCP_SERVERS"):

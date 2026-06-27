@@ -7,6 +7,8 @@ auth.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from persona_api.app import create_app
@@ -168,7 +170,8 @@ def test_merged_catalog_builtin_floor_with_builtin_wins_on_collision(
             ),
         }
     )
-    monkeypatch.setattr(catalog_service, "load_mirror_catalog", lambda: fake)
+    # N2: load_mirror_catalog now takes an `override` kwarg; the fake ignores it.
+    monkeypatch.setattr(catalog_service, "load_mirror_catalog", lambda **_: fake)
     merged = {e.name: e for e in catalog_service.merged_mcp_catalog()}
 
     assert set(merged) >= _BUILTINS  # the floor survives
@@ -185,3 +188,144 @@ def test_merged_catalog_builtin_floor_with_builtin_wins_on_collision(
         "github",
     ]
     assert names[-1] == "notion-mirror"
+
+
+def test_merged_catalog_reads_the_override_mirror_path(tmp_path: Path) -> None:
+    """N2-D-1: merged_mcp_catalog reads the auto-synced override snapshot when given one."""
+    from persona.tools.mcp.mirror_sync import sync_mirror
+    from persona_api.services import catalog_service
+
+    # Build an override snapshot from a local registry checkout (no network).
+    server_dir = tmp_path / "registry" / "servers" / "notion-mirror"
+    server_dir.mkdir(parents=True)
+    (server_dir / "server.yaml").write_text(
+        "name: notion-mirror\nabout:\n  title: Notion\n  description: Notion MCP.\n",
+        encoding="utf-8",
+    )
+    override = tmp_path / "vol" / "mirror.json"
+    sync_mirror(registry_root=tmp_path / "registry", mirror_path=override)
+
+    names = {e.name for e in catalog_service.merged_mcp_catalog(mirror_path=override)}
+    assert names >= _BUILTINS  # the floor survives
+    assert "notion-mirror" in names  # the override's long-tail entry is listed
+
+
+# -- N2-D-4: removed-server surfaces (a) not-enableable + (c) owner-visible flag ----
+
+
+def _override_with(tmp_path: Path, *server_names: str) -> Path:
+    """Build an override mirror snapshot listing exactly the given server names."""
+    from persona.tools.mcp.mirror_sync import sync_mirror
+
+    registry = tmp_path / "registry"
+    for name in server_names:
+        d = registry / "servers" / name
+        d.mkdir(parents=True)
+        (d / "server.yaml").write_text(
+            f"name: {name}\nabout:\n  title: {name}\n  description: d.\n", encoding="utf-8"
+        )
+    (registry / "servers").mkdir(parents=True, exist_ok=True)
+    override = tmp_path / "mirror.json"
+    sync_mirror(registry_root=registry, mirror_path=override)
+    return override
+
+
+def test_available_mcp_server_names_includes_builtins_and_mirror(tmp_path: Path) -> None:
+    from persona_api.services import catalog_service
+
+    override = _override_with(tmp_path, "notion-mirror")
+    names = catalog_service.available_mcp_server_names(mirror_path=override)
+    assert names >= _BUILTINS  # the builtin floor is always available
+    assert "notion-mirror" in names  # plus the mirror tail
+
+
+def test_removed_server_is_not_offered_as_enableable(tmp_path: Path) -> None:
+    """Surface (a): a server absent from the mirror is not in the available set."""
+    from persona_api.services import catalog_service
+
+    override = _override_with(tmp_path, "notion-mirror")  # 'ghost' deliberately absent
+    names = catalog_service.available_mcp_server_names(mirror_path=override)
+    assert "ghost" not in names  # cannot be enabled — it's gone
+
+
+def test_unavailable_enabled_flags_only_removed_servers(tmp_path: Path) -> None:
+    """Surface (c): flag enabled ``mcp:<name>`` whose server is gone; ignore the rest."""
+    from persona_api.services import catalog_service
+
+    override = _override_with(tmp_path, "notion-mirror")
+    tools = [
+        "mcp:notion-mirror",  # available via the mirror → not flagged
+        "mcp:github",  # builtin floor → available → not flagged
+        "web_search",  # not an mcp enablement → ignored
+        "mcp:docker:fetch",  # a gateway TOOL (mcp:<server>:<tool>) → not a server enablement
+        "mcp:ghost",  # enabled but gone → flagged
+        "mcp:ghost",  # duplicate → de-duplicated
+    ]
+    assert catalog_service.unavailable_enabled_mcp_servers(tools, mirror_path=override) == ["ghost"]
+
+
+def test_unavailable_enabled_empty_when_no_enablements() -> None:
+    from persona_api.services import catalog_service
+
+    # No ``mcp:<name>`` enablement entries → empty, and the mirror is never consulted.
+    assert catalog_service.unavailable_enabled_mcp_servers(["web_search", "file_read"]) == []
+
+
+# -- N2-D-5 (criterion 4): the sync changes AVAILABILITY, never ENABLEMENT ----------
+
+
+def _seed_registry(root: Path, *server_names: str) -> Path:
+    """Write a ``docker/mcp-registry``-shaped checkout listing the given servers."""
+    for name in server_names:
+        d = root / "servers" / name
+        d.mkdir(parents=True)
+        (d / "server.yaml").write_text(
+            f"name: {name}\nabout:\n  title: {name}\n  description: d.\n", encoding="utf-8"
+        )
+    return root
+
+
+def test_newly_available_mirror_server_is_not_default_enabled(tmp_path: Path) -> None:
+    """A freshly-synced catalog server is OPT-IN — never default-enabled / auto-on."""
+    from persona.tools.mcp.catalog import recommender_provider_tag
+    from persona_api.services import catalog_service
+
+    override = _override_with(tmp_path, "newserver")
+    entry = next(
+        e for e in catalog_service.merged_mcp_catalog(mirror_path=override) if e.name == "newserver"
+    )
+    assert entry.default_enabled is False  # availability ≠ default-on
+    assert recommender_provider_tag(entry) == "mcp:optional"  # opt-in, not a builtin default
+
+
+def test_sync_raises_availability_never_enablement(tmp_path: Path) -> None:
+    """STRUCTURAL contract: a sync that ADDS a server raises availability for everyone,
+    but a persona that did not explicitly enable it never gains it (criterion 4)."""
+    from persona.tools.mcp.mirror_reconcile import reconcile_mirror
+    from persona_api.services import catalog_service
+
+    mirror = tmp_path / "mirror.json"
+    reconcile_mirror(mirror_path=mirror, registry_root=_seed_registry(tmp_path / "r1", "oldserver"))
+    assert "newserver" not in catalog_service.available_mcp_server_names(mirror_path=mirror)
+
+    # P enabled only the pre-existing server; Q happens to have explicitly enabled newserver.
+    p_tools = ["file_read", "mcp:oldserver"]
+    q_tools = ["mcp:newserver"]
+
+    # Upstream gains newserver; the sync reconciles it into availability.
+    result = reconcile_mirror(
+        mirror_path=mirror, registry_root=_seed_registry(tmp_path / "r2", "oldserver", "newserver")
+    )
+    assert "newserver" in result.added
+
+    # Availability rose for EVERYONE (the catalog listing changed)...
+    avail = catalog_service.available_mcp_server_names(mirror_path=mirror)
+    assert {"oldserver", "newserver"} <= avail
+
+    # ...but ENABLEMENT did not: the sync has no handle to a persona's allow-list, so P
+    # never gains mcp:newserver. Enablement stays the explicit per-persona gate.
+    assert "mcp:newserver" not in p_tools  # no auto-enable on a persona that didn't choose it
+    # P's enabled server (oldserver) is still available; nothing P enabled is "unavailable".
+    assert catalog_service.unavailable_enabled_mcp_servers(p_tools, mirror_path=mirror) == []
+    # Q's explicit choice (newserver) is now available — enablement was Q's, not the sync's.
+    assert catalog_service.unavailable_enabled_mcp_servers(q_tools, mirror_path=mirror) == []

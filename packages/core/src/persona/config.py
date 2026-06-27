@@ -131,6 +131,15 @@ class PersonaCoreConfig(BaseSettings):
     # loopback gateway needs none.
     docker_mcp_gateway_token: SecretStr | None = None
 
+    # Spec N2 (N2-D-1) — the writable, reader-visible location of the auto-synced
+    # Docker catalog mirror. On a deployed image the bundled package-data ``mirror.json``
+    # is root-owned ``/app/...`` (baked in, lost on every redeploy), so the auto-refresh
+    # writes here instead — a path on the mounted persistent volume (e.g.
+    # ``/var/lib/persona/mcp/mirror.json``). The request-path loader prefers it over the
+    # bundled snapshot (precedence: override → bundled → builtin ``catalog.toml``); unset
+    # (dev / local) → the bundled snapshot is used and is also the sync's write target.
+    mcp_mirror_path: Path | None = None
+
     # Spec 27 (D-27-4) — which built-in MCP servers an operator opts into. Stored
     # as a raw string so the "unset" case (None → catalog safe-subset) is
     # distinguishable from the "explicit empty" case ("" → opt out of all). The

@@ -117,6 +117,25 @@ def _capabilities_from_registry(
     return PersonaCapabilities(vision=vision, configured_tiers=tier_names)
 
 
+def _tools_from_yaml(yaml_str: str) -> list[str]:
+    """Best-effort extraction of the ``tools`` allow-list from a persona YAML string.
+
+    A lightweight ``safe_load`` (not a full schema parse) just to read the allow-list for the
+    N2 unavailable-server flag; any malformed/odd shape yields ``[]`` (the flag degrades to
+    "nothing to report", never raising on a persona-detail read).
+    """
+    import yaml
+
+    try:
+        data = yaml.safe_load(yaml_str)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    tools = data.get("tools")
+    return [str(t) for t in tools] if isinstance(tools, list) else []
+
+
 def _persona_detail(
     row: dict[str, object],
     *,
@@ -125,9 +144,10 @@ def _persona_detail(
 ) -> PersonaDetail:
     avatar = row.get("avatar_url")
     consent = row.get("consent_to_auto_dispatch")
+    yaml_str = str(row["yaml"])
     return PersonaDetail(
         id=str(row["id"]),
-        yaml=str(row["yaml"]),
+        yaml=yaml_str,
         schema_version=str(row["schema_version"]),
         avatar_url=str(avatar) if avatar is not None else None,
         capabilities=_capabilities_from_registry(tier_registry),
@@ -136,6 +156,10 @@ def _persona_detail(
         created_at=row["created_at"],  # type: ignore[arg-type]
         updated_at=row["updated_at"],  # type: ignore[arg-type]
         conversation_count=conversation_count,
+        # N2-D-4 surface c: flag enabled MCP servers no longer in the available catalog.
+        unavailable_mcp_servers=catalog_service.unavailable_enabled_mcp_servers(
+            _tools_from_yaml(yaml_str)
+        ),
     )
 
 

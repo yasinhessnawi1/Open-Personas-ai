@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 
     from persona_api.config import APIConfig
 
+    # N2's catalog auto-sync plugs into the loop the same additive way (Spec N2, T3):
+    # a third ownerless periodic task; None on a worker without it → behaves as before.
+    from persona_api.jobs.catalog_sync import CatalogSyncTask
+
     # A1's scheduler tick plugs into the loop additively (Spec A1, T6). Imported
     # under TYPE_CHECKING only, so the A0 worker keeps ZERO runtime dependency on
     # A1 — a worker built without a tick behaves exactly as A0 shipped.
@@ -101,6 +105,8 @@ class Worker:
         archive_retention_seconds: float = 2_592_000.0,
         scheduler_tick: SchedulerTick | None = None,
         scheduler_tick_interval_seconds: float = 30.0,
+        catalog_sync: CatalogSyncTask | None = None,
+        catalog_sync_interval_seconds: float = 86_400.0,
     ) -> None:
         self._dispatch_engine = dispatch_engine
         self._rls_engine = rls_engine
@@ -125,10 +131,17 @@ class Worker:
         # A1 scheduler tick (additive; None on a plain A0 worker — D-A1-X-worker-additive).
         self._scheduler_tick = scheduler_tick
         self._scheduler_tick_interval = scheduler_tick_interval_seconds
+        # N2 catalog auto-sync (additive; None when disabled/unwired — N2-D-1/3).
+        self._catalog_sync = catalog_sync
+        self._catalog_sync_interval = catalog_sync_interval_seconds
         self._draining = asyncio.Event()
         self._in_flight: set[asyncio.Task[object]] = set()
         self._last_maintenance = 0.0
         self._last_scheduler_tick = 0.0
+        # None = "never synced" → run once shortly after boot (a fresh mirror on deploy),
+        # then on the daily-ish cadence. A 0.0 seed would instead defer the first sync by a
+        # full interval, since the monotonic clock starts small on a fresh container.
+        self._last_catalog_sync: float | None = None
 
     @property
     def worker_id(self) -> str:
@@ -180,6 +193,7 @@ class Worker:
         while not self._draining.is_set():
             self._maybe_run_maintenance()
             self._maybe_run_scheduler_tick()
+            await self._maybe_run_catalog_sync()
             free = self._concurrency - len(self._in_flight)
             # Claim ONE at a time (not a batch of ``free``): the fairness count is
             # evaluated against committed state, so a batch would let all its
@@ -265,6 +279,29 @@ class Worker:
             _log.exception("scheduler tick failed", worker_id=self._worker_id)
         self._last_scheduler_tick = time.monotonic()
 
+    async def _maybe_run_catalog_sync(self) -> None:
+        """Run the N2 catalog auto-sync if wired + its (daily-ish) cadence has elapsed.
+
+        A no-op when unwired/disabled (None). Like the scheduler tick it is leader-gated
+        (only the catalog-lock holder pulls — N2-D-2), so every worker may call this safely.
+        Unlike the tick, the sync does a BLOCKING ``git clone`` + file write, so it is
+        offloaded to a thread (``asyncio.to_thread``) — never inline — so a multi-second
+        clone never stalls the shared API event loop. A failure is logged, never crashing the
+        loop; the last-good mirror is preserved (fail-soft, N2-D-3) and retried next cadence.
+        """
+        if self._catalog_sync is None:
+            return
+        if (
+            self._last_catalog_sync is not None
+            and time.monotonic() - self._last_catalog_sync < self._catalog_sync_interval
+        ):
+            return
+        try:
+            await asyncio.to_thread(self._catalog_sync.run_once)
+        except Exception:  # noqa: BLE001 — a sync failure must not crash the worker loop
+            _log.exception("catalog sync failed", worker_id=self._worker_id)
+        self._last_catalog_sync = time.monotonic()
+
     def run_maintenance(self) -> None:
         """Rescuer + cleaner + retention sweep (D-A0-4). Idempotent; safe per-worker.
 
@@ -331,6 +368,7 @@ def build_worker(
     registry: JobRegistry,
     *,
     scheduler_tick_builder: Callable[[Engine, Engine], SchedulerTick] | None = None,
+    catalog_sync_builder: Callable[[Engine], CatalogSyncTask | None] | None = None,
 ) -> Worker:
     """Compose a :class:`Worker` from config — the worker's composition root.
 
@@ -368,12 +406,18 @@ def build_worker(
         if scheduler_tick_builder is not None
         else None
     )
+    # N2 catalog auto-sync — additive, leader-gated, built on the cross-tenant dispatch
+    # engine (its advisory lock is not tenant data). None when unwired or disabled.
+    catalog_sync = (
+        catalog_sync_builder(dispatch_engine) if catalog_sync_builder is not None else None
+    )
     _log.info(
         "worker composition root built",
         dispatch_role_dedicated=bool(config.worker_dispatch_database_url),
         rls_role_superuser_fallback=not bool(config.app_database_url),
         registered_types=len(registry.types()),
         scheduler_tick_wired=scheduler_tick is not None,
+        catalog_sync_wired=catalog_sync is not None,
     )
     return Worker(
         dispatch_engine=dispatch_engine,
@@ -381,6 +425,8 @@ def build_worker(
         registry=registry,
         scheduler_tick=scheduler_tick,
         scheduler_tick_interval_seconds=config.scheduler_tick_interval_seconds,
+        catalog_sync=catalog_sync,
+        catalog_sync_interval_seconds=config.mcp_catalog_sync_interval_seconds,
         concurrency=config.worker_concurrency,
         poll_interval_seconds=config.worker_poll_interval_seconds,
         poll_jitter_seconds=config.worker_poll_jitter_seconds,

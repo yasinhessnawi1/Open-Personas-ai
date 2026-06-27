@@ -40,6 +40,7 @@ from persona.tools.mcp.catalog import (
 
 __all__ = [
     "REGISTRY_REPO",
+    "build_entries_from_source",
     "build_mirror_entries",
     "parse_server_yaml",
     "sync_mirror",
@@ -189,6 +190,38 @@ def _clone_registry(repo: str, dest: Path) -> None:
     )
 
 
+def build_entries_from_source(
+    *,
+    repo: str = REGISTRY_REPO,
+    registry_root: Path | None = None,
+) -> list[MCPServerCatalogEntry]:
+    """Obtain catalog entries from the registry — a local checkout or a fresh clone.
+
+    The single shared pull seam (N1 + N2): when ``registry_root`` is given it reads
+    that existing checkout (tests / local runs, no network); otherwise it shallow-clones
+    ``repo`` into a temp dir and reads it. OFFLINE-ONLY — never reached from the request
+    path (D-N1-4). The auto-refresh sync (N2) and the one-shot ``sync_mirror`` both build
+    on this so neither re-implements the clone.
+
+    Args:
+        repo: The registry git URL (ignored when ``registry_root`` is given).
+        registry_root: An existing local checkout to read instead of cloning.
+
+    Returns:
+        The parsed entries (malformed ``server.yaml`` files skipped + logged).
+
+    Raises:
+        FileNotFoundError: the checkout has no ``servers/`` directory.
+        subprocess.CalledProcessError: the git clone failed.
+    """
+    if registry_root is not None:
+        return build_mirror_entries(registry_root)
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp) / "mcp-registry"
+        _clone_registry(repo, dest)
+        return build_mirror_entries(dest)
+
+
 def sync_mirror(
     *,
     repo: str = REGISTRY_REPO,
@@ -213,13 +246,7 @@ def sync_mirror(
         FileNotFoundError: the checkout has no ``servers/`` directory.
         subprocess.CalledProcessError: the git clone failed.
     """
-    if registry_root is not None:
-        entries = build_mirror_entries(registry_root)
-    else:
-        with tempfile.TemporaryDirectory() as tmp:
-            dest = Path(tmp) / "mcp-registry"
-            _clone_registry(repo, dest)
-            entries = build_mirror_entries(dest)
+    entries = build_entries_from_source(repo=repo, registry_root=registry_root)
     write_mirror_atomic(entries, mirror_path)
     _log.info("mcp mirror synced", path=str(mirror_path), server_count=len(entries))
     return len(entries)

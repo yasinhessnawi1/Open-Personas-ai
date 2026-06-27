@@ -155,6 +155,22 @@ class TestBuildDefaultToolboxBasics:
         assert "file_write" in names
 
     @pytest.mark.asyncio
+    async def test_enabled_but_removed_mcp_server_degrades_not_crashes(
+        self, tmp_path: Path
+    ) -> None:
+        # N2-D-4 surface c: a persona that still enables a now-removed catalog server
+        # (``mcp:<name>`` with no configured/live source) must NOT crash toolbox
+        # construction. The allow-list entry simply resolves to no advertised tool —
+        # graceful degrade, never a hard error.
+        config = PersonaCoreConfig(tools_sandbox_root=tmp_path)
+        persona = _persona(tools=["mcp:ghost-server", "file_read"])
+        toolbox, mcp_clients = await build_default_toolbox(config, persona)
+        names = toolbox.names()
+        assert "file_read" in names  # the real allowed tool still resolves
+        assert not any(n.startswith("mcp:ghost-server") for n in names)  # the ghost is absent
+        assert mcp_clients == []  # no server was configured for the ghost; nothing connected
+
+    @pytest.mark.asyncio
     async def test_persona_allow_list_filters_specs(self, tmp_path: Path) -> None:
         config = PersonaCoreConfig(tools_sandbox_root=tmp_path)
         # Persona only declares file_read.
