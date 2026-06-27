@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,6 +69,8 @@ from persona_voice.model import (
     VoiceTurnRecorder,
     make_small_tier_summariser,
 )
+from persona_voice.model.transcript import VoiceTranscriptWriter
+from persona_voice.session.call_record import CallRecorder, EndReason
 from persona_voice.session.state_machine import SessionStateMachine, make_session_rls_engine
 from persona_voice.stt import StreamingSTTConfig, load_streaming_stt
 from persona_voice.stt.cost_gate import DEFAULT_REOPEN_PREROLL_MS, IdleAwareGate
@@ -186,6 +189,8 @@ class AgentSession:
         ended: asyncio.Event,
         embedder_warmup: asyncio.Task[None] | None = None,
         greet: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        call_recorder: CallRecorder | None = None,
+        call_record_engine: Engine | None = None,
     ) -> None:
         self._voice_room = voice_room
         self._loop = loop
@@ -196,6 +201,16 @@ class AgentSession:
         self._livekit_url = livekit_url
         self._agent_token = agent_token
         self._ended = ended
+        # V9 (V9-D-5): the durable call-record writer + its DEDICATED RLS engine.
+        # The recorder's engine is SEPARATE from the session engine on purpose —
+        # ``session.end()`` (fired by the clean-hangup room-disconnect path BEFORE
+        # ``_teardown``) disposes the session engine, so the recorder needs its own
+        # live engine to finalize the record at teardown. Owned + disposed here.
+        self._call_recorder = call_recorder
+        self._call_record_engine = call_record_engine
+        # Set to 'error' if run() exits via a real exception (crash); a clean
+        # disconnect / cancellation stays 'disconnect' (V9-D-5).
+        self._end_reason: EndReason = "disconnect"
         # Held so the off-loop warm-up isn't garbage-collected mid-flight; the
         # turn-0 path gates on it (D-32-X-warmup-gates-turn0, wired in A3).
         self._embedder_warmup = embedder_warmup
@@ -211,6 +226,10 @@ class AgentSession:
             await self._voice_room.connect(self._livekit_url, self._agent_token)
             await self._session.mark_active()
             await self._loop.start_pipeline()
+            # V9 (V9-D-5): open the durable call-record now the call is genuinely
+            # active (best-effort — never breaks the call).
+            if self._call_recorder is not None:
+                self._call_recorder.open()
             # Greet-first (Spec 32 A3): kick turn 0 off the run() path so the
             # session immediately awaits disconnect while the persona greets.
             if self._greet is not None:
@@ -220,6 +239,11 @@ class AgentSession:
                 session_id=self._session.session.session_id,
             )
             await self._ended.wait()
+        except Exception:
+            # A real crash (not a clean disconnect / CancelledError, which is a
+            # BaseException and passes through) → record end_reason='error'.
+            self._end_reason = "error"
+            raise
         finally:
             await self._teardown()
 
@@ -248,6 +272,15 @@ class AgentSession:
         # otherwise (the crash / cancellation path).
         with contextlib.suppress(Exception):
             await self._session.end()
+        # V9 (V9-D-5): finalize the durable call-record (ended_at / duration_s /
+        # end_reason), then dispose its DEDICATED engine. Runs AFTER session.end()
+        # safely — the recorder's engine is separate, so the session-engine
+        # disposal above never strands this write. close() is itself best-effort.
+        if self._call_recorder is not None:
+            self._call_recorder.close(end_reason=self._end_reason)
+        if self._call_record_engine is not None:
+            with contextlib.suppress(Exception):
+                self._call_record_engine.dispose()
 
 
 async def build_agent_session(
@@ -354,6 +387,10 @@ async def build_agent_session(
         ctx,
         compactor=VoiceHistoryCompactor(ctx.history_manager),
         summariser=make_small_tier_summariser(tier_registry),
+        # V9 (V9-D-1/D-2): persist each committed turn to the durable ``messages``
+        # transcript over the SESSION engine (turns commit while the call is live —
+        # the engine is alive; no dedicated engine needed, unlike the call-record).
+        transcript_writer=VoiceTranscriptWriter(engine=rls_engine, conversation_id=conversation_id),
     )
     producer = VoiceModelReplyProducer(
         ctx,
@@ -491,6 +528,21 @@ async def build_agent_session(
         conversation_id=conversation_id,
         ttl_s=config.livekit_token_ttl_s,
     )
+    # --- V9 (V9-D-5): the durable call-record writer over a DEDICATED RLS engine ---
+    # Separate from the session engine on purpose: the clean-hangup path fires
+    # ``session.end()`` (disposing the session engine) BEFORE ``_teardown``, so the
+    # recorder needs its own live engine to finalize the record at teardown.
+    # API-free — writes the api-owned ``calls`` table via core's ``_calls`` view
+    # (the ``memory_chunks`` P2 precedent), no persona-api import.
+    call_record_engine = make_session_rls_engine(config.database_url, user_id=user_id)
+    call_recorder = CallRecorder(
+        engine=call_record_engine,
+        call_id=f"call_{uuid.uuid4().hex}",
+        conversation_id=conversation_id,
+        persona_id=persona_id,
+        owner_id=user_id,
+    )
+
     # mcp_clients accumulated by build_default_toolbox are closed at teardown.
     return AgentSession(
         voice_room=voice_room,
@@ -504,6 +556,8 @@ async def build_agent_session(
         ended=ended,
         embedder_warmup=embedder_warmup,
         greet=_greet,
+        call_recorder=call_recorder,
+        call_record_engine=call_record_engine,
     )
 
 

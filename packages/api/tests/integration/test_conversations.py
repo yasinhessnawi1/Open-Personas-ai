@@ -856,3 +856,191 @@ def test_completed_turn_leaves_no_active_turn(client: tuple[TestClient, str, str
     assert c.get(f"/v1/conversations/{conv}/active-turn", headers=_auth(uid)).status_code == 404
     hist = c.get(f"/v1/conversations/{conv}", headers=_auth(uid)).json()
     assert [m["role"] for m in hist["messages"]] == ["user", "assistant"]
+
+
+# -- V9 T1: the origin marker contract (V9-D-3) -----------------------------
+
+
+def test_create_defaults_origin_to_chat(client: tuple[TestClient, str, str]) -> None:
+    """The create endpoint defaults ``origin`` to ``'chat'`` — the request field
+    is optional and every text-path conversation is chat-born."""
+    c, uid, persona_id = client
+    resp = c.post(
+        f"/v1/personas/{persona_id}/conversations", json={"title": "t"}, headers=_auth(uid)
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["origin"] == "chat"
+
+
+def test_create_with_origin_call_round_trips(client: tuple[TestClient, str, str]) -> None:
+    """The web marks a call-born conversation ``origin='call'`` at create time
+    (V9-D-X-marker-writer-web); it round-trips through the summary AND the detail
+    view — the marker is durable, not in-session."""
+    c, uid, persona_id = client
+    resp = c.post(
+        f"/v1/personas/{persona_id}/conversations",
+        json={"title": "", "origin": "call"},
+        headers=_auth(uid),
+    )
+    assert resp.status_code == 201, resp.text
+    conv_id = resp.json()["id"]
+    assert resp.json()["origin"] == "call"
+
+    # durable on the detail view (read back from the DB, not the create response).
+    # NB: a call-born conversation is intentionally ABSENT from the chat LIST
+    # (V9-D-3 exclusion, covered by test_chat_list_excludes_call_only_conversation)
+    # — the detail view is how the Calls surface reads it back.
+    detail = c.get(f"/v1/conversations/{conv_id}", headers=_auth(uid)).json()
+    assert detail["origin"] == "call"
+
+
+def test_create_rejects_unknown_origin(client: tuple[TestClient, str, str]) -> None:
+    """``origin`` is a closed vocabulary (``chat | call``); anything else is a
+    422 at the request boundary (the seam stays closed — no chat code inspecting
+    voice state, no free-form origin)."""
+    c, uid, persona_id = client
+    resp = c.post(
+        f"/v1/personas/{persona_id}/conversations",
+        json={"title": "", "origin": "sms"},
+        headers=_auth(uid),
+    )
+    assert resp.status_code == 422, resp.text
+
+
+# -- V9 T2: read-side classification — the chat list excludes call-born (V9-D-3) ---
+
+
+def _new_conversation_with_origin(
+    c: TestClient, uid: str, persona_id: str, origin: str, *, title: str = "t"
+) -> str:
+    resp = c.post(
+        f"/v1/personas/{persona_id}/conversations",
+        json={"title": title, "origin": origin},
+        headers=_auth(uid),
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+def test_chat_list_excludes_call_only_conversation(client: tuple[TestClient, str, str]) -> None:
+    """Acceptance #1: a call-only session (origin='call', empty title) NEVER
+    appears in the chat list as an empty "Untitled conversation"."""
+    c, uid, persona_id = client
+    chat_id = _new_conversation_with_origin(c, uid, persona_id, "chat")
+    call_id = _new_conversation_with_origin(c, uid, persona_id, "call", title="")
+
+    ids = {row["id"] for row in _list_conversations(c, uid)}
+    assert chat_id in ids
+    assert call_id not in ids
+
+
+def test_chat_list_filter_is_marker_only_not_content(
+    client: tuple[TestClient, str, str],
+) -> None:
+    """The only-seam line: the exclusion keys STRICTLY on ``origin``, never on
+    content. A call-born conversation that ALSO has text (a mixed call+text
+    conversation) is STILL excluded from the chat list — proving the chat list
+    reads only the marker, never voice/call state or message presence."""
+    c, uid, persona_id = client
+    call_id = _new_conversation_with_origin(c, uid, persona_id, "call", title="")
+    # give the call-born conversation real text content (a mixed conversation).
+    r = c.post(f"/v1/conversations/{call_id}/messages", json={"content": "hi"}, headers=_auth(uid))
+    assert r.status_code == 200
+    _ = r.text  # drain the SSE so the turn persists
+
+    # Despite having messages, it is excluded — the filter is origin-only.
+    ids = {row["id"] for row in _list_conversations(c, uid)}
+    assert call_id not in ids
+    # Sanity: it really does have messages (so the exclusion is NOT "because empty").
+    detail = c.get(f"/v1/conversations/{call_id}", headers=_auth(uid)).json()
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
+
+
+def test_chat_that_got_called_stays_in_chat_list(client: tuple[TestClient, str, str]) -> None:
+    """The discipline test (chat-list half): a chat-born conversation keeps its
+    IMMUTABLE origin='chat' regardless of any later call, so it STAYS in the chat
+    list. (Its appearance in the Calls surface — via the call-record — lands in
+    the call-record task; the chat list is wholly independent of call state.)"""
+    c, uid, persona_id = client
+    chat_id = _new_conversation_with_origin(c, uid, persona_id, "chat")
+    # A real text turn — an ordinary chat.
+    r = c.post(f"/v1/conversations/{chat_id}/messages", json={"content": "hi"}, headers=_auth(uid))
+    assert r.status_code == 200
+    _ = r.text
+
+    item = next((row for row in _list_conversations(c, uid) if row["id"] == chat_id), None)
+    assert item is not None, "a chat-born conversation must remain in the chat list"
+    assert item["origin"] == "chat"
+
+
+# -- V9 T4: the transcript STORE — voice turns persist to messages (V9-D-1/D-2) ---
+
+
+def test_voice_turn_persists_to_messages_and_renders(
+    client: tuple[TestClient, str, str],
+) -> None:
+    """The load-bearing STORE (V9-D-1): a committed voice turn is persisted to the
+    ``messages`` table by the voice transcript writer — byte-for-byte with a chat
+    turn (V9-D-2) — so a call's transcript renders identically under GET
+    /v1/conversations/{id} (D-V7-7's recap). Before the write the call-born
+    conversation is EMPTY (the gap V9 fills: voice reached only episodic +
+    in-memory, never ``messages``)."""
+    import os
+
+    from persona_voice.model.transcript import VoiceTranscriptWriter
+    from persona_voice.session.state_machine import make_session_rls_engine
+
+    c, uid, persona_id = client
+    # a call-born conversation (origin='call'); voice never writes via the api.
+    conv_id = _new_conversation_with_origin(c, uid, persona_id, "call", title="")
+
+    # the gap: a call-only conversation has NO messages until the transcript write.
+    before = c.get(f"/v1/conversations/{conv_id}", headers=_auth(uid)).json()
+    assert before["messages"] == []
+
+    # the voice runtime writes via its session RLS engine (app.current_user_id =
+    # uid), exactly as build_agent_session wires the writer.
+    engine = make_session_rls_engine(os.environ["APP_DATABASE_URL"], user_id=uid)
+    try:
+        writer = VoiceTranscriptWriter(engine=engine, conversation_id=conv_id)
+        writer.record_turn(
+            user_text="what are my rights?",
+            heard_text="You have strong rights.",
+            truncated=False,
+            now=datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC),
+        )
+        # byte-for-byte shape, read back under RLS: 2 rows, ``msg_`` ids, the voice
+        # marker on channel, streaming_status NULL (final — NOT 'running', so the
+        # one-active-turn index is untouched), originated false (solicited).
+        with engine.begin() as conn:
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT id, role, content, channel, streaming_status, originated "
+                        "FROM messages WHERE conversation_id = :c ORDER BY created_at ASC"
+                    ),
+                    {"c": conv_id},
+                )
+                .mappings()
+                .all()
+            )
+    finally:
+        engine.dispose()
+
+    assert [r["role"] for r in rows] == ["user", "assistant"]
+    assert all(r["id"].startswith("msg_") for r in rows)
+    assert rows[0]["content"] == "what are my rights?"
+    assert rows[1]["content"] == "You have strong rights."
+    assert rows[0]["channel"]["modality"] == "voice"
+    assert rows[1]["channel"] == {"modality": "voice", "truncated": "false"}
+    # final non-streamed rows → render identically to a finalized chat message.
+    assert all(r["streaming_status"] is None for r in rows)
+    assert all(r["originated"] is False for r in rows)
+
+    # renders under the SAME read surface as a text chat (D-V7-7's /chat/{id}).
+    after = c.get(f"/v1/conversations/{conv_id}", headers=_auth(uid)).json()
+    assert [m["role"] for m in after["messages"]] == ["user", "assistant"]
+    assert after["messages"][0]["content"] == "what are my rights?"
+    assert after["messages"][1]["content"] == "You have strong rights."
+    # the MessageView surfaces the voice marker on channel (V9-D-4).
+    assert after["messages"][1]["channel"]["modality"] == "voice"

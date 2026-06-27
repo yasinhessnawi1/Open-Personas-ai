@@ -123,8 +123,8 @@ the feature works in a running browser.
 App structure (App Router):
 
 - `(app)` — the authenticated app group: `chat`, `personas` (+ `new`, `[id]`,
-  edit, files), `conversations`, `runs`, `settings`. In community the group has
-  no auth wall.
+  edit, files), `conversations`, `calls` (voice-call history → transcripts),
+  `runs`, `settings`. In community the group has no auth wall.
 - `(auth)` — Clerk sign-in / sign-up / reset-password (cloud); community
   variants redirect home.
 - Landing page — public, auth-aware CTAs.

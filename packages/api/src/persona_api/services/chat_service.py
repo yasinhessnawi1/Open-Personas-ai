@@ -97,8 +97,15 @@ LAST_MESSAGE_PREVIEW_MAX_LEN = 120
 MAX_STAGED_DOCUMENT_BYTES = 20 * 1024 * 1024
 
 
-def create_conversation(*, rls_engine: Engine, owner_id: str, persona_id: str, title: str) -> str:
-    """Create a conversation against a persona (RLS-scoped). Returns its id."""
+def create_conversation(
+    *, rls_engine: Engine, owner_id: str, persona_id: str, title: str, origin: str = "chat"
+) -> str:
+    """Create a conversation against a persona (RLS-scoped). Returns its id.
+
+    ``origin`` is the immutable birth-marker (Spec V9, V9-D-3): ``'chat'`` (the
+    default — text-born) or ``'call'`` (the web sets this when creating a
+    conversation to host a voice call). Set ONCE here, never mutated.
+    """
     conv_id = f"conv_{uuid.uuid4().hex}"
     with rls_engine.begin() as conn:
         # Verify the persona is the caller's (RLS would hide it otherwise).
@@ -107,7 +114,7 @@ def create_conversation(*, rls_engine: Engine, owner_id: str, persona_id: str, t
             raise PersonaNotFoundError("persona not found", context={"id": persona_id})
         conn.execute(
             insert(conversations_t).values(
-                id=conv_id, owner_id=owner_id, persona_id=persona_id, title=title
+                id=conv_id, owner_id=owner_id, persona_id=persona_id, title=title, origin=origin
             )
         )
     return conv_id
@@ -142,13 +149,22 @@ def set_title(*, rls_engine: Engine, conversation_id: str, title: str) -> None:
 
 
 def list_conversations(*, rls_engine: Engine, limit: int, offset: int) -> list[dict[str, object]]:
-    """List the caller's conversations (RLS-scoped), paginated.
+    """List the caller's CHAT conversations (RLS-scoped), paginated.
 
     Each returned row carries the conversation columns PLUS two derived
     last-message fields — ``last_message_preview`` (the most recent message's
     text, already trimmed + truncated server-side) and ``last_message_role`` —
     so the web sidebar can render a real preview. Both are ``None`` for a
     conversation with no messages.
+
+    **Call-born conversations are excluded** (Spec V9, V9-D-3, acceptance #1):
+    the filter is ``origin != 'call'`` — read STRICTLY from the ``conversations``
+    marker column, with NO join to the call-record. That is the only-seam
+    discipline: the chat list knows only the birth-marker, never voice/call
+    state. A call-only session (``origin='call'``, empty title) therefore never
+    pollutes the chat list as an empty "Untitled conversation"; a chat that was
+    later *called* keeps its immutable ``origin='chat'`` and so STAYS in the chat
+    list (it surfaces in the Calls surface independently, via the call-record).
 
     The latest message per conversation is resolved WITHOUT an N+1 fan-out: a
     single ``ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY
@@ -189,6 +205,10 @@ def list_conversations(*, rls_engine: Engine, limit: int, offset: int) -> list[d
                         isouter=True,
                     )
                 )
+                # V9-D-3: exclude call-born conversations — read ONLY the marker,
+                # no join to the call-record (the only-seam line). The chat list
+                # never inspects voice/call state.
+                .where(conversations_t.c.origin != "call")
                 .order_by(conversations_t.c.updated_at.desc())
                 .limit(limit)
                 .offset(offset)

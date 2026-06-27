@@ -61,6 +61,7 @@ from persona_api.middleware.rate_limit import (
 from persona_api.middleware.rls_context import make_rls_engine
 from persona_api.routes import (
     artifacts,
+    calls,
     conversations,
     documents,
     health,
@@ -552,6 +553,7 @@ def _register_routers(app: FastAPI) -> None:
     """Include all route modules. Extended task-by-task in Phase 5."""
     app.include_router(personas.router)
     app.include_router(conversations.router)
+    app.include_router(calls.router)  # spec V9: voice-call history
     app.include_router(runs.router)
     app.include_router(me.router)
     app.include_router(health.router)

@@ -20,7 +20,9 @@ export async function startChat(personaId: string) {
   const conv = await unwrap(
     await api.POST("/v1/personas/{persona_id}/conversations", {
       params: { path: { persona_id: personaId } },
-      body: { title: "" },
+      // V9 (V9-D-3): text-born conversation → origin 'chat' (the immutable
+      // birth-marker; the only seam between chat and voice).
+      body: { title: "", origin: "chat" },
     }),
   );
   redirect(`/chat/${conv.id}`);
@@ -32,7 +34,10 @@ export async function startVoice(personaId: string) {
   const conv = await unwrap(
     await api.POST("/v1/personas/{persona_id}/conversations", {
       params: { path: { persona_id: personaId } },
-      body: { title: "" },
+      // V9 (V9-D-3 / V9-D-X-marker-writer-web): this server action opens the
+      // voice surface, so the conversation is call-born → origin 'call' (excluded
+      // from the chat list; surfaces in Calls).
+      body: { title: "", origin: "call" },
     }),
   );
   redirect(`/chat/${conv.id}/voice`);

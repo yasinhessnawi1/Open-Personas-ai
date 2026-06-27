@@ -216,6 +216,114 @@ async def test_build_agent_session_wires_room_disconnect_to_end() -> None:
     assert "session_end" in calls
 
 
+# ---------- Spec V9: the durable call-record is opened + closed (V9-D-5) ------
+
+
+class _SpyCallRecorder:
+    """CallRecorder double recording its open()/close() into the call sequence."""
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+        self.end_reason: str | None = None
+
+    def open(self, started_at: object = None) -> None:  # noqa: ARG002 — mirror CallRecorder
+        self._calls.append("recorder_open")
+
+    def close(self, *, end_reason: str, ended_at: object = None) -> None:  # noqa: ARG002 — mirror
+        self.end_reason = end_reason
+        self._calls.append("recorder_close")
+
+
+class _SpyEngine:
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def dispose(self) -> None:
+        self._calls.append("engine_dispose")
+
+
+async def test_agent_session_opens_call_record_on_active_and_closes_on_teardown() -> None:
+    """The recorder opens the moment the call is genuinely active (right after the
+    pipeline starts) and is finalized — with end_reason + its dedicated engine
+    disposed — at teardown, AFTER session.end() (V9-D-5)."""
+    calls: list[str] = []
+    ended = asyncio.Event()
+    recorder = _SpyCallRecorder(calls)
+    engine = _SpyEngine(calls)
+    agent = AgentSession(
+        voice_room=_FakeRoom(calls),  # type: ignore[arg-type]
+        loop=_FakeLoop(calls),  # type: ignore[arg-type]
+        stt_seam=_FakeSttSeam(calls),  # type: ignore[arg-type]
+        tts_seam=_FakeTtsSeam(calls),
+        session=_FakeSessionMachine(calls),  # type: ignore[arg-type]
+        mcp_clients=[_FakeMcpClient(calls)],  # type: ignore[list-item]
+        livekit_url="ws://localhost:7880",
+        agent_token="tok",
+        ended=ended,
+        call_recorder=recorder,  # type: ignore[arg-type]
+        call_record_engine=engine,  # type: ignore[arg-type]
+    )
+
+    task = asyncio.create_task(agent.run())
+    for _ in range(20):
+        await asyncio.sleep(0)
+        if "recorder_open" in calls:
+            break
+
+    # open() fires right after the pipeline starts (the call is genuinely active).
+    assert calls[:5] == [
+        "stt_load",
+        "room_connect",
+        "mark_active",
+        "start_pipeline",
+        "recorder_open",
+    ]
+
+    ended.set()
+    await task
+
+    # close() finalizes AFTER session.end() (the dedicated engine survives the
+    # session-engine disposal), with the clean-path reason, then the dedicated
+    # engine is disposed last.
+    assert calls.index("session_end") < calls.index("recorder_close")
+    assert recorder.end_reason == "disconnect"
+    assert calls[-1] == "engine_dispose"
+
+
+async def test_agent_session_records_error_reason_on_crash() -> None:
+    """A real crash in run() records end_reason='error' (not the clean
+    'disconnect') — the record reflects WHY the call ended (V9-D-5)."""
+    calls: list[str] = []
+    ended = asyncio.Event()
+    recorder = _SpyCallRecorder(calls)
+    agent = AgentSession(
+        voice_room=_FakeRoom(calls),  # type: ignore[arg-type]
+        loop=_FakeLoop(calls, stop_raises=False),  # type: ignore[arg-type]
+        stt_seam=_FakeSttSeam(calls),  # type: ignore[arg-type]
+        tts_seam=_FakeTtsSeam(calls),
+        session=_FakeSessionMachine(calls),  # type: ignore[arg-type]
+        mcp_clients=[_FakeMcpClient(calls)],  # type: ignore[list-item]
+        livekit_url="ws://localhost:7880",
+        agent_token="tok",
+        ended=ended,
+        call_recorder=recorder,  # type: ignore[arg-type]
+    )
+    # Make the post-active wait raise a real exception (not CancelledError).
+    agent._ended = _RaisingEvent()  # noqa: SLF001 — inject a crash at the await barrier
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await agent.run()
+
+    assert recorder.end_reason == "error"
+
+
+class _RaisingEvent:
+    """An asyncio.Event-shaped double whose wait() raises a real exception."""
+
+    async def wait(self) -> bool:
+        raise RuntimeError("boom")
+
+
 # ---------- Spec V8 #3: true-end closes the Deepgram stream (criterion #4) ----
 
 

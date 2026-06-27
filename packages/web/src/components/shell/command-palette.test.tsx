@@ -58,6 +58,7 @@ const DATA: SidebarData = {
       persona: ASTRID,
     },
   ],
+  calls: [],
 };
 
 function renderWith(node: React.ReactNode) {

@@ -405,6 +405,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/calls": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Calls
+     * @description List the caller's voice calls (newest-first, paginated; RLS-scoped).
+     */
+    get: operations["list_calls_v1_calls_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/personas/{persona_id}/runs": {
     parameters: {
       query?: never;
@@ -1115,6 +1135,46 @@ export interface components {
       conversation_id?: string | null;
     };
     /**
+     * CallSummary
+     * @description A finished (or in-progress) voice call in the Calls history (Spec V9, V9-D-5).
+     *
+     *     The durable call envelope read from the ``calls`` table (V9-D-3: the
+     *     call-record is the Calls-membership key, NOT ``origin``). ``conversation_id``
+     *     wires each call to its saved transcript — the spoken turns now persist as
+     *     ``messages`` (V9-D-1/D-2), so ``GET /v1/conversations/{conversation_id}``
+     *     renders them under the same thread UI as a text chat.
+     *
+     *     Attributes:
+     *         call_id: The call-record id.
+     *         conversation_id: The conversation this call ran on — the transcript link.
+     *         persona_id: The persona on the call (the web resolves the display name /
+     *             avatar, as it does for ``ConversationSummary``).
+     *         started_at: When the call went active (UTC-aware); list order is by this
+     *             field descending.
+     *         ended_at: When the call ended; ``None`` while live / on a crash.
+     *         duration_s: Stored whole-second duration; ``None`` until the call ends.
+     *         end_reason: Why the call ended; ``None`` while live.
+     */
+    CallSummary: {
+      /** Call Id */
+      call_id: string;
+      /** Conversation Id */
+      conversation_id: string;
+      /** Persona Id */
+      persona_id: string;
+      /**
+       * Started At
+       * Format: date-time
+       */
+      started_at: string;
+      /** Ended At */
+      ended_at?: string | null;
+      /** Duration S */
+      duration_s?: number | null;
+      /** End Reason */
+      end_reason?: ("user_hangup" | "switched" | "error" | "disconnect") | null;
+    };
+    /**
      * ChannelContext
      * @description Opaque connector context passed through the chat endpoint (D-08-3).
      *
@@ -1159,6 +1219,12 @@ export interface components {
       persona_id: string;
       /** Title */
       title: string;
+      /**
+       * Origin
+       * @default chat
+       * @enum {string}
+       */
+      origin: "chat" | "call";
       /** Messages */
       messages: components["schemas"]["MessageView"][];
       /**
@@ -1207,6 +1273,12 @@ export interface components {
       /** Title */
       title: string;
       /**
+       * Origin
+       * @default chat
+       * @enum {string}
+       */
+      origin: "chat" | "call";
+      /**
        * Created At
        * Format: date-time
        */
@@ -1224,6 +1296,13 @@ export interface components {
     /**
      * CreateConversationRequest
      * @description Start a new conversation against a persona.
+     *
+     *     ``origin`` is the conversation's immutable birth-marker (Spec V9, V9-D-3):
+     *     ``'chat'`` (the default — every text-path conversation) or ``'call'`` (the
+     *     web sets this when it creates a conversation to host a voice call,
+     *     V9-D-X-marker-writer-web). It is the ONLY seam between chat and voice; the
+     *     closed ``Literal`` keeps the vocabulary shut at the request boundary
+     *     (``extra="forbid"`` means the field must be declared, not silently passed).
      */
     CreateConversationRequest: {
       /**
@@ -1231,6 +1310,12 @@ export interface components {
        * @default
        */
       title: string;
+      /**
+       * Origin
+       * @default chat
+       * @enum {string}
+       */
+      origin: "chat" | "call";
     };
     /**
      * CreateMCPServerRequest
@@ -2561,6 +2646,38 @@ export interface operations {
           "application/json": {
             [key: string]: string;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_calls_v1_calls_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        offset?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CallSummary"][];
         };
       };
       /** @description Validation Error */

@@ -44,10 +44,36 @@ export interface SidebarConversation {
   readonly persona: SidebarPersona | null;
 }
 
+/** Minimum call shape (a `CallSummary`). Spec V9 — the Calls surface.
+ * `duration_s` is optional-and-nullable on the wire (a live call has no end);
+ * `resolveCalls` normalises the absent case to `null`. */
+export interface SidebarCallInput {
+  readonly call_id: string;
+  readonly conversation_id: string;
+  readonly persona_id: string;
+  readonly started_at: string;
+  readonly duration_s?: number | null;
+}
+
+/**
+ * A resolved call row: a call-record joined to its persona (if known). Each row
+ * links to its saved transcript at `/chat/{conversationId}` — the spoken turns
+ * persist as conversation messages (V9-D-1/D-2), so the existing chat page
+ * renders them.
+ */
+export interface SidebarCall {
+  readonly callId: string;
+  readonly conversationId: string;
+  readonly startedAt: string;
+  readonly durationS: number | null;
+  readonly persona: SidebarPersona | null;
+}
+
 /** The serialisable bundle the server shell hands to the client sidebar. */
 export interface SidebarData {
   readonly personas: readonly SidebarPersona[];
   readonly conversations: readonly SidebarConversation[];
+  readonly calls: readonly SidebarCall[];
 }
 
 /**
@@ -90,6 +116,24 @@ export function resolveConversations(
     id: c.id,
     title: c.title,
     updated_at: c.updated_at,
+    persona: byId.get(c.persona_id) ?? null,
+  }));
+}
+
+/**
+ * Resolve call summaries into call rows joined to their persona. Order is
+ * preserved (`GET /v1/calls` already returns newest-first by `started_at`).
+ */
+export function resolveCalls(
+  calls: readonly SidebarCallInput[],
+  personas: readonly SidebarPersona[],
+): readonly SidebarCall[] {
+  const byId = new Map(personas.map((p) => [p.id, p]));
+  return calls.map((c) => ({
+    callId: c.call_id,
+    conversationId: c.conversation_id,
+    startedAt: c.started_at,
+    durationS: c.duration_s ?? null,
     persona: byId.get(c.persona_id) ?? null,
   }));
 }

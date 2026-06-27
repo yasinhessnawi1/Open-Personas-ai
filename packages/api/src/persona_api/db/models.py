@@ -140,6 +140,13 @@ conversations = Table(
     Column("owner_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("persona_id", Text, nullable=False),
     Column("title", Text, nullable=False, server_default=text("''")),
+    # Spec V9 D-V9-3 / migration 020: the conversation's IMMUTABLE birth-origin —
+    # 'chat' (text-born) or 'call' (voice-born). Set ONCE at creation by whoever
+    # starts it; it is the ONLY seam between chat and voice (the chat list excludes
+    # 'call'; the Calls surface reads the call-record). DEFAULT 'chat' backfills
+    # every pre-V9 row (all chat-born). NOT what a conversation currently CONTAINS
+    # — a chat later called stays 'chat' (mixed-case correctness).
+    Column("origin", Text, nullable=False, server_default=text("'chat'")),
     Column("compacted_summary", Text, nullable=False, server_default=text("''")),
     Column("compacted_up_to", Integer, nullable=False, server_default=text("0")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
@@ -152,6 +159,7 @@ conversations = Table(
         ondelete="CASCADE",
         name="fk_conversations_persona_owner",
     ),
+    CheckConstraint("origin IN ('chat', 'call')", name="conversations_origin_check"),
     Index("idx_conversations_owner", "owner_id"),
     Index("idx_conversations_persona", "persona_id"),
 )
@@ -940,6 +948,49 @@ synthesis_markers = Table(
     ),
     Index("idx_synthesis_markers_owner", "owner_id"),
 )
+
+
+# Spec V9 (V9-D-5) — the durable call-record envelope (migration 021). A voice
+# call's lifecycle metadata — persisted NOWHERE server-side before V9 (it lived
+# only in the in-memory ``SessionStateMachine`` + client storage). The voice
+# runtime is API-free, so it WRITES this via a core-owned ``_calls`` Table view
+# (``persona.calls``) on its session RLS engine (the ``memory_chunks`` P2
+# precedent); a contract test guards the view↔DDL drift. The Calls surface READS
+# it (the call-record is the Calls-membership key — V9-D-3 — NOT ``origin``).
+# RLS lives ENTIRELY in this table's own migration (the 009/011/012/015
+# template); deliberately NOT in ``db/rls._POLICIES``.
+calls = Table(
+    "calls",
+    metadata,
+    Column("call_id", Text, primary_key=True),
+    Column(
+        "conversation_id",
+        Text,
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("persona_id", Text, nullable=False),
+    # RLS anchor: every policy below scopes on owner_id (mirrors conversations).
+    Column("owner_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    # NULL while the call is live / on a crash with no clean end.
+    Column("ended_at", DateTime(timezone=True)),
+    # STORED, not derived (V9-D-5): a live/crashed call stays queryable and the
+    # Calls list avoids a per-row ``ended_at - started_at`` compute. Set at close.
+    Column("duration_s", Integer),
+    # NULL while live; set at close. v1 writes 'disconnect' (clean room end) or
+    # 'error' (crash); 'user_hangup'/'switched' are reserved for a later web-side
+    # refinement (the server only sees a room disconnect today).
+    Column("end_reason", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint(
+        "end_reason IS NULL OR end_reason IN ('user_hangup', 'switched', 'error', 'disconnect')",
+        name="calls_end_reason_check",
+    ),
+    Index("idx_calls_owner", "owner_id"),
+    Index("idx_calls_conversation", "conversation_id"),
+)
+
 
 # The autonomous task model (Spec A2). A ``task`` is the durable entity above runs;
 # it spans days through many bounded agentic legs, each executed as an A0 job. Both

@@ -62,6 +62,7 @@
     "home": "Home",
     "personas": "Personas",
     "conversations": "Conversations",
+    "calls": "Calls",
     "tasks": "Tasks",
     "settings": "Settings",
     "newPersona": "New persona",
@@ -71,6 +72,9 @@
       "personas": "Personas",
       "messages": "Messages",
       "messagesEmpty": "No conversations yet",
+      "calls": "Calls",
+      "callsEmpty": "No calls yet",
+      "callOngoing": "Call",
       "collapse": "Collapse sidebar",
       "expand": "Expand sidebar",
       "resize": "Resize sidebar",
@@ -154,6 +158,13 @@
     "loading": "Loading…",
     "endOfList": "End of conversations.",
     "shownOf": "Showing {shown} of {total}"
+  },
+  "calls": {
+    "title": "Calls",
+    "subtitle": "Every voice call you've had with your personas.",
+    "empty": "No calls yet",
+    "emptyHint": "Start a voice call with a persona to see it here.",
+    "unknownPersona": "Unknown persona"
   },
   "tasks": {
     "kicker": "Agentic runs",

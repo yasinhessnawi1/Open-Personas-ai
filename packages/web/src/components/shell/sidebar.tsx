@@ -44,7 +44,7 @@ import { CommandTrigger } from "./command-palette";
 import { Nav } from "./nav";
 import { NotificationBell } from "./notification-bell";
 import type { SidebarData } from "./sidebar-data";
-import { MessagesList, PersonasRail } from "./sidebar-sections";
+import { CallsList, MessagesList, PersonasRail } from "./sidebar-sections";
 
 /** Width bounds + the default (px). Collapsed snaps to the icon rail. */
 const MIN_WIDTH = 224;
@@ -235,6 +235,16 @@ export function Sidebar({ data }: { data: SidebarData }) {
           <SidebarSection heading={t("sidebar.personas")} collapsed={collapsed}>
             <PersonasRail personas={data.personas} collapsed={collapsed} />
           </SidebarSection>
+
+          {/* (4b) CALLS — Spec V9: a fixed compact list of recent voice calls.
+              Each row links to its saved transcript (/chat/:conversationId).
+              Renders nothing when the caller has no calls (no empty rail). The
+              full paginated history is at /calls. */}
+          {data.calls.length > 0 ? (
+            <SidebarSection heading={t("sidebar.calls")} collapsed={collapsed}>
+              <CallsList calls={data.calls} collapsed={collapsed} />
+            </SidebarSection>
+          ) : null}
 
           {/* (5) MESSAGES — the flexible, growing, scrolling region. */}
           <SidebarSection

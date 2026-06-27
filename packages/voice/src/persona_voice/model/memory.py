@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
 
     from persona_voice.model.history import VoiceHistoryCompactor
+    from persona_voice.model.transcript import VoiceTranscriptWriter
     from persona_voice.model.turn_context import VoiceTurnContext
     from persona_voice.turn_taking.heard_words import BargedReply
 
@@ -77,12 +78,17 @@ class VoiceTurnRecorder:
         summariser: Callable[[list[ConversationMessage]], Awaitable[str]] | None = None,
         scheduler: Callable[[Coroutine[Any, Any, Any]], Any] | None = None,
         clock: Callable[[], datetime] | None = None,
+        transcript_writer: VoiceTranscriptWriter | None = None,
     ) -> None:
         self._ctx = context
         self._compactor = compactor
         self._summariser = summariser
         self._schedule = scheduler or _default_scheduler
         self._clock = clock or (lambda: datetime.now(UTC))
+        # V9 (V9-D-1/D-2): persists each committed turn to the durable ``messages``
+        # transcript (byte-for-byte with a chat turn). Optional — None on any path
+        # that doesn't persist a transcript (e.g. unit tests / community voice).
+        self._transcript_writer = transcript_writer
         self._pending_user: str | None = None
         # Hold references to background compaction tasks so they are not GC'd
         # mid-flight (the standard asyncio fire-and-forget guard).
@@ -135,6 +141,14 @@ class VoiceTurnRecorder:
                 metadata={"modality": "voice", "truncated": str(reply.truncated).lower()},
             )
         )
+        # V9 (V9-D-1/D-2): ALSO persist the turn to the durable ``messages``
+        # transcript (the in-memory append above is lost at teardown; episodic is
+        # persona-scoped and can't be grouped per call). Best-effort by construction
+        # (the writer never raises) — same discipline as the episodic write above.
+        if self._transcript_writer is not None:
+            self._transcript_writer.record_turn(
+                user_text=user, heard_text=heard, truncated=reply.truncated, now=now
+            )
         self._maybe_schedule_compaction()
 
     def _write_episodic(self, user_text: str, heard_text: str) -> None:

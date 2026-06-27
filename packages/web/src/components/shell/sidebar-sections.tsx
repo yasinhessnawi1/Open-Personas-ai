@@ -11,6 +11,7 @@
  * collapse animation.
  */
 
+import { Phone } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
@@ -22,9 +23,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ActiveChatIndicator } from "@/components/work/active-chat-indicator";
+import { formatCallDuration } from "@/lib/calls";
 import { personaIdentityStyle } from "@/lib/persona-identity";
 import { cn } from "@/lib/utils";
-import type { SidebarConversation, SidebarPersona } from "./sidebar-data";
+import type {
+  SidebarCall,
+  SidebarConversation,
+  SidebarPersona,
+} from "./sidebar-data";
 
 /**
  * PERSONAS — a compact, fixed-height rail of the most-recent personas for fast
@@ -201,6 +207,132 @@ export function MessagesList({
                   </span>
                 </span>
                 <span className="truncate type-caption normal-case tracking-normal text-muted-foreground">
+                  {brief}
+                </span>
+              </span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * CALLS — a compact list of recent voice calls (Spec V9). Each row: persona
+ * avatar + name + the call duration (or a generic "Call" label while live /
+ * unknown) + the relative time the call started. The row links to
+ * `/chat/{conversationId}` — the saved transcript, since the spoken turns
+ * persist as conversation messages (V9-D-1/D-2) and the chat page renders them.
+ * The full, paginated history lives at `/calls`. Collapsed mode shows
+ * avatar-only rows with the persona name in a tooltip (mirrors MessagesList).
+ */
+export function CallsList({
+  calls,
+  collapsed,
+  onNavigate,
+}: {
+  calls: readonly SidebarCall[];
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  const t = useTranslations("nav.sidebar");
+  const format = useFormatter();
+  const pathname = usePathname();
+
+  if (calls.length === 0) {
+    return collapsed ? null : (
+      <p className="px-2 py-1.5 type-caption text-muted-foreground">
+        {t("callsEmpty")}
+      </p>
+    );
+  }
+
+  return (
+    <ul className="flex flex-col gap-0.5" data-slot="sidebar-calls-list">
+      {calls.map((c) => {
+        const href = `/chat/${c.conversationId}`;
+        const active = pathname === href;
+        const title = c.persona ? c.persona.name : t("unknownPersona");
+        const brief = formatCallDuration(c.durationS) ?? t("callOngoing");
+
+        if (collapsed) {
+          return (
+            <li key={c.callId} className="flex justify-center">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Link
+                      href={href}
+                      onClick={onNavigate}
+                      aria-label={`${title} — ${brief}`}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "block rounded-full p-0.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                        active && "ring-2 ring-sidebar-ring",
+                      )}
+                    />
+                  }
+                >
+                  {c.persona ? (
+                    <PersonaAvatar persona={c.persona} size="sm" />
+                  ) : (
+                    <span
+                      className="block size-6 rounded-full bg-muted"
+                      aria-hidden
+                    />
+                  )}
+                </TooltipTrigger>
+                <TooltipContent side="right">{title}</TooltipContent>
+              </Tooltip>
+            </li>
+          );
+        }
+
+        return (
+          <li key={c.callId}>
+            <Link
+              href={href}
+              onClick={onNavigate}
+              aria-current={active ? "page" : undefined}
+              title={`${title} — ${brief}`}
+              style={{
+                ...(c.persona ? personaIdentityStyle(c.persona) : {}),
+                borderLeftColor: active ? "var(--v-id)" : "transparent",
+              }}
+              className={cn(
+                "group/call flex items-center gap-2.5 rounded-md border-l-2 px-2 py-1.5 outline-none transition-colors duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                active
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "hover:bg-sidebar-accent/60",
+              )}
+            >
+              {c.persona ? (
+                <PersonaAvatar
+                  persona={c.persona}
+                  size="sm"
+                  className="shrink-0"
+                />
+              ) : (
+                <span
+                  className="size-6 shrink-0 rounded-full bg-muted"
+                  aria-hidden
+                />
+              )}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="flex items-baseline justify-between gap-2">
+                  <span
+                    className={cn(
+                      "type-ui truncate font-medium",
+                      !active && "text-sidebar-foreground",
+                    )}
+                  >
+                    {title}
+                  </span>
+                  <RelativeTime iso={c.startedAt} format={format} />
+                </span>
+                <span className="flex items-center gap-1 truncate type-caption normal-case tracking-normal text-muted-foreground">
+                  <Phone className="size-3 shrink-0" aria-hidden />
                   {brief}
                 </span>
               </span>

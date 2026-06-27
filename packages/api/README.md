@@ -164,7 +164,8 @@ All routes are under `/v1`:
 | Group | What |
 | --- | --- |
 | `personas` | list / create / read / update / delete; YAML round-trip; avatar + voice auto-pick on create |
-| `conversations` | chat resource + **SSE streaming** + cascade delete |
+| `conversations` | chat resource + **SSE streaming** + cascade delete; the `origin` marker (`chat`/`call`) keeps voice-born conversations out of the chat list |
+| `calls` | voice-call history — `GET /v1/calls` lists the durable call-records (persona / time / duration), owner-scoped + paginated; each links to its saved transcript |
 | `runs` | agentic-run create / **SSE stream** / cancel / ask-user reply |
 | `documents`, `uploads` | document ingestion + image upload (vision) |
 | `imagegen`, `artifacts` | image generation (credit-gated) + chart/image serve |

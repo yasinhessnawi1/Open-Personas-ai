@@ -53,9 +53,11 @@ export function CallRecap({
     >
       <Phone className="size-3.5" aria-hidden="true" />
       {/* The trace itself — "Call ended · N min" — IS the navigable mark in the
-          thread (deliverable #7). A full transcript VIEW is V9 (call history &
-          transcripts), forward Seam B — V7 doesn't link to a transcript it can't
-          honestly provide. */}
+          thread (deliverable #7). Since V9 (call history & transcripts) landed,
+          the call's spoken turns persist as conversation messages (V9-D-1/D-2)
+          and render in THIS thread below the recap — so the transcript is right
+          here, no separate link needed; the global Calls surface (sidebar +
+          /calls) is the other entry point. */}
       <span>{t("recap.summary", { duration })}</span>
       <button
         type="button"

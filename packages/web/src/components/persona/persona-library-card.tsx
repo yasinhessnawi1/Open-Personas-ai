@@ -87,9 +87,14 @@ export function PersonaLibraryCard({ persona }: PersonaLibraryCardProps) {
     if (busy) return;
     setBusy(true);
     try {
+      // V9 (V9-D-3 / V9-D-X-marker-writer-web): mark the conversation call-born
+      // at creation. ``origin`` is the immutable birth-marker + the ONLY seam
+      // between chat and voice — a call-born conversation is excluded from the
+      // chat list and surfaces in Calls. Text-create paths omit it (server
+      // default 'chat').
       const conv = await api.POST("/v1/personas/{persona_id}/conversations", {
         params: { path: { persona_id: persona.id } },
-        body: { title: "" },
+        body: { title: "", origin: "call" },
       });
       if (!conv.data) return;
       const target: CallTarget = {

@@ -11,6 +11,50 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Call history & transcripts — a browsable home for voice calls (2026-06-27)
+
+> Close-out of `call-history-transcripts` (Spec V9). A finished voice call now
+> leaves a navigable, re-readable trace instead of vanishing. A single **immutable
+> `origin` marker** on the conversation (`chat` | `call`, set once at creation) is
+> the ONLY seam between chat and voice: the chat list excludes call-born
+> conversations (no more empty "Untitled conversation" pollution), the Calls
+> surface shows them. The spoken turns now **persist as real conversation
+> messages** — byte-for-byte with a chat turn — so a call's transcript renders
+> under the same thread UI, and a durable **call-record** (persona / time /
+> duration / end reason) powers a **Calls sidebar section** + a **`/calls` history
+> page**. The voice runtime stays **API-free**: it writes through core-owned table
+> views on its own RLS engine (the `memory_chunks` precedent), never importing
+> persona-api. Transcript-only (no audio recording). Two additive migrations
+> (`conversations.origin`, `calls`); zero new dependencies.
+
+#### Added
+- **`conversations.origin` marker** (`chat` | `call`) — the immutable birth-marker,
+  the single seam between chat and voice. The chat conversations list excludes
+  `origin=call`; a call-born conversation surfaces in the Calls surface instead
+  (acceptance #1). Set once at creation by the web; backfilled to `chat` for every
+  pre-V9 conversation.
+- **Durable call-records** (`calls` table, RLS owner-scoped) — each voice call's
+  envelope (persona / `started_at` / `ended_at` / `duration` / `end_reason`),
+  written by the voice runtime at call teardown. `GET /v1/calls` lists them
+  newest-first, paginated, owner-scoped; each row carries the `conversation_id`
+  that links to its transcript.
+- **Saved transcripts** — a call's spoken turns (user STT + persona heard text)
+  persist as conversation `messages`, speaker-attributed + timestamped,
+  byte-for-byte with a chat turn, so the transcript renders identically under
+  `GET /v1/conversations/{id}` and the existing chat thread (no separate renderer).
+- **Calls web surface** — a "Calls" section in the sidebar (recent calls), a
+  `/calls` history page (full list), and a primary-nav entry; every row opens the
+  call's saved transcript.
+
+#### Changed
+- The chat conversations list now **excludes call-born conversations**, filtered
+  solely on the `origin` marker (no inspection of voice/call state — the only-seam
+  discipline).
+- The web call-create paths (the persona-card "Call" + the `startVoice` action)
+  mark new conversations `origin=call`; text-create paths mark `chat`.
+- The V7 post-call recap note now sits **above the rendered transcript** in the
+  thread — V9 made the spoken turns durable, so the thread itself is the transcript.
+
 ### Graph-aware prompts — the shared brain enters the persona's behaviour (2026-06-26)
 
 > Close-out of `graph-aware-prompts` (Spec K3). Where the shared knowledge graph

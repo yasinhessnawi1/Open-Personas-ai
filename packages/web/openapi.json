@@ -840,6 +840,62 @@
         }
       }
     },
+    "/v1/calls": {
+      "get": {
+        "tags": ["calls"],
+        "summary": "List Calls",
+        "description": "List the caller's voice calls (newest-first, paginated; RLS-scoped).",
+        "operationId": "list_calls_v1_calls_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CallSummary"
+                  },
+                  "title": "Response List Calls V1 Calls Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/personas/{persona_id}/runs": {
       "post": {
         "tags": ["runs"],
@@ -2257,6 +2313,67 @@
         "required": ["file"],
         "title": "Body_create_upload_v1_personas__persona_id__uploads_post"
       },
+      "CallSummary": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "persona_id": {
+            "type": "string",
+            "title": "Persona Id"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "end_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["user_hangup", "switched", "error", "disconnect"]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["call_id", "conversation_id", "persona_id", "started_at"],
+        "title": "CallSummary",
+        "description": "A finished (or in-progress) voice call in the Calls history (Spec V9, V9-D-5).\n\nThe durable call envelope read from the ``calls`` table (V9-D-3: the\ncall-record is the Calls-membership key, NOT ``origin``). ``conversation_id``\nwires each call to its saved transcript \u2014 the spoken turns now persist as\n``messages`` (V9-D-1/D-2), so ``GET /v1/conversations/{conversation_id}``\nrenders them under the same thread UI as a text chat.\n\nAttributes:\n    call_id: The call-record id.\n    conversation_id: The conversation this call ran on \u2014 the transcript link.\n    persona_id: The persona on the call (the web resolves the display name /\n        avatar, as it does for ``ConversationSummary``).\n    started_at: When the call went active (UTC-aware); list order is by this\n        field descending.\n    ended_at: When the call ended; ``None`` while live / on a crash.\n    duration_s: Stored whole-second duration; ``None`` until the call ends.\n    end_reason: Why the call ended; ``None`` while live."
+      },
       "ChannelContext": {
         "properties": {
           "platform": {
@@ -2330,6 +2447,12 @@
             "type": "string",
             "title": "Title"
           },
+          "origin": {
+            "type": "string",
+            "enum": ["chat", "call"],
+            "title": "Origin",
+            "default": "chat"
+          },
           "messages": {
             "items": {
               "$ref": "#/components/schemas/MessageView"
@@ -2374,6 +2497,12 @@
           "title": {
             "type": "string",
             "title": "Title"
+          },
+          "origin": {
+            "type": "string",
+            "enum": ["chat", "call"],
+            "title": "Origin",
+            "default": "chat"
           },
           "created_at": {
             "type": "string",
@@ -2421,12 +2550,18 @@
             "type": "string",
             "title": "Title",
             "default": ""
+          },
+          "origin": {
+            "type": "string",
+            "enum": ["chat", "call"],
+            "title": "Origin",
+            "default": "chat"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "CreateConversationRequest",
-        "description": "Start a new conversation against a persona."
+        "description": "Start a new conversation against a persona.\n\n``origin`` is the conversation's immutable birth-marker (Spec V9, V9-D-3):\n``'chat'`` (the default \u2014 every text-path conversation) or ``'call'`` (the\nweb sets this when it creates a conversation to host a voice call,\nV9-D-X-marker-writer-web). It is the ONLY seam between chat and voice; the\nclosed ``Literal`` keeps the vocabulary shut at the request boundary\n(``extra=\"forbid\"`` means the field must be declared, not silently passed)."
       },
       "CreateMCPServerRequest": {
         "properties": {

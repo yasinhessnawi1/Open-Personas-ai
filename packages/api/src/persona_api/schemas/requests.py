@@ -112,9 +112,18 @@ class RefinePersonaRequest(_Input):
 
 
 class CreateConversationRequest(_Input):
-    """Start a new conversation against a persona."""
+    """Start a new conversation against a persona.
+
+    ``origin`` is the conversation's immutable birth-marker (Spec V9, V9-D-3):
+    ``'chat'`` (the default — every text-path conversation) or ``'call'`` (the
+    web sets this when it creates a conversation to host a voice call,
+    V9-D-X-marker-writer-web). It is the ONLY seam between chat and voice; the
+    closed ``Literal`` keeps the vocabulary shut at the request boundary
+    (``extra="forbid"`` means the field must be declared, not silently passed).
+    """
 
     title: str = ""
+    origin: Literal["chat", "call"] = "chat"
 
 
 # Defined as a sibling Pydantic v2 frozen model on the API request surface

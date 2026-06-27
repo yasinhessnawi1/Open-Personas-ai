@@ -1,6 +1,12 @@
 "use client";
 
-import { Home, ListChecks, MessagesSquare, Sparkles } from "lucide-react";
+import {
+  Home,
+  ListChecks,
+  MessagesSquare,
+  Phone,
+  Sparkles,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -22,6 +28,8 @@ const ITEMS = [
     icon: MessagesSquare,
     count: "conversations",
   },
+  // Spec V9: the voice-call history surface.
+  { href: "/calls", key: "calls", icon: Phone, count: undefined },
   { href: "/runs", key: "tasks", icon: ListChecks, count: undefined },
 ] as const;
 

@@ -3,13 +3,16 @@ import "server-only";
 import { serverApi } from "@/lib/api/server";
 import {
   rankPersonasByRecency,
+  resolveCalls,
   resolveConversations,
   type SidebarData,
 } from "./sidebar-data";
 
-/** How many recent personas the rail surfaces + how many message rows to load. */
+/** How many recent personas the rail surfaces + how many message / call rows to load. */
 const RAIL_PERSONAS = 4;
 const MESSAGE_ROWS = 30;
+/** The sidebar Calls section is a recent-calls preview; the /calls page has the full history. */
+const CALL_ROWS = 8;
 
 /**
  * Resolve the sidebar's PERSONAS rail + MESSAGES list from data the app already
@@ -23,14 +26,18 @@ const MESSAGE_ROWS = 30;
 export async function fetchSidebarData(): Promise<SidebarData> {
   try {
     const api = await serverApi();
-    const [personasRes, conversationsRes] = await Promise.all([
+    const [personasRes, conversationsRes, callsRes] = await Promise.all([
       api.GET("/v1/personas"),
       api.GET("/v1/conversations", {
         params: { query: { limit: MESSAGE_ROWS, offset: 0 } },
       }),
+      api.GET("/v1/calls", {
+        params: { query: { limit: CALL_ROWS, offset: 0 } },
+      }),
     ]);
     const personas = personasRes.data ?? [];
     const conversations = conversationsRes.data ?? [];
+    const calls = callsRes.data ?? [];
 
     return {
       personas: rankPersonasByRecency(personas, conversations).slice(
@@ -38,8 +45,9 @@ export async function fetchSidebarData(): Promise<SidebarData> {
         RAIL_PERSONAS,
       ),
       conversations: resolveConversations(conversations, personas),
+      calls: resolveCalls(calls, personas),
     };
   } catch {
-    return { personas: [], conversations: [] };
+    return { personas: [], conversations: [], calls: [] };
   }
 }

@@ -48,6 +48,7 @@ async def create_conversation(
         owner_id=user.id,
         persona_id=persona_id,
         title=body.title,
+        origin=body.origin,
     )
     audit_service.record(
         engine=request.app.state.rls_engine,
@@ -90,6 +91,7 @@ async def get_conversation(
         id=str(row["id"]),
         persona_id=str(row["persona_id"]),
         title=str(row["title"]),
+        origin=cast("Any", row["origin"]),
         messages=[
             MessageView(
                 id=str(m["id"]),
@@ -288,6 +290,8 @@ def _summary(row: dict[str, object]) -> ConversationSummary:
         id=str(row["id"]),
         persona_id=str(row["persona_id"]),
         title=str(row["title"]),
+        # V9-D-3 birth-origin; default 'chat' guards a row read before migration 019.
+        origin=cast("Any", row.get("origin", "chat")),
         created_at=row["created_at"],  # type: ignore[arg-type]
         updated_at=row["updated_at"],  # type: ignore[arg-type]
         last_message_preview=cast("str | None", row.get("last_message_preview")),

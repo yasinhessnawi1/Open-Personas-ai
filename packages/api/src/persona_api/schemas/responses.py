@@ -227,6 +227,7 @@ class ConversationSummary(_Output):
     id: str
     persona_id: str
     title: str
+    origin: Literal["chat", "call"] = "chat"
     created_at: datetime
     updated_at: datetime
     last_message_preview: str | None = None
@@ -255,9 +256,42 @@ class ConversationDetail(_Output):
     id: str
     persona_id: str
     title: str
+    # Spec V9 V9-D-3: the immutable birth-origin marker ('chat' | 'call'). Default
+    # 'chat' for the pre-V9 / pre-marker degrade (every historical conversation).
+    origin: Literal["chat", "call"] = "chat"
     messages: list[MessageView]
     created_at: datetime
     updated_at: datetime
+
+
+class CallSummary(_Output):
+    """A finished (or in-progress) voice call in the Calls history (Spec V9, V9-D-5).
+
+    The durable call envelope read from the ``calls`` table (V9-D-3: the
+    call-record is the Calls-membership key, NOT ``origin``). ``conversation_id``
+    wires each call to its saved transcript — the spoken turns now persist as
+    ``messages`` (V9-D-1/D-2), so ``GET /v1/conversations/{conversation_id}``
+    renders them under the same thread UI as a text chat.
+
+    Attributes:
+        call_id: The call-record id.
+        conversation_id: The conversation this call ran on — the transcript link.
+        persona_id: The persona on the call (the web resolves the display name /
+            avatar, as it does for ``ConversationSummary``).
+        started_at: When the call went active (UTC-aware); list order is by this
+            field descending.
+        ended_at: When the call ended; ``None`` while live / on a crash.
+        duration_s: Stored whole-second duration; ``None`` until the call ends.
+        end_reason: Why the call ended; ``None`` while live.
+    """
+
+    call_id: str
+    conversation_id: str
+    persona_id: str
+    started_at: datetime
+    ended_at: datetime | None = None
+    duration_s: int | None = None
+    end_reason: Literal["user_hangup", "switched", "error", "disconnect"] | None = None
 
 
 # -- SSE chat events (§5.2) -------------------------------------------------

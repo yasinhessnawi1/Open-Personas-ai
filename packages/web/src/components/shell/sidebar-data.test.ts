@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   rankPersonasByRecency,
+  resolveCalls,
   resolveConversations,
+  type SidebarCallInput,
   type SidebarConversationInput,
   type SidebarPersona,
 } from "./sidebar-data";
@@ -73,5 +75,38 @@ describe("resolveConversations", () => {
     expect(rows[0].persona?.id).toBe("a");
     expect(rows[1].persona).toBeNull();
     expect(rows.map((r) => r.id)).toEqual(["1", "2"]);
+  });
+});
+
+const call = (
+  call_id: string,
+  persona_id: string,
+  duration_s: number | null | undefined,
+): SidebarCallInput => ({
+  call_id,
+  conversation_id: `conv-${call_id}`,
+  persona_id,
+  started_at: "2026-06-10T00:00:00Z",
+  duration_s,
+});
+
+describe("resolveCalls", () => {
+  it("joins each call to its persona + the transcript conversation, preserving order", () => {
+    const personas = [persona("a", "2026-01-01")];
+    const rows = resolveCalls(
+      [call("c1", "a", 125), call("c2", "ghost", 30)],
+      personas,
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].persona?.id).toBe("a");
+    expect(rows[0].conversationId).toBe("conv-c1"); // the transcript link
+    expect(rows[0].durationS).toBe(125);
+    expect(rows[1].persona).toBeNull(); // missing persona → null (no crash)
+    expect(rows.map((r) => r.callId)).toEqual(["c1", "c2"]);
+  });
+
+  it("normalises an absent duration (a live call) to null", () => {
+    const rows = resolveCalls([call("c1", "a", undefined)], []);
+    expect(rows[0].durationS).toBeNull();
   });
 });

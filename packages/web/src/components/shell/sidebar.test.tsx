@@ -69,6 +69,7 @@ const manyConversations: SidebarConversation[] = Array.from(
 const data: SidebarData = {
   personas: [],
   conversations: manyConversations,
+  calls: [],
 };
 
 function wrap(ui: React.ReactNode) {
