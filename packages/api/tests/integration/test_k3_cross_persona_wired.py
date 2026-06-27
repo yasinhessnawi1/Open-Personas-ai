@@ -74,11 +74,11 @@ def _persona_b() -> Persona:
 
 
 def test_cross_persona_knowledge_reaches_persona_b_prompt(
-    seeded: object, app_engine: object, embedder: object, tmp_path: Path
+    seeded: object, app_engine: object, real_embedder: object, tmp_path: Path
 ) -> None:
     graph_store = build_graph_store(
         engine=app_engine,  # type: ignore[arg-type]
-        embedder=embedder,  # type: ignore[arg-type]
+        embedder=real_embedder,  # type: ignore[arg-type]
         audit_logger=JSONLAuditLogger(tmp_path / "audit"),
     )
     settings = GraphSettings()
@@ -106,7 +106,17 @@ def test_cross_persona_knowledge_reaches_persona_b_prompt(
             owner_provider=current_user_id.get,
             settings=settings,
         )
-        graph = graph_retrieval("what should I cook for dinner?")
+        # A diet-relevant turn whose REAL bge-small cosine against the vegetarian
+        # fact (~0.71) clears ``inject_similarity_floor`` (0.66). It is semantic,
+        # not a keyword copy: it names no word in the stored fact ("vegetarian",
+        # "meat", "fish") — the model bridges "dietary restrictions / avoid foods"
+        # to "vegetarian / avoids meat and fish". The terse "what should I cook
+        # for dinner?" scores only ~0.49 (below the floor) under the real
+        # embedder, which is why the original assertion was unreachable; it passed
+        # review only because the hash embedder (cosine ≈ 0 for any pair) was never
+        # run against this Postgres-gated test.
+        query = "Given my dietary restrictions, what foods should I avoid eating?"
+        graph = graph_retrieval(query)
         # The fact persona A wrote is retrieved for persona B's relevant turn.
         assert any("vegetarian" in item.content.lower() for item in graph.items), (
             f"persona A's fact not retrieved for persona B: {[i.content for i in graph.items]}"
@@ -118,7 +128,7 @@ def test_cross_persona_knowledge_reaches_persona_b_prompt(
             RetrievedContext(graph=graph),
             history=[],
             skill_index="",
-            user_message="what should I cook for dinner?",
+            user_message=query,
             max_tokens=8000,
         )
         system = messages[0].content
@@ -129,11 +139,11 @@ def test_cross_persona_knowledge_reaches_persona_b_prompt(
 
 
 def test_irrelevant_turn_injects_nothing_for_persona_b(
-    seeded: object, app_engine: object, embedder: object, tmp_path: Path
+    seeded: object, app_engine: object, real_embedder: object, tmp_path: Path
 ) -> None:
     graph_store = build_graph_store(
         engine=app_engine,  # type: ignore[arg-type]
-        embedder=embedder,  # type: ignore[arg-type]
+        embedder=real_embedder,  # type: ignore[arg-type]
         audit_logger=JSONLAuditLogger(tmp_path / "audit"),
     )
     settings = GraphSettings()

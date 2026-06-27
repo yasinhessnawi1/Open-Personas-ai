@@ -81,6 +81,29 @@ def embedder() -> HashEmbedder384:
     return HashEmbedder384()
 
 
+@pytest.fixture(scope="session")
+def real_embedder() -> object:
+    """The production ``bge-small-en-v1.5`` embedder (384-dim), CPU-pinned.
+
+    The :class:`HashEmbedder384` above is a SHA-256 whole-text hash with zero
+    semantic structure (two distinct texts → cosine ≈ 0), so it cannot exercise
+    any test whose assertion depends on genuine query↔content similarity (e.g.
+    K3's cross-persona semantic injection gate, which fires on dense cosine ≥
+    ``inject_similarity_floor``). Those tests use THIS fixture: the same embedder
+    the runtime ships, so the gate sees production-accurate similarities.
+
+    Session-scoped — the model load is ~3-5s and the weights are immutable, so
+    one load is shared across the (few) tests that need real semantics. Pinned to
+    ``cpu`` for deterministic, hardware-independent CI scores. Skips (rather than
+    errors) if ``sentence-transformers`` is not installed.
+    """
+    try:
+        from persona.stores.embedder import SentenceTransformerEmbedder
+    except ImportError:  # pragma: no cover - optional heavy dep
+        pytest.skip("sentence-transformers not installed; skipping real-embedder test")
+    return SentenceTransformerEmbedder(device="cpu")
+
+
 def _database_url() -> str | None:
     return os.environ.get("DATABASE_URL")
 
