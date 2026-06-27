@@ -53,7 +53,14 @@ fi
 # --- launch -------------------------------------------------------------------
 # --keys is read from $LIVEKIT_KEYS automatically; we pass --config, --node-ip,
 # and bind to Fly's required address (satisfies UDP; TCP works on it too).
-exec livekit-server \
+# The official livekit/livekit-server image ships the binary at /livekit-server
+# (its ENTRYPOINT) — it is NOT on PATH, so call it by absolute path (bare
+# `livekit-server` exits 127 "command not found").
+#
+# NO global --bind: it would override ALL listeners (incl. HTTP/7880) to
+# fly-global-services and make signaling unreachable to the Fly proxy. The bind
+# split lives in livekit.yaml: top-level bind_addresses=0.0.0.0 (HTTP) +
+# rtc.bind_addresses=fly-global-services (media UDP/TCP).
+exec /livekit-server \
   --config "${CONFIG_PATH}" \
-  --node-ip "${NODE_IP}" \
-  --bind "fly-global-services"
+  --node-ip "${NODE_IP}"

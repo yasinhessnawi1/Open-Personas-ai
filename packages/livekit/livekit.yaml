@@ -38,9 +38,12 @@ rtc:
   # advertise the app's dedicated Fly v4 explicitly via the entrypoint --node-ip.
   use_external_ip: false
   # node_ip is injected by the entrypoint (--node-ip flag); do not hardcode here.
-  # RTC sockets MUST bind to fly-global-services for Fly UDP. The entrypoint
-  # templates the real bind into a generated config; this placeholder documents it.
-  # bind_addresses: ["fly-global-services"]   # set by entrypoint for the RTC layer
+  # NOTE: LiveKit has NO rtc-only bind field, and the global --bind flag would also
+  # bind HTTP/7880 to fly-global-services (unreachable to the Fly proxy → no
+  # signaling). So we bind everything to 0.0.0.0 (top-level bind_addresses) and rely
+  # on --node-ip to advertise the dedicated v4 as the ICE candidate. UDP-source-addr
+  # correctness on Fly is the OPERATOR-PASS unknown (TURN is the fallback if media
+  # won't traverse). See docs/research/livekit_selfhost_fly.md §1.3.
 
 # --- Embedded TURN (FORWARD-ITEM — present but DISABLED for v1) ---
 # TURN/TLS-443 covers strict "outbound-443-TLS-only" clients. Deferred because the

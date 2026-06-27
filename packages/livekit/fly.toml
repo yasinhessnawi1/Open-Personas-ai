@@ -99,5 +99,7 @@ kill_timeout = "30s"
   # lesson as the voice-VM scale-up. RAM is small for single-node audio.
   # Re-evaluate down to shared-cpu-2x ONLY if the operator pass shows idle CPU
   # headroom under real call load (docs/research §2).
+  # performance-1x requires memory in 1024-MiB increments (min 2048); audio-only
+  # SFU RAM need is small, so 2048 is the floor here, not a sizing choice.
   size = "performance-1x"
-  memory = "512mb"
+  memory = "2048mb"
