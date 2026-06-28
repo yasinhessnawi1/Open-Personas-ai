@@ -222,18 +222,24 @@ def build_reply_runner(
 
 
 def build_delivery_router(
-    *, telegram_deliverer: MessageDeliverer, rls_engine: Engine
+    *, deliverers: Mapping[str, MessageDeliverer], rls_engine: Engine, home_channel: str
 ) -> DeliveryRouter:
-    """Register the Telegram connector as C0's ``MessageDeliverer`` (criterion 8).
+    """Register the configured connectors as C0's ``MessageDeliverer``s (criterion 8).
 
-    The connector service routes every originated message to the Telegram deliverer
-    (its ``deliver`` resolves the chat via the GAP-A ``resolve_channel`` and sends).
-    ``home_channel="telegram"`` makes it the always-available target for this
-    single-connector process; a ``pending`` outcome (no resolvable channel) is the
-    deliverer's, never a silent drop.
+    The connector service routes every originated message to the deliverer for its
+    channel (each ``deliver`` resolves the chat via the GAP-A ``resolve_channel`` and
+    sends). ``home_channel`` is the always-available default target for this process; a
+    ``pending`` outcome (no resolvable channel) is the deliverer's, never a silent drop.
+    Generalised from C2's single-Telegram form to register Telegram / Discord / Slack
+    side by side (C3 multi-connector service wiring).
+
+    Args:
+        deliverers: ``platform`` → its ``MessageDeliverer`` (the connector). At least one.
+        rls_engine: The RLS-scoped engine the router's owner-scoped writes run on.
+        home_channel: The default target channel (a key present in ``deliverers``).
     """
     return DeliveryRouter(
-        deliverers={"telegram": telegram_deliverer},
+        deliverers=dict(deliverers),
         rls_engine=rls_engine,
-        home_channel="telegram",
+        home_channel=home_channel,
     )

@@ -17,8 +17,13 @@ from persona.errors import PersonaError
 
 __all__ = [
     "ConnectorError",
+    "DiscordApiError",
+    "DiscordCannotDeliverError",
+    "DiscordRateLimitError",
     "IdentityNotLinkedError",
     "LinkTokenInvalidError",
+    "SlackApiError",
+    "SlackRateLimitError",
     "TelegramApiError",
     "TelegramRateLimitError",
 ]
@@ -76,6 +81,98 @@ class TelegramRateLimitError(TelegramApiError):
 
     Attributes:
         retry_after: Seconds Telegram asks the caller to wait before retrying.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        retry_after: int,
+        context: dict[str, str] | None = None,
+    ) -> None:
+        merged = {**(context or {}), "retry_after": str(retry_after)}
+        super().__init__(message, context=merged)
+        self.retry_after = retry_after
+
+
+class DiscordApiError(ConnectorError):
+    """A Discord REST API call failed (Spec C3 — the adapter-boundary domain error).
+
+    Discord's transport faults (HTTP errors, network failures) and logical
+    rejections (a non-2xx with a JSON ``{"code", "message"}`` body) are caught at the
+    client boundary and re-raised as this domain error (the ENG-STD
+    catch-at-the-boundary rule). The bot token rides in the ``Authorization: Bot``
+    **header** (not the URL — safer than Telegram), and the underlying ``httpx``
+    exception is **never chained or quoted** (D-C3-3 / D-C2-X-credential): the
+    ``context`` carries only the method/path + the Discord ``code``/status, never the
+    token.
+    """
+
+
+class DiscordCannotDeliverError(DiscordApiError):
+    """Discord refused a DM to a user (codes ``50007`` / ``50278``) — the DM-ability gate.
+
+    A bot can DM a user only with a mutual guild, a user-install, or an established
+    DM channel (C3-R-1/R-4). When none holds, the message POST is rejected:
+    ``50278`` (no mutual guilds) / ``50007`` (cannot send — blocked / DMs disabled).
+    The connector maps this to a :class:`~persona.delivery.DeliveryResult` ``failed``
+    with a friendly "share a server / message me first" detail — the message stays
+    durably persisted (D-C1-X-platform-rejection / D-C3-4), never a silent drop and
+    never a crash. A subclass of :class:`DiscordApiError` so a generic catch still
+    maps to ``failed``; the dedicated type lets the connector phrase it warmly.
+    """
+
+
+class DiscordRateLimitError(DiscordApiError):
+    """Discord throttled the bot (HTTP ``429`` or code ``40003``) — back off ``retry_after``.
+
+    Discord returns ``429`` with a ``retry_after`` (float **seconds**) on a per-route
+    or global limit; code ``40003`` ("opening DMs too fast") is the DM-open abuse
+    guard. The send path honours :attr:`retry_after` and maps to a
+    :class:`~persona.delivery.DeliveryResult` ``pending`` (retryable —
+    D-C1-X-platform-rejection), never a silent drop.
+
+    Attributes:
+        retry_after: Seconds Discord asks the caller to wait before retrying (float —
+            Discord reports sub-second backoffs).
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        retry_after: float,
+        context: dict[str, str] | None = None,
+    ) -> None:
+        merged = {**(context or {}), "retry_after": str(retry_after)}
+        super().__init__(message, context=merged)
+        self.retry_after = retry_after
+
+
+class SlackApiError(ConnectorError):
+    """A Slack Web API call failed (Spec C3 — the adapter-boundary domain error).
+
+    Slack's Web API always returns HTTP 200 with a JSON ``{"ok": bool, ...}``; ``ok:
+    false`` carries an ``error`` string. Transport faults and ``ok: false`` rejections
+    are caught at the client boundary and re-raised as this domain error (the ENG-STD
+    catch-at-the-boundary rule). The bot token rides in the ``Authorization: Bearer``
+    header and the underlying ``httpx`` exception is **never chained or quoted**
+    (D-C3-3 / D-C2-X-credential): the ``context`` carries only the method + the Slack
+    ``error`` code, never the token. **Slack DMs are unconditional** (the app is
+    installed in the workspace), so — unlike Discord — there is no cannot-deliver gate.
+    """
+
+
+class SlackRateLimitError(SlackApiError):
+    """Slack throttled the app (HTTP 429) — back off :attr:`retry_after` seconds.
+
+    Slack returns ``429`` with a ``Retry-After`` header (integer seconds), notably on
+    ``chat.postMessage`` (~1 msg/s per channel). The send path honours
+    :attr:`retry_after` and maps to a :class:`~persona.delivery.DeliveryResult`
+    ``pending`` (retryable — D-C1-X-platform-rejection), never a silent drop.
+
+    Attributes:
+        retry_after: Seconds Slack asks the caller to wait before retrying.
     """
 
     def __init__(

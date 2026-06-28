@@ -1,25 +1,26 @@
-"""The Telegram inbound flow orchestrator (Spec C2 flow) — the I/O, not the decision.
+"""The Telegram inbound flow orchestrator (Spec C2 flow) — the surface I/O + auth carrier.
 
-This wires one inbound Telegram update through the framework: classify → (/start
-redeem | resolve identity | /new | route | run the turn) → render → send. The
-**routing decision is C1's** (:func:`~persona_connectors.domain.routing.decide_route`
-over :func:`~persona_connectors.domain.addressing.parse_addressed_persona` +
-:meth:`~persona_connectors.domain.conversation_model.ConversationStateStore.current_foreground`)
-— this module supplies only the **I/O**: extracting the text, the no-streaming
-typing loop (D-C2-4), rendering, and sending. So C3–C5 inherit the same decision
-tree and reimplement only their own transport.
+This wires one inbound Telegram update through the framework: classify → (non-text
+decline | ``/start`` deep-link redeem | delegate to the shared flow). The
+platform-agnostic sequence (resolve → ``/new`` → route → drive the turn → send) is
+C1's — :class:`~persona_connectors.domain.flow.SharedInboundFlow` (D-C3-X-flow-skeleton),
+which Telegram / Discord / Slack share. This module supplies only the **Telegram
+surface**: the inbound classification, the non-text decline, the **auth carrier**
+(the ``/start <token>`` deep-link redeem — the one binding *write*, which stays
+surface-side; the shared flow only ever *reads* the binding), and the platform I/O
+behind :class:`~persona_connectors.domain.flow.FlowTransport` (the no-streaming
+typing loop, the system/persona sends).
 
-The no-streaming pattern (§3, D-C2-4): the persona reply is *collected to completion*
-by the injected ``run_turn`` (which drives ``ConversationLoop.turn`` under the
-owner scope — wired by the composition root) while a "typing…" chat action refreshes;
-then it's rendered (HTML bold tag + UTF-16 split) and sent whole via the connector.
+The no-streaming pattern (§3, D-C2-4): the reply is collected to completion by the
+injected ``run_turn`` while a "typing…" chat action refreshes, then rendered (HTML
+bold tag + UTF-16 split) and sent whole — the typing window is opened by the
+transport's :meth:`typing` around the shared flow's turn.
 
 **api-free** (the reversibility ideal): the api-coupled bits — running the turn and
 listing the owner's personas — are injected callables the composition root supplies;
-this module imports no ``persona_api``. Ownership holds exactly as on the web: an
-unlinked identity gets a link-instruction and ZERO access (the C1 resolution gate);
-a resolved owner only ever touches their own personas (the injected callables +
-the store run RLS-scoped to that owner).
+this module imports no ``persona_api``. Ownership holds exactly as on the web (the
+shared C1 resolution gate): an unlinked identity gets a link-instruction and ZERO
+access; a resolved owner only ever touches their own personas.
 """
 
 from __future__ import annotations
@@ -28,63 +29,37 @@ import asyncio
 import contextlib
 from typing import TYPE_CHECKING
 
-from persona.schema.origination import PersonaIdentityTag
-from pydantic import BaseModel, ConfigDict
-
-from persona_connectors.domain.addressing import parse_addressed_persona
-from persona_connectors.domain.normalise import NormalisedOutbound
-from persona_connectors.domain.resolution import UnlinkedIdentity
-from persona_connectors.domain.routing import ListAndInstructions, decide_route
+from persona_connectors.domain.flow import FlowCommands, SharedInboundFlow, TurnRequest
 from persona_connectors.telegram.inbound import (
-    PLATFORM,
     InboundIgnore,
     InboundNonText,
     classify_update,
 )
 from persona_connectors.telegram.linking import RedeemStatus
 from persona_connectors.telegram.non_text import decline_message
-from persona_connectors.telegram.replies import (
-    NEW_CONVERSATION_MESSAGE,
-    NO_ACTIVE_TO_RESET_MESSAGE,
-    NO_PERSONAS_MESSAGE,
-    render_list_and_instructions,
-)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
     from datetime import datetime
 
     from persona_connectors.domain.conversation_model import ConversationStateStore
-    from persona_connectors.domain.normalise import NormalisedInbound
+    from persona_connectors.domain.normalise import NormalisedInbound, NormalisedOutbound
     from persona_connectors.domain.resolution import InboundIdentityResolver
     from persona_connectors.telegram.client import TelegramClient
     from persona_connectors.telegram.connector import TelegramConnector
     from persona_connectors.telegram.linking import TelegramLinkingService
 
+# ``TurnRequest`` is the shared turn-runner contract (now in domain.flow); re-exported
+# here so existing importers (``telegram/__init__``, the composition root) are unchanged.
 __all__ = ["InboundFlow", "TurnRequest"]
 
 # The typing chat action lasts ~5s, so refresh just under that while the turn runs.
 _TYPING_REFRESH_SECONDS = 4.0
 
-
-class TurnRequest(BaseModel):
-    """What the injected turn-runner needs to drive one persona turn (collected whole)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    owner_id: str
-    conversation_id: str
-    persona_id: str
-    text: str
-
-
-def _leading_command(text: str) -> str | None:
-    """The leading bot command (``/new`` / ``/start``), ``@bot`` suffix stripped, else None."""
-    parts = text.strip().split(maxsplit=1)
-    if not parts:
-        return None
-    base = parts[0].split("@", 1)[0]
-    return base if base in ("/new", "/start") else None
+# Telegram's bare ``/start`` greets with the list-and-instructions (the bot convention);
+# ``/new`` is the universal C1-D-3 boundary. The shared flow takes this as data so it
+# never hard-codes Telegram's verb (D-C3-X-flow-skeleton).
+_TELEGRAM_COMMANDS = FlowCommands(greeting_commands=frozenset({"/start"}))
 
 
 @contextlib.asynccontextmanager
@@ -110,13 +85,37 @@ async def _typing_indicator(client: TelegramClient, chat_id: str) -> AsyncIterat
             await task
 
 
+class _TelegramFlowTransport:
+    """Telegram's :class:`~persona_connectors.domain.flow.FlowTransport` — pure I/O, no auth.
+
+    Lowers the shared flow's three I/O needs to Telegram: a plain system send, the
+    persona reply via the connector (HTML render + UTF-16 split), and the typing
+    working indicator (D-C2-4).
+    """
+
+    def __init__(self, *, client: TelegramClient, connector: TelegramConnector) -> None:
+        self._client = client
+        self._connector = connector
+
+    async def send_system(self, *, conversation_key: str, text: str) -> None:
+        await self._client.send_message(chat_id=conversation_key, text=text)
+
+    async def send_persona(self, outbound: NormalisedOutbound) -> None:
+        await self._connector.send(outbound)
+
+    def typing(self, conversation_key: str) -> contextlib.AbstractAsyncContextManager[None]:
+        return _typing_indicator(self._client, conversation_key)
+
+
 class InboundFlow:
-    """Orchestrates one inbound Telegram update through the C1 framework (the I/O half).
+    """Orchestrates one inbound Telegram update — the Telegram surface over the shared flow.
 
     All dependencies are injected (DI; no globals). The api-coupled callables
     (``run_turn`` drives ``ConversationLoop.turn``; ``list_persona_names`` reads the
     owner's personas) are owner-scoped by the composition root, keeping this module
-    api-free.
+    api-free. The constructor + :meth:`handle` signatures are unchanged from C2 (the
+    composition root + the flow tests drive them); internally the shared sequence is
+    now :class:`~persona_connectors.domain.flow.SharedInboundFlow`.
     """
 
     def __init__(
@@ -131,14 +130,17 @@ class InboundFlow:
         run_turn: Callable[[TurnRequest], Awaitable[str]],
         now: Callable[[], datetime],
     ) -> None:
-        self._resolver = resolver
         self._linking = linking
-        self._store = conversation_store
-        self._connector = connector
         self._client = client
-        self._list_persona_names = list_persona_names
-        self._run_turn = run_turn
         self._now = now
+        self._transport = _TelegramFlowTransport(client=client, connector=connector)
+        self._shared = SharedInboundFlow(
+            resolver=resolver,
+            conversation_store=conversation_store,
+            list_persona_names=list_persona_names,
+            run_turn=run_turn,
+            commands=_TELEGRAM_COMMANDS,
+        )
 
     async def handle(self, update: dict[str, object]) -> None:
         """Handle one raw Telegram ``Update`` (the transport's ``on_update`` callback)."""
@@ -154,80 +156,19 @@ class InboundFlow:
         await self._handle_text(outcome.inbound)
 
     async def _handle_text(self, inbound: NormalisedInbound) -> None:
-        chat = inbound.conversation_key
-
-        # 1. Account linking: /start <token> redeems + binds (or fails closed). A
-        #    bare /start (no token) is handled later (greeting), once linked.
+        # AUTH CARRIER (surface-side, the binding WRITE): /start <token> redeems +
+        # binds (or fails closed). The shared flow only ever READS the binding, so
+        # this Telegram-specific deep-link redeem stays here, before delegation. A
+        # bare /start (no token) falls through (not_a_link_attempt) and the shared
+        # flow's greeting vocabulary lists the personas.
         redeem = self._linking.redeem_start_command(
             text=inbound.text, platform_identity=inbound.sender_id, now=self._now()
         )
         if redeem.status in (RedeemStatus.linked, RedeemStatus.failed):
-            await self._client.send_message(chat_id=chat, text=redeem.message or "")
-            return
-
-        # 2. Ownership gate (C1): resolve the identity to its owner, or zero access.
-        resolution = self._resolver.resolve(inbound)
-        if isinstance(resolution, UnlinkedIdentity):
-            await self._client.send_message(chat_id=chat, text=resolution.instruction)
-            return
-        owner_id = resolution.owner_id
-
-        # 3. The owner's personas (RLS-scoped read via the injected lister).
-        names = self._list_persona_names(owner_id)
-        if not names:
-            await self._client.send_message(chat_id=chat, text=NO_PERSONAS_MESSAGE)
-            return
-
-        # 4. Boundary / greeting commands.
-        command = _leading_command(inbound.text)
-        if command == "/new":
-            new_conversation = self._store.apply_new(
-                owner_id=owner_id, platform=PLATFORM, channel_key=chat
+            await self._client.send_message(
+                chat_id=inbound.conversation_key, text=redeem.message or ""
             )
-            message = (
-                NEW_CONVERSATION_MESSAGE
-                if new_conversation is not None
-                else NO_ACTIVE_TO_RESET_MESSAGE
-            )
-            await self._client.send_message(chat_id=chat, text=message)
-            return
-        if command == "/start":  # bare /start (the token case already returned above)
-            await self._client.send_message(chat_id=chat, text=render_list_and_instructions(names))
             return
 
-        # 5. Route (C1's decision) → drive a persona, or list-and-instructions.
-        addressing = parse_addressed_persona(inbound.text, persona_names=names)
-        active = self._store.current_foreground(
-            owner_id=owner_id, platform=PLATFORM, channel_key=chat
-        )
-        decision = decide_route(
-            addressing,
-            active_persona_id=active.persona_id if active is not None else None,
-            owner_persona_ids=list(names),
-        )
-        if isinstance(decision, ListAndInstructions):
-            await self._client.send_message(chat_id=chat, text=render_list_and_instructions(names))
-            return
-
-        # 6. Drive the turn: foreground (flip-or-continue) → collect the reply with a
-        #    typing indicator (no-streaming) → render + send whole.
-        foreground = self._store.foreground(
-            owner_id=owner_id, platform=PLATFORM, channel_key=chat, persona_id=decision.persona_id
-        )
-        addressable = names.get(decision.persona_id)
-        display_name = addressable[0] if addressable else decision.persona_id
-        tag = PersonaIdentityTag(
-            persona_id=decision.persona_id, display_name=display_name, visual_ref=None
-        )
-        async with _typing_indicator(self._client, chat):
-            reply = await self._run_turn(
-                TurnRequest(
-                    owner_id=owner_id,
-                    conversation_id=foreground.conversation_id,
-                    persona_id=decision.persona_id,
-                    text=inbound.text,
-                )
-            )
-        await self._connector.send(
-            NormalisedOutbound(persona=tag, text=reply, conversation_key=chat)
-        )
+        # The platform-agnostic sequence (resolve → /new → route → drive → send) is C1's.
+        await self._shared.handle_text(inbound, transport=self._transport)

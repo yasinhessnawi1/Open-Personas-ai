@@ -30,6 +30,12 @@ from persona_connectors.domain.conversation_model import (
     Switch,
     decide_foreground,
 )
+from persona_connectors.domain.flow import (
+    FlowCommands,
+    FlowTransport,
+    SharedInboundFlow,
+    TurnRequest,
+)
 from persona_connectors.domain.normalise import (
     Capabilities,
     NormalisedInbound,
@@ -39,6 +45,12 @@ from persona_connectors.domain.normalise import (
     render_tier,
 )
 from persona_connectors.domain.protocol import Connector
+from persona_connectors.domain.render import (
+    LengthMeasure,
+    codepoint_measure,
+    split_text,
+    utf16_measure,
+)
 from persona_connectors.domain.resolution import (
     InboundIdentityResolver,
     ResolutionResult,
@@ -46,8 +58,17 @@ from persona_connectors.domain.resolution import (
     UnlinkedIdentity,
     build_link_instruction,
 )
+from persona_connectors.domain.system_replies import (
+    NEW_CONVERSATION_MESSAGE,
+    NO_ACTIVE_TO_RESET_MESSAGE,
+    NO_PERSONAS_MESSAGE,
+    render_list_and_instructions,
+)
 
 __all__ = [
+    "NEW_CONVERSATION_MESSAGE",
+    "NO_ACTIVE_TO_RESET_MESSAGE",
+    "NO_PERSONAS_MESSAGE",
     "Addressed",
     "AddressingResult",
     "Ambiguous",
@@ -55,8 +76,11 @@ __all__ = [
     "Connector",
     "ConversationStateStore",
     "FlipPlan",
+    "FlowCommands",
+    "FlowTransport",
     "ForegroundResult",
     "InboundIdentityResolver",
+    "LengthMeasure",
     "NoName",
     "NoOp",
     "NormalisedInbound",
@@ -64,12 +88,18 @@ __all__ = [
     "RenderTier",
     "ResolutionResult",
     "ResolvedIdentity",
+    "SharedInboundFlow",
     "Switch",
+    "TurnRequest",
     "UnlinkedIdentity",
     "build_link_instruction",
+    "codepoint_measure",
     "decide_foreground",
     "is_idle_expired",
     "parse_addressed_persona",
     "plain_name_prefix",
+    "render_list_and_instructions",
     "render_tier",
+    "split_text",
+    "utf16_measure",
 ]

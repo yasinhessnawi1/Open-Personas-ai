@@ -241,11 +241,13 @@ with unified memory.
   turns to the same episodic store as text. The frontend voice client is the
   remaining piece.
 - **`persona-connectors`** — the framework that makes a persona reachable on
-  messaging platforms, plus the **first adapter: Telegram**. Link your Telegram
-  account from the web, then message your persona by name — switching personas,
-  `/new`, and idle boundaries all work over a real chat, with ownership isolated
-  exactly as on the web. The reference adapter the other platforms follow.
-  **Telegram shipped**; Discord/Slack/WhatsApp/SMS/email follow.
+  messaging platforms, plus the **chat-app adapters: Telegram, Discord, Slack**.
+  Link your account from the web (Telegram via a deep link, Discord/Slack via
+  OAuth), then DM your persona by name — switching personas, `/new`, and idle
+  boundaries all work over a real chat, with ownership isolated exactly as on the
+  web. Deliberately thin: each adapter is its platform's glue, the framework does
+  the rest. **Telegram, Discord & Slack shipped** (DM surfaces); WhatsApp/SMS/email
+  follow.
 
 See the [CHANGELOG](CHANGELOG.md) and each package's `CHANGELOG.md` for the
 per-surface history.

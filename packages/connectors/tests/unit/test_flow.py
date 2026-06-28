@@ -1,0 +1,258 @@
+"""SharedInboundFlow — the platform-agnostic inbound skeleton (Spec C3 amendment #2).
+
+Drives a normalised text inbound through resolve → command → route → turn → send
+with injected fakes + a fake :class:`FlowTransport`, asserting the shared sequence
+and the auth boundary (the flow only READS a binding via the resolver — it never
+redeems/binds; that stays surface-side). The platform deltas (classify, the
+``/start``/OAuth carrier, the typing I/O) are NOT here — they live in each adapter.
+"""
+# ruff: noqa: ARG002 — the fakes mirror real protocol signatures; unused params are intentional.
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+import pytest
+from persona.delivery import DeliveryOutcome, DeliveryResult
+from persona_connectors.domain.conversation_model import ForegroundRef, ForegroundResult
+from persona_connectors.domain.flow import (
+    FlowCommands,
+    FlowTransport,
+    SharedInboundFlow,
+    TurnRequest,
+)
+from persona_connectors.domain.normalise import NormalisedInbound, NormalisedOutbound
+from persona_connectors.domain.resolution import ResolvedIdentity, UnlinkedIdentity
+from persona_connectors.domain.system_replies import (
+    NEW_CONVERSATION_MESSAGE,
+    NO_ACTIVE_TO_RESET_MESSAGE,
+    NO_PERSONAS_MESSAGE,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+_NOW = datetime(2026, 6, 27, 12, 0, 0, tzinfo=UTC)
+_CHAT = "chan-1"
+_NAMES = {"astrid": ["Astrid"], "kai": ["Kai"]}
+# Telegram's greeting word — proves the vocabulary is injected, not hard-coded.
+_TELEGRAM_COMMANDS = FlowCommands(greeting_commands=frozenset({"/start"}))
+
+
+class _FakeTransport:
+    """Records the platform I/O the shared flow drives (a FlowTransport)."""
+
+    def __init__(self) -> None:
+        self.system: list[tuple[str, str]] = []
+        self.persona: list[NormalisedOutbound] = []
+        self.typed: list[str] = []
+
+    async def send_system(self, *, conversation_key: str, text: str) -> None:
+        self.system.append((conversation_key, text))
+
+    async def send_persona(self, outbound: NormalisedOutbound) -> None:
+        self.persona.append(outbound)
+
+    @contextlib.asynccontextmanager
+    async def typing(self, conversation_key: str) -> AsyncIterator[None]:
+        self.typed.append(conversation_key)
+        yield
+
+
+class _FakeResolver:
+    def __init__(self, result: object) -> None:
+        self._result = result
+
+    def resolve(self, inbound: object) -> object:
+        return self._result
+
+
+class _FakeStore:
+    def __init__(
+        self, *, active: ForegroundRef | None = None, apply_new_result: str | None = "conv_new"
+    ) -> None:
+        self.active = active
+        self.apply_new_result = apply_new_result
+        self.foregrounded: list[str] = []
+        self.applied_new: list[str] = []
+
+    def current_foreground(
+        self, *, owner_id: str, platform: str, channel_key: str
+    ) -> ForegroundRef | None:
+        return self.active
+
+    def foreground(
+        self, *, owner_id: str, platform: str, channel_key: str, persona_id: str
+    ) -> ForegroundResult:
+        self.foregrounded.append(persona_id)
+        return ForegroundResult(conversation_id=f"conv_for_{persona_id}", resumed=False)
+
+    def apply_new(self, *, owner_id: str, platform: str, channel_key: str) -> str | None:
+        self.applied_new.append(channel_key)
+        return self.apply_new_result
+
+
+class _TurnRunner:
+    def __init__(self, reply: str = "Hello from the persona") -> None:
+        self.reply = reply
+        self.requests: list[TurnRequest] = []
+
+    async def __call__(self, request: TurnRequest) -> str:
+        await asyncio.sleep(0)
+        self.requests.append(request)
+        return self.reply
+
+
+def _flow(
+    *,
+    resolver: object = None,
+    store: _FakeStore | None = None,
+    names: dict[str, list[str]] | None = None,
+    turn: _TurnRunner | None = None,
+    commands: FlowCommands = _TELEGRAM_COMMANDS,
+) -> tuple[SharedInboundFlow, _FakeTransport, _FakeStore, _TurnRunner]:
+    transport = _FakeTransport()
+    store = store or _FakeStore()
+    turn = turn or _TurnRunner()
+    resolver = resolver or _FakeResolver(ResolvedIdentity(owner_id="user_a"))
+    resolved_names = _NAMES if names is None else names
+    flow = SharedInboundFlow(
+        resolver=resolver,  # type: ignore[arg-type]
+        conversation_store=store,  # type: ignore[arg-type]
+        list_persona_names=lambda _owner: resolved_names,
+        run_turn=turn,
+        commands=commands,
+    )
+    return flow, transport, store, turn
+
+
+def _inbound(text: str) -> NormalisedInbound:
+    return NormalisedInbound(
+        platform="telegram",
+        sender_id="777",
+        conversation_key=_CHAT,
+        message_id="9",
+        text=text,
+        received_at=_NOW,
+    )
+
+
+# --- the FlowTransport / FlowCommands contracts ---
+
+
+def test_fake_transport_satisfies_the_protocol() -> None:
+    assert isinstance(_FakeTransport(), FlowTransport)
+
+
+def test_flow_commands_is_frozen_with_defaults() -> None:
+    cmd = FlowCommands()
+    assert cmd.new_command == "/new"
+    assert cmd.greeting_commands == frozenset()
+    with pytest.raises(ValueError, match="frozen"):
+        cmd.new_command = "/x"  # type: ignore[misc]
+
+
+# --- ownership boundary ---
+
+
+@pytest.mark.asyncio
+async def test_unlinked_identity_gets_link_instruction_zero_access() -> None:
+    """An unlinked identity gets the instruction and NEVER reaches a turn (zero access)."""
+    flow, transport, _store, turn = _flow(
+        resolver=_FakeResolver(UnlinkedIdentity(instruction="link this account"))
+    )
+    await flow.handle_text(_inbound("Kai, hello"), transport=transport)
+    assert transport.system == [(_CHAT, "link this account")]
+    assert transport.persona == []
+    assert turn.requests == []
+
+
+@pytest.mark.asyncio
+async def test_no_personas_tells_the_user_to_create_one() -> None:
+    flow, transport, _store, _turn = _flow(names={})
+    await flow.handle_text(_inbound("hello"), transport=transport)
+    assert transport.system == [(_CHAT, NO_PERSONAS_MESSAGE)]
+
+
+# --- commands ---
+
+
+@pytest.mark.asyncio
+async def test_new_with_active_resets_and_confirms() -> None:
+    flow, transport, store, _turn = _flow(store=_FakeStore(apply_new_result="conv_new"))
+    await flow.handle_text(_inbound("/new"), transport=transport)
+    assert store.applied_new == [_CHAT]
+    assert transport.system == [(_CHAT, NEW_CONVERSATION_MESSAGE)]
+
+
+@pytest.mark.asyncio
+async def test_new_with_no_active_says_nothing_to_reset() -> None:
+    flow, transport, _store, _turn = _flow(store=_FakeStore(apply_new_result=None))
+    await flow.handle_text(_inbound("/new"), transport=transport)
+    assert transport.system == [(_CHAT, NO_ACTIVE_TO_RESET_MESSAGE)]
+
+
+@pytest.mark.asyncio
+async def test_greeting_command_lists_personas() -> None:
+    """The injected greeting word (Telegram's /start) replies with the list, no turn."""
+    flow, transport, _store, turn = _flow()
+    await flow.handle_text(_inbound("/start"), transport=transport)
+    assert "Astrid" in transport.system[0][1]
+    assert turn.requests == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_greeting_word_is_not_a_command() -> None:
+    """With no greeting vocabulary, /start is just text → routed, not greeted."""
+    flow, transport, _store, turn = _flow(commands=FlowCommands())
+    await flow.handle_text(_inbound("/start"), transport=transport)
+    # No greeting configured + no active persona + 2 personas → list-and-instructions
+    # via the ROUTER (not the command branch); still no turn.
+    assert "Astrid" in transport.system[0][1]
+    assert turn.requests == []
+
+
+# --- routing → turn → send ---
+
+
+@pytest.mark.asyncio
+async def test_addressed_persona_is_foregrounded_and_driven() -> None:
+    flow, transport, store, turn = _flow()
+    await flow.handle_text(_inbound("Kai, how are you?"), transport=transport)
+
+    assert store.foregrounded == ["kai"]
+    assert turn.requests[0].persona_id == "kai"
+    assert turn.requests[0].conversation_id == "conv_for_kai"
+    assert turn.requests[0].text == "Kai, how are you?"
+    assert len(transport.persona) == 1
+    assert transport.persona[0].persona.display_name == "Kai"
+    assert transport.persona[0].text == "Hello from the persona"
+    assert transport.persona[0].conversation_key == _CHAT
+    assert transport.typed == [_CHAT]  # the typing window opened around the turn
+
+
+@pytest.mark.asyncio
+async def test_no_name_continues_the_active_persona() -> None:
+    store = _FakeStore(active=ForegroundRef(persona_id="astrid", conversation_id="conv_astrid"))
+    flow, transport, store, turn = _flow(store=store)
+    await flow.handle_text(_inbound("how are you?"), transport=transport)
+    assert store.foregrounded == ["astrid"]
+    assert turn.requests[0].persona_id == "astrid"
+    assert transport.persona[0].persona.display_name == "Astrid"
+
+
+@pytest.mark.asyncio
+async def test_no_name_no_active_multiple_personas_lists() -> None:
+    flow, transport, _store, turn = _flow(store=_FakeStore(active=None))
+    await flow.handle_text(_inbound("hello there"), transport=transport)
+    assert "Astrid" in transport.system[0][1]
+    assert transport.persona == []
+    assert turn.requests == []
+
+
+def test_delivery_result_helper_imported() -> None:
+    """Guard: the fake connector's outcome type stays importable (paranoia)."""
+    assert DeliveryResult(outcome=DeliveryOutcome.DELIVERED, channel="x").channel == "x"

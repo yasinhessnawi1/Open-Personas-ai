@@ -11,6 +11,50 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Discord & Slack — reach your persona on two more chat apps (2026-06-28)
+
+> Close-out of `discord-slack-adapters` (Spec C3) — two **thin** DM adapters on the C1
+> framework, following the Telegram (C2) reference. A persona is now reachable in **Discord
+> DMs** (over the gateway WebSocket) and **Slack DMs** (socket mode by default; HTTP events
+> with request-signing optional). Each reuses the shared inbound flow, the parallel-
+> conversation model, identity mapping, and C0-backed outbound — adding only its platform's
+> glue. **Two distinctions got their first test:** OAuth-based account linking (Discord +
+> Slack) — the first beyond Telegram's deep link — and **DMs as the personal surface** on
+> workspace/server platforms (channels/servers are explicitly out of scope). **Zero new
+> dependency** (REST over `httpx`, the gateway/socket WebSockets over the already-resolved
+> `websockets`); **no migration** (reuses C1's tables). The thin-adapter promise held: the
+> framework did the heavy lifting, surfacing only **two additive C1 amendments** (a
+> measure-pluggable splitter + a shared inbound-flow skeleton) — folded into C1, not worked
+> around in the adapters.
+
+- **Discord connector** (`persona_connectors.discord`) — implements C1's `Connector` + C0's
+  `MessageDeliverer`. Inbound `MESSAGE_CREATE` over the **gateway WebSocket** (heartbeat/ACK-
+  watchdog/RESUME lifecycle; `DIRECT_MESSAGES` intent only — DM content is exempt from the
+  privileged intent); **DM-only** (a server message is ignored); outbound rendered with a
+  Markdown **`**bold**`** name tag, split at the 2000-char cap; the typing indicator on slow
+  turns. **DM-ability is conditional** (a bot can DM only with a mutual guild / user-install)
+  — handled honestly: an un-DMable send → `failed` with a warm "share a server / message me
+  first" note, cold C0 origination with no established DM channel → `pending` (durable, never
+  lost), never a crash.
+- **Slack connector** (`persona_connectors.slack`) — implements the same seams. Inbound
+  `message.im` via **socket mode** (default — an app-token-authenticated WS, no public
+  endpoint) or **HTTP events** (a signed public endpoint); **`im`-only**; outbound rendered
+  with a **mrkdwn `*bold*`** name tag (single asterisk) + `&<>` escaping. Slack DMs are
+  **unconditional** (no Discord-style gate). No bot typing indicator in plain DMs.
+- **OAuth account linking** (both) — the first OAuth carriers around C1's unchanged linking
+  lifecycle: the one-time link token rides as the OAuth `state` (unguessable / single-use /
+  short-TTL / platform-bound = free CSRF), the callback exchanges the code → the platform
+  identity → binds. A Discord/Slack-linked identity resolves through the shared resolver
+  **identically to a Telegram one** (proven), confirming C1's linking abstraction accommodates
+  OAuth, not just deep links — with **zero C1 change**.
+- **Security:** Slack HTTP-events requests verified by a **constant-time `v0=` HMAC** over the
+  **raw body** with a **5-minute replay window**, fail-closed on an unset secret (the per-
+  request trust model — the opposite of the gateway/socket connection-auth); Discord gateway
+  + Slack socket authenticated by the connection token (no per-message signature); all bot/
+  app/OAuth credentials `SecretStr`, never logged; **ownership holds per platform** — a
+  Discord/Slack identity reaches only its linked user's personas (C1 RLS, proven cross-tenant
+  on real Postgres for both).
+
 ### Approvals, permissions & bounds — the autonomy safety spine (2026-06-28)
 
 > Close-out of `approvals-permissions`. Answers what a persona may do **when nobody is

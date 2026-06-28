@@ -17,12 +17,18 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = ["ConnectorConfig", "TelegramTransport"]
+__all__ = ["ConnectorConfig", "SlackTransport", "TelegramTransport"]
 
 # The two inbound transports (C2 D-C2-1): ``webhook`` (Telegram pushes to a
 # public HTTPS endpoint — prod latency) vs ``longpoll`` (we pull via getUpdates —
 # dev, no public endpoint). Mutually exclusive per bot.
 TelegramTransport = Literal["webhook", "longpoll"]
+
+# The two Slack inbound transports (D-C3-2): ``socket`` (an outbound WS via
+# ``apps.connections.open`` — no public endpoint, the WS is app-token-authenticated)
+# vs ``http`` (a public Request URL with per-request signature verification). Default
+# ``socket`` — zero-infra, the connector-service posture.
+SlackTransport = Literal["socket", "http"]
 
 
 class ConnectorConfig(BaseSettings):
@@ -118,3 +124,54 @@ class ConnectorConfig(BaseSettings):
     # being short-lived + single-use (C1-D-5). A tight default — the user clicks the
     # fresh link immediately; a stale link simply fails closed (regenerate).
     telegram_link_token_ttl_minutes: int = Field(default=15, gt=0)
+
+    # --- Discord adapter (Spec C3) ---
+    # The bot token is a CREDENTIAL (D-C3-3 / D-C2-X-credential carried forward):
+    # ``SecretStr``, never logged, unwrapped only at the Bot API call site (it rides
+    # in the ``Authorization: Bot <token>`` HEADER — not the URL — safer than
+    # Telegram). ``None`` until the adapter is configured (the service fails fast at
+    # startup if Discord is requested without it). v1 is a single bot per platform
+    # (D-C3-X-v1-reach).
+    discord_bot_token: SecretStr | None = Field(default=None)
+    # OAuth2 app credentials for IDENTITY linking (D-C3-4): the public client id +
+    # the secret client credential. The authorize step carries the C1 ``LinkToken``
+    # as ``state`` (free CSRF); the callback exchanges ``code`` → ``/users/@me`` →
+    # ``redeem_and_bind``. ``scope=identify+bot`` so one consent links identity AND
+    # adds the bot to a shared guild (establishing DM-ability).
+    discord_oauth_client_id: str = Field(default="")
+    discord_oauth_client_secret: SecretStr | None = Field(default=None)
+    # The registered OAuth redirect/callback URL (the connector's callback route).
+    discord_oauth_redirect_uri: str = Field(default="")
+    # The REST base (v10) + the Gateway WS URL — overridable for a faithful stub in
+    # tests / a local proxy. The gateway is Discord's only inbound DM transport
+    # (D-C3-1): one persistent WS in the connector process.
+    discord_api_base_url: str = Field(default="https://discord.com/api/v10")
+    discord_gateway_url: str = Field(default="wss://gateway.discord.gg/?v=10&encoding=json")
+    # The OAuth ``state`` (= C1 LinkToken) TTL. Short-lived + single-use (C1-D-5);
+    # a stale/replayed state fails closed (the CSRF-class boundary of OAuth linking).
+    discord_link_token_ttl_minutes: int = Field(default=15, gt=0)
+
+    # --- Slack adapter (Spec C3) ---
+    # The bot token (``xoxb-…``) is a CREDENTIAL (D-C3-3): ``SecretStr``, in the
+    # ``Authorization: Bearer`` header, never logged. v1 = a single workspace install
+    # (D-C3-X-v1-reach). ``None`` until configured (fail-fast at startup).
+    slack_bot_token: SecretStr | None = Field(default=None)
+    # The app-level token (``xapp-…``, ``connections:write``) for socket mode — opens
+    # the event WebSocket via ``apps.connections.open`` (D-C3-2). ``None`` for HTTP mode.
+    slack_app_token: SecretStr | None = Field(default=None)
+    # The signing secret for the HTTP-events transport (D-C3-3): every request carries
+    # ``X-Slack-Signature`` = ``v0=``HMAC-SHA256(secret, ``v0:{ts}:{body}``), verified
+    # constant-time before parsing, with a 5-minute replay window. Unused in socket mode.
+    slack_signing_secret: SecretStr | None = Field(default=None)
+    # OAuth v2 app credentials for IDENTITY linking (D-C3-4): the authorize step carries
+    # the C1 ``LinkToken`` as ``state``; the callback exchanges ``code`` via
+    # ``oauth.v2.access`` → ``authed_user.id`` → ``redeem_and_bind``.
+    slack_oauth_client_id: str = Field(default="")
+    slack_oauth_client_secret: SecretStr | None = Field(default=None)
+    slack_oauth_redirect_uri: str = Field(default="")
+    # The Web API base — overridable for a faithful stub in tests.
+    slack_api_base_url: str = Field(default="https://slack.com/api")
+    # D-C3-2: ``socket`` (default, no public endpoint) vs ``http`` (public signed endpoint).
+    slack_transport: SlackTransport = Field(default="socket")
+    # The OAuth ``state`` (= C1 LinkToken) TTL — short-lived + single-use (C1-D-5).
+    slack_link_token_ttl_minutes: int = Field(default=15, gt=0)

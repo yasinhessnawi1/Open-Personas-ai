@@ -75,6 +75,12 @@ dependencies = [
     # The service entry (`python -m persona_connectors`) serves the webhook ASGI app
     # on uvicorn — already in the lock via persona-api; declaring the direct use.
     "uvicorn[standard]>=0.30,<1",
+    # C3 (Discord/Slack adapters, D-C3-X-no-new-dep): Discord's gateway + Slack's
+    # socket mode are WebSockets — the thin adapters talk to them with `websockets`
+    # directly (rejecting discord.py/slack_sdk/slack_bolt, which invert control +
+    # duplicate C1's flow). NOT a new project dependency — websockets is already in
+    # the lock via uvicorn[standard]; this just declares the direct use (dep hygiene).
+    "websockets>=13,<16",
 ]
 
 [project.urls]

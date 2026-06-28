@@ -107,3 +107,31 @@ def test_telegram_adapter_is_api_free() -> None:
         f"these telegram/ modules import persona_api, breaking the thin-adapter / "
         f"reversibility ideal (C2 — keep api-coupling in composition): {offenders}"
     )
+
+
+def _adapter_offenders(package: str) -> list[str]:
+    return [
+        _module_stem(py_file)
+        for py_file in (_PKG_DIR / package).rglob("*.py")
+        if _imports_persona_api(py_file.read_text(encoding="utf-8"))
+    ]
+
+
+def test_discord_adapter_is_api_free() -> None:
+    """The Discord adapter (Spec C3) is pure platform I/O — it never imports persona_api.
+
+    The whole ``discord/`` package (client / inbound / render / connector / linking / app /
+    gateway / flow) depends only on C1's owned-surface ports + persona-core contracts +
+    ``httpx``/``websockets``; the api-coupling lives in the composition root (C1-D-1). The
+    thin-adapter ideal as a positive assertion.
+    """
+    assert _adapter_offenders("discord") == []
+
+
+def test_slack_adapter_is_api_free() -> None:
+    """The Slack adapter (Spec C3) is pure platform I/O — it never imports persona_api.
+
+    The whole ``slack/`` package (client / inbound / render / connector / linking / app /
+    signing / events / socket / flow) is api-free; api-coupling lives in composition (C1-D-1).
+    """
+    assert _adapter_offenders("slack") == []

@@ -1,0 +1,211 @@
+"""Slack socket-mode transport (Spec C3 ⛔, D-C3-2/D-C3-3) — the default inbound WS.
+
+Socket mode is the **connection-authenticated** Slack transport (the default — no public
+endpoint needed): the **app-level token** (``xapp-…``, ``connections:write``) opens a
+WebSocket via ``apps.connections.open``, and events flow over that pre-authorized socket.
+
+**The trust boundary (D-C3-3) is connection-auth — like Discord's gateway, UNLIKE the
+HTTP-events per-request signing.** Only the holder of the app-token can open the socket, so
+the WS URL is the authenticated event channel; events on it are trusted (Slack does not
+re-sign socket envelopes). The app-token is a ``SecretStr``, used only in the
+``apps.connections.open`` ``Authorization`` header, never logged.
+
+Each envelope must be **acked** (``{"envelope_id": …}``) or Slack re-delivers it. The pure
+envelope interpretation (:func:`interpret_envelope`, :func:`build_ack`) is unit-tested; the
+live recv loop (:meth:`SlackSocketClient.run`) is the deploy seam, exercised by the operator
+pass (the ``RuntimeFactory``-is-a-live-seam posture). api-free (httpx + ``websockets``).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+import httpx
+from pydantic import BaseModel, ConfigDict
+
+from persona_connectors.errors import SlackApiError
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from pydantic import SecretStr
+
+__all__ = [
+    "SocketDisconnect",
+    "SocketEnvelope",
+    "SocketEvent",
+    "SocketHello",
+    "SocketIgnore",
+    "SlackSocketClient",
+    "SlackSocketConnection",
+    "build_ack",
+    "interpret_envelope",
+]
+
+
+class SocketHello(BaseModel):
+    """The socket ``hello`` — the connection is up."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class SocketEvent(BaseModel):
+    """An ``events_api`` envelope — ``envelope_id`` (to ack) + the inner ``event``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    envelope_id: str
+    event: dict[str, object]
+
+
+class SocketDisconnect(BaseModel):
+    """A ``disconnect`` envelope — close and reconnect (Slack refreshes the socket URL)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reason: str
+
+
+class SocketIgnore(BaseModel):
+    """An envelope with nothing to act on (an unknown type / malformed)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reason: str
+
+
+SocketEnvelope = SocketHello | SocketEvent | SocketDisconnect | SocketIgnore
+
+
+def interpret_envelope(envelope: dict[str, object]) -> SocketEnvelope:
+    """Map a decoded socket-mode envelope to a :data:`SocketEnvelope` (pure, total)."""
+    kind = envelope.get("type")
+    if kind == "hello":
+        return SocketHello()
+    if kind == "disconnect":
+        reason = envelope.get("reason")
+        return SocketDisconnect(reason=reason if isinstance(reason, str) else "")
+    if kind == "events_api":
+        envelope_id = envelope.get("envelope_id")
+        payload = envelope.get("payload")
+        event = payload.get("event") if isinstance(payload, dict) else None
+        if isinstance(envelope_id, str) and envelope_id:
+            return SocketEvent(
+                envelope_id=envelope_id, event=event if isinstance(event, dict) else {}
+            )
+        return SocketIgnore(reason="events-api-without-envelope-id")
+    return SocketIgnore(reason="unknown-type")
+
+
+def build_ack(envelope_id: str) -> dict[str, object]:
+    """Build the ack a received envelope requires (or Slack re-delivers it)."""
+    return {"envelope_id": envelope_id}
+
+
+@runtime_checkable
+class SlackSocketConnection(Protocol):
+    """The minimal WebSocket surface socket mode needs (a ``websockets`` connection)."""
+
+    async def send(self, message: str) -> None: ...
+
+    async def recv(self) -> str | bytes: ...
+
+    async def close(self) -> None: ...
+
+
+class SlackSocketClient:
+    """Maintains the Slack socket-mode connection (the default inbound transport).
+
+    Dependencies injected (DI): the app-level token (``SecretStr``), an ``httpx`` client (for
+    ``apps.connections.open``), the ``on_event`` handler (the flow), a ``connect`` factory
+    (wraps ``websockets.connect``), and ``sleep`` (for reconnect backoff, injected for tests).
+    """
+
+    def __init__(
+        self,
+        *,
+        app_token: SecretStr,
+        http: httpx.AsyncClient,
+        on_event: Callable[[dict[str, object]], Awaitable[None]],
+        connect: Callable[[str], Awaitable[SlackSocketConnection]],
+        api_base_url: str = "https://slack.com/api",
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
+        self._app_token = app_token
+        self._http = http
+        self._on_event = on_event
+        self._connect = connect
+        self._base = api_base_url.rstrip("/")
+        self._sleep = sleep
+
+    async def open_connection_url(self) -> str:
+        """Open a socket-mode URL via ``apps.connections.open`` (app-token connection-auth).
+
+        The app-token authenticates this call — only its holder can open the socket, so the
+        returned WS URL is the authenticated event channel (the trust boundary, D-C3-3).
+        """
+        try:
+            response = await self._http.post(
+                f"{self._base}/apps.connections.open",
+                headers={"Authorization": f"Bearer {self._app_token.get_secret_value()}"},
+            )
+        except httpx.HTTPError:
+            raise SlackApiError(
+                "slack socket open failed", context={"method": "apps.connections.open"}
+            ) from None
+        if response.status_code != 200:
+            raise SlackApiError(
+                "slack socket open rejected",
+                context={"method": "apps.connections.open", "status": str(response.status_code)},
+            )
+        try:
+            body: object = response.json()
+        except ValueError:
+            body = None
+        url = body.get("url") if isinstance(body, dict) and body.get("ok") is True else None
+        if not isinstance(url, str) or not url:
+            raise SlackApiError(
+                "slack apps.connections.open returned no url",
+                context={"method": "apps.connections.open"},
+            )
+        return url
+
+    async def run(self, *, should_continue: Callable[[], bool] = lambda: True) -> None:
+        """Maintain the socket: open → recv envelopes → ack + dispatch → reconnect on close.
+
+        The live I/O loop (the deploy seam). Each ``events_api`` envelope is **acked** then its
+        inner event dispatched; a ``disconnect`` (or a drop) reconnects with a fresh URL.
+        """
+        while should_continue():
+            url = await self.open_connection_url()
+            conn = await self._connect(url)
+            try:
+                await self._receive_loop(conn, should_continue)
+            finally:
+                with contextlib.suppress(Exception):
+                    await conn.close()
+
+    async def _receive_loop(
+        self, conn: SlackSocketConnection, should_continue: Callable[[], bool]
+    ) -> None:
+        while should_continue():
+            try:
+                raw = await conn.recv()
+            except Exception:  # noqa: BLE001 — a drop ends the session → reconnect
+                return
+            try:
+                envelope = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(envelope, dict):
+                continue
+            directive = interpret_envelope(envelope)
+            if isinstance(directive, SocketEvent):
+                # Ack first (Slack re-delivers unacked envelopes), then dispatch the event.
+                await conn.send(json.dumps(build_ack(directive.envelope_id)))
+                if directive.event:
+                    await self._on_event(directive.event)
+            elif isinstance(directive, SocketDisconnect):
+                return  # reconnect with a fresh URL

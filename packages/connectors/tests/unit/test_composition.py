@@ -13,10 +13,13 @@ from __future__ import annotations
 import pytest
 from persona_api.config import Edition
 from persona_api.middleware.rls_context import current_user_id
-from persona_connectors.composition import ConnectorComposition
+from persona_api.services.delivery_router import DeliveryRouter
+from persona_connectors.composition import ConnectorComposition, build_delivery_router
 from persona_connectors.config import ConnectorConfig
 from persona_connectors.errors import ConnectorError
 from sqlalchemy.engine import Engine
+
+_CLOUD_URL = "postgresql+psycopg://u:p@localhost:5432/db"
 
 
 def test_exposes_edition_enum_for_community() -> None:
@@ -71,3 +74,28 @@ def test_owner_scope_resets_even_on_exception() -> None:
     with pytest.raises(RuntimeError):
         _raise_inside_scope()
     assert current_user_id.get() is None
+
+
+class _FakeDeliverer:
+    """A minimal C0 ``MessageDeliverer`` stand-in (registers into the router)."""
+
+    async def deliver(self, message: object) -> object:  # noqa: ARG002 — protocol shape
+        return None
+
+
+def test_build_delivery_router_registers_multiple_connectors() -> None:
+    """C3 multi-connector wiring: Telegram + Discord + Slack deliverers registered side by side."""
+    engine = ConnectorComposition(
+        ConnectorConfig(edition="cloud", database_url=_CLOUD_URL)
+    ).make_engine()
+    deliverers = {
+        "telegram": _FakeDeliverer(),
+        "discord": _FakeDeliverer(),
+        "slack": _FakeDeliverer(),
+    }
+    router = build_delivery_router(
+        deliverers=deliverers,  # type: ignore[arg-type]
+        rls_engine=engine,
+        home_channel="slack",
+    )
+    assert isinstance(router, DeliveryRouter)

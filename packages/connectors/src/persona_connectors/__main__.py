@@ -1,17 +1,19 @@
-"""The connector service entry point (Spec C2 T9) — ``python -m persona_connectors``.
+"""The connector service entry point (Spec C2 T9 / C3) — ``python -m persona_connectors``.
 
-Brings the Telegram adapter to life: assembles the engines + the reused api runtime
-(C1-D-1, the ``run_worker.py`` pattern — this module + ``composition`` + ``infra``
-are the ONLY ``persona_api`` importers; the flow/domain/telegram surface stays
-api-free, the reversibility ideal), registers the Telegram connector as C0's
-``MessageDeliverer``, and runs the chosen inbound transport (long-poll for dev, the
-zero-infra operator-pass path; webhook for prod) plus the periodic idle sweep.
+Brings the configured connector adapters to life: assembles the engines + the reused api
+runtime (C1-D-1, the ``run_worker.py`` pattern — this module + ``composition`` + ``infra``
+are the ONLY ``persona_api`` importers; the flow/domain/<adapter> surface stays api-free, the
+reversibility ideal), registers each configured connector as a C0 ``MessageDeliverer``, and
+runs every configured inbound transport concurrently — Telegram (long-poll / webhook),
+Discord (the gateway WebSocket), Slack (socket mode / HTTP events) — plus the periodic idle
+sweep. A platform is wired iff its bot token is configured (C3 multi-connector; v1 single bot
+per platform — D-C3-X-v1-reach).
 
-Deploy seam: the heavy :class:`RuntimeFactory` (embedder / tier-registry / model
-backends) is built here from the live environment and is exercised by the live
-operator pass, not CI (the same posture as api's own ``@external`` turn tests). The
-testable wiring (flow, routing, render, linking, the connector, the persona-name
-lister) is unit + integration covered.
+Deploy seam: the heavy :class:`RuntimeFactory` (embedder / tier-registry / model backends) and
+the live transport loops are built/run here from the live environment and are exercised by the
+operator pass, not CI (the same posture as api's own ``@external`` turn tests). The testable
+wiring (flows, routing, render, linking, connectors, the persona-name lister, the multi-
+connector delivery router) is unit + integration covered.
 """
 
 from __future__ import annotations
@@ -34,7 +36,10 @@ from persona_api.services import persona_service
 from persona_api.services.runtime_factory import RuntimeFactory
 from persona_api.services.turn_log_writer import PostgresTurnLogWriter
 from persona_runtime.tier import tier_registry_from_env
+from websockets.asyncio.client import connect as ws_connect
 
+from persona_connectors import discord as discord_adapter
+from persona_connectors import slack as slack_adapter
 from persona_connectors.composition import (
     ConnectorComposition,
     build_delivery_router,
@@ -47,7 +52,9 @@ from persona_connectors.domain.resolution import InboundIdentityResolver
 from persona_connectors.errors import ConnectorError
 from persona_connectors.infra import PostgresConversationStateStore, PostgresLinkStore
 from persona_connectors.telegram import (
-    InboundFlow,
+    InboundFlow as TelegramInboundFlow,
+)
+from persona_connectors.telegram import (
     TelegramClient,
     TelegramConnector,
     TelegramLinkingService,
@@ -56,10 +63,19 @@ from persona_connectors.telegram import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+
+    from fastapi import FastAPI
+    from persona.delivery import MessageDeliverer
+    from pydantic import SecretStr
     from sqlalchemy.engine import Engine
 
-_log = get_logger("connectors.telegram")
+    from persona_connectors.domain.conversation_model import ConversationStateStore
+    from persona_connectors.domain.flow import TurnRequest
+
+_log = get_logger("connectors.service")
 _IDLE_SWEEP_INTERVAL_SECONDS = 300  # run the lazy-expiry backstop every 5 minutes
+_HTTP_PORT = 8080  # the single HTTP-serving transport's port (webhook / Slack events)
 
 
 def _build_runtime_factory(api_config: APIConfig, rls_engine: Engine) -> RuntimeFactory:
@@ -88,17 +104,6 @@ def _build_runtime_factory(api_config: APIConfig, rls_engine: Engine) -> Runtime
     )
 
 
-async def _resolve_bot_username(config: ConnectorConfig, client: TelegramClient) -> str:
-    """The bot @username for deep links — from config, else ``getMe`` at startup."""
-    if config.telegram_bot_username:
-        return config.telegram_bot_username
-    me = await client.get_me()
-    username = me.get("username")
-    if not isinstance(username, str) or not username:
-        raise ConnectorError("could not resolve the bot username via getMe")
-    return username
-
-
 async def _run_idle_sweep(store: PostgresConversationStateStore, idle_after: timedelta) -> None:
     """Periodically end genuinely-idle conversations (the lazy-expiry backstop, §3)."""
     while True:
@@ -111,47 +116,38 @@ async def _run_idle_sweep(store: PostgresConversationStateStore, idle_after: tim
             _log.warning("idle sweep failed: {error}", error=str(exc))
 
 
-async def _amain() -> None:
-    config = ConnectorConfig()
-    api_config = APIConfig()
-    if config.telegram_bot_token is None:
-        raise ConnectorError("PERSONA_CONNECTORS_TELEGRAM_BOT_TOKEN is required to run the service")
-
-    composition = ConnectorComposition(config)
-    rls_engine = composition.make_engine()
-    dispatch_engine = composition.make_dispatch_engine()
-
-    # The reused api runtime + the injected flow callables (owner-scoped).
-    runtime_factory = _build_runtime_factory(api_config, rls_engine)
-    run_turn = build_reply_runner(
-        runtime_factory=runtime_factory, rls_engine=rls_engine, owner_scope=composition.owner_scope
+async def _serve_app(app: FastAPI, *, port: int) -> None:
+    """Serve an ASGI app on ``port`` (the HTTP transport runner — webhook / Slack events)."""
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")  # noqa: S104 — container-bound
     )
-    list_persona_names = build_persona_name_lister(
-        rls_engine=rls_engine, owner_scope=composition.owner_scope
-    )
+    await server.serve()
 
-    # The Telegram I/O + the C1 stores.
-    http = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
-    client = TelegramClient(
-        bot_token=config.telegram_bot_token,
-        http=http,
-        api_base_url=config.telegram_api_base_url,
-    )
-    bot_username = await _resolve_bot_username(config, client)
-    link_store = PostgresLinkStore(rls_engine=rls_engine, dispatch_engine=dispatch_engine)
-    linking_service = LinkingService(link_store)
-    resolver = InboundIdentityResolver(linking_service)
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+async def _setup_telegram(
+    *,
+    config: ConnectorConfig,
+    token: SecretStr,
+    http: httpx.AsyncClient,
+    linking_service: LinkingService,
+    resolver: InboundIdentityResolver,
+    conversation_store: ConversationStateStore,
+    list_persona_names: Callable[[str], Mapping[str, Sequence[str]]],
+    run_turn: Callable[[TurnRequest], Awaitable[str]],
+    owner_scope: Callable[[str], contextlib.AbstractContextManager[None]],
+) -> tuple[MessageDeliverer, Coroutine[object, object, None]]:
+    """Assemble the Telegram adapter → (deliverer, inbound-transport runner)."""
+    client = TelegramClient(bot_token=token, http=http, api_base_url=config.telegram_api_base_url)
+    bot_username = config.telegram_bot_username or await _telegram_username(client)
     telegram_linking = TelegramLinkingService(linking=linking_service, bot_username=bot_username)
-    conversation_store = PostgresConversationStateStore(
-        rls_engine=rls_engine, dispatch_engine=dispatch_engine
-    )
     connector = TelegramConnector(
-        client=client, conversation_store=conversation_store, owner_scope=composition.owner_scope
+        client=client, conversation_store=conversation_store, owner_scope=owner_scope
     )
-    # Register the connector as C0's MessageDeliverer (criterion 8 — originated path).
-    build_delivery_router(telegram_deliverer=connector, rls_engine=rls_engine)
-
-    flow = InboundFlow(
+    flow = TelegramInboundFlow(
         resolver=resolver,
         linking=telegram_linking,
         conversation_store=conversation_store,
@@ -159,56 +155,238 @@ async def _amain() -> None:
         client=client,
         list_persona_names=list_persona_names,
         run_turn=run_turn,
-        now=lambda: datetime.now(UTC),
+        now=_now,
+    )
+    if config.telegram_transport == "webhook":
+        ttl = timedelta(minutes=config.telegram_link_token_ttl_minutes)
+
+        async def issue_deep_link(owner_id: str) -> str:
+            return telegram_linking.issue_deep_link(owner_id=owner_id, now=_now(), ttl=ttl)
+
+        secret = config.telegram_webhook_secret
+        await client.set_webhook(
+            url=config.telegram_webhook_url,
+            secret_token=secret.get_secret_value() if secret is not None else None,
+            allowed_updates=["message"],
+        )
+        app = build_telegram_app(
+            webhook_secret=secret,
+            on_update=flow.handle,
+            issue_deep_link=issue_deep_link,
+            verify_jwt=make_jwt_verifier(config),
+        )
+        return connector, _serve_app(app, port=_HTTP_PORT)
+    await client.delete_webhook()  # ensure no webhook competes with long-poll
+    return connector, run_long_poll(
+        client=client, on_update=flow.handle, timeout=config.telegram_longpoll_timeout_seconds
+    )
+
+
+async def _telegram_username(client: TelegramClient) -> str:
+    me = await client.get_me()
+    username = me.get("username")
+    if not isinstance(username, str) or not username:
+        raise ConnectorError("could not resolve the Telegram bot username via getMe")
+    return username
+
+
+async def _setup_discord(
+    *,
+    config: ConnectorConfig,
+    token: SecretStr,
+    http: httpx.AsyncClient,
+    resolver: InboundIdentityResolver,
+    conversation_store: ConversationStateStore,
+    list_persona_names: Callable[[str], Mapping[str, Sequence[str]]],
+    run_turn: Callable[[TurnRequest], Awaitable[str]],
+    owner_scope: Callable[[str], contextlib.AbstractContextManager[None]],
+) -> tuple[MessageDeliverer, Coroutine[object, object, None]]:
+    """Assemble the Discord adapter → (deliverer, gateway runner)."""
+    client = discord_adapter.DiscordClient(
+        bot_token=token, http=http, api_base_url=config.discord_api_base_url
+    )
+    me = await client.get_current_user()
+    bot_user_id = me.get("id")
+    if not isinstance(bot_user_id, str) or not bot_user_id:
+        raise ConnectorError("could not resolve the Discord bot user id via /users/@me")
+    connector = discord_adapter.DiscordConnector(
+        client=client, conversation_store=conversation_store, owner_scope=owner_scope
+    )
+    flow = discord_adapter.InboundFlow(
+        resolver=resolver,
+        conversation_store=conversation_store,
+        connector=connector,
+        client=client,
+        list_persona_names=list_persona_names,
+        run_turn=run_turn,
+        now=_now,
+        bot_user_id=bot_user_id,
+    )
+    gateway = discord_adapter.DiscordGateway(
+        token=token,
+        on_event=flow.handle,
+        connect=_gateway_connect,
+        gateway_url=config.discord_gateway_url,
+    )
+    return connector, gateway.run()
+
+
+async def _setup_slack(
+    *,
+    config: ConnectorConfig,
+    token: SecretStr,
+    http: httpx.AsyncClient,
+    resolver: InboundIdentityResolver,
+    conversation_store: ConversationStateStore,
+    list_persona_names: Callable[[str], Mapping[str, Sequence[str]]],
+    run_turn: Callable[[TurnRequest], Awaitable[str]],
+    owner_scope: Callable[[str], contextlib.AbstractContextManager[None]],
+) -> tuple[MessageDeliverer, Coroutine[object, object, None]]:
+    """Assemble the Slack adapter → (deliverer, socket-mode / HTTP-events runner)."""
+    client = slack_adapter.SlackClient(
+        bot_token=token, http=http, api_base_url=config.slack_api_base_url
+    )
+    auth = await client.auth_test()
+    bot_user_id = auth.get("user_id")
+    if not isinstance(bot_user_id, str) or not bot_user_id:
+        raise ConnectorError("could not resolve the Slack bot user id via auth.test")
+    connector = slack_adapter.SlackConnector(
+        client=client, conversation_store=conversation_store, owner_scope=owner_scope
+    )
+    flow = slack_adapter.InboundFlow(
+        resolver=resolver,
+        conversation_store=conversation_store,
+        connector=connector,
+        client=client,
+        list_persona_names=list_persona_names,
+        run_turn=run_turn,
+        now=_now,
+        bot_user_id=bot_user_id,
+    )
+    if config.slack_transport == "socket":
+        app_token = config.slack_app_token
+        if app_token is None:
+            raise ConnectorError("PERSONA_CONNECTORS_SLACK_APP_TOKEN is required for socket mode")
+        socket = slack_adapter.SlackSocketClient(
+            app_token=app_token,
+            http=http,
+            on_event=flow.handle,
+            connect=_socket_connect,
+            api_base_url=config.slack_api_base_url,
+        )
+        return connector, socket.run()
+    events_app = slack_adapter.build_events_app(
+        signing_secret=config.slack_signing_secret, on_event=flow.handle, now=_now
+    )
+    return connector, _serve_app(events_app, port=_HTTP_PORT)
+
+
+async def _gateway_connect(url: str) -> discord_adapter.GatewayConnection:
+    """Open a Discord gateway WebSocket (the injected connect factory).
+
+    The ``websockets`` ``ClientConnection`` satisfies the ``GatewayConnection`` protocol
+    structurally (async ``send``/``recv``/``close``).
+    """
+    return await ws_connect(url)
+
+
+async def _socket_connect(url: str) -> slack_adapter.SlackSocketConnection:
+    """Open a Slack socket-mode WebSocket (the injected connect factory).
+
+    The ``websockets`` ``ClientConnection`` satisfies ``SlackSocketConnection`` structurally.
+    """
+    return await ws_connect(url)
+
+
+async def _amain() -> None:
+    config = ConnectorConfig()
+    api_config = APIConfig()
+    composition = ConnectorComposition(config)
+    rls_engine = composition.make_engine()
+    dispatch_engine = composition.make_dispatch_engine()
+
+    # The reused api runtime + the injected flow callables (owner-scoped) — built once,
+    # shared by every adapter.
+    runtime_factory = _build_runtime_factory(api_config, rls_engine)
+    run_turn = build_reply_runner(
+        runtime_factory=runtime_factory, rls_engine=rls_engine, owner_scope=composition.owner_scope
+    )
+    list_persona_names = build_persona_name_lister(
+        rls_engine=rls_engine, owner_scope=composition.owner_scope
+    )
+    link_store = PostgresLinkStore(rls_engine=rls_engine, dispatch_engine=dispatch_engine)
+    linking_service = LinkingService(link_store)
+    resolver = InboundIdentityResolver(linking_service)
+    conversation_store = PostgresConversationStateStore(
+        rls_engine=rls_engine, dispatch_engine=dispatch_engine
+    )
+    http = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+
+    deliverers: dict[str, MessageDeliverer] = {}
+    runners: list[Coroutine[object, object, None]] = []
+
+    if config.telegram_bot_token is not None:
+        connector, runner = await _setup_telegram(
+            config=config,
+            token=config.telegram_bot_token,
+            http=http,
+            linking_service=linking_service,
+            resolver=resolver,
+            conversation_store=conversation_store,
+            list_persona_names=list_persona_names,
+            run_turn=run_turn,
+            owner_scope=composition.owner_scope,
+        )
+        deliverers["telegram"] = connector
+        runners.append(runner)
+    if config.discord_bot_token is not None:
+        connector, runner = await _setup_discord(
+            config=config,
+            token=config.discord_bot_token,
+            http=http,
+            resolver=resolver,
+            conversation_store=conversation_store,
+            list_persona_names=list_persona_names,
+            run_turn=run_turn,
+            owner_scope=composition.owner_scope,
+        )
+        deliverers["discord"] = connector
+        runners.append(runner)
+    if config.slack_bot_token is not None:
+        connector, runner = await _setup_slack(
+            config=config,
+            token=config.slack_bot_token,
+            http=http,
+            resolver=resolver,
+            conversation_store=conversation_store,
+            list_persona_names=list_persona_names,
+            run_turn=run_turn,
+            owner_scope=composition.owner_scope,
+        )
+        deliverers["slack"] = connector
+        runners.append(runner)
+
+    if not deliverers:
+        raise ConnectorError(
+            "no connector configured — set at least one platform's bot token "
+            "(PERSONA_CONNECTORS_{TELEGRAM,DISCORD,SLACK}_BOT_TOKEN)"
+        )
+
+    # Register every configured connector as a C0 MessageDeliverer (criterion 6 / 8).
+    build_delivery_router(
+        deliverers=deliverers, rls_engine=rls_engine, home_channel=next(iter(deliverers))
     )
 
     idle_after = timedelta(minutes=config.idle_timeout_minutes)
     sweep = asyncio.create_task(_run_idle_sweep(conversation_store, idle_after))
+    _log.info("connector service starting for: {platforms}", platforms=", ".join(deliverers))
     try:
-        if config.telegram_transport == "webhook":
-            await _serve_webhook(config, client, flow, telegram_linking)
-        else:
-            await client.delete_webhook()  # ensure no webhook competes with long-poll
-            _log.info("starting Telegram long-poll as @{username}", username=bot_username)
-            await run_long_poll(
-                client=client,
-                on_update=flow.handle,
-                timeout=config.telegram_longpoll_timeout_seconds,
-            )
+        await asyncio.gather(*runners)
     finally:
         sweep.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sweep
         await http.aclose()
-
-
-async def _serve_webhook(
-    config: ConnectorConfig,
-    client: TelegramClient,
-    flow: InboundFlow,
-    telegram_linking: TelegramLinkingService,
-) -> None:
-    """Register the webhook (with the secret token, D-C2-2) + serve the ASGI app."""
-    ttl = timedelta(minutes=config.telegram_link_token_ttl_minutes)
-
-    async def issue_deep_link(owner_id: str) -> str:
-        return telegram_linking.issue_deep_link(owner_id=owner_id, now=datetime.now(UTC), ttl=ttl)
-
-    secret = config.telegram_webhook_secret
-    await client.set_webhook(
-        url=config.telegram_webhook_url,
-        secret_token=secret.get_secret_value() if secret is not None else None,
-        allowed_updates=["message"],
-    )
-    app = build_telegram_app(
-        webhook_secret=secret,
-        on_update=flow.handle,
-        issue_deep_link=issue_deep_link,
-        verify_jwt=make_jwt_verifier(config),
-    )
-    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="info"))  # noqa: S104 — container-bound service
-    _log.info("starting Telegram webhook server")
-    await server.serve()
 
 
 def main() -> None:
