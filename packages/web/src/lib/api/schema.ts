@@ -677,7 +677,10 @@ export interface paths {
     };
     /**
      * List Mcp Catalog
-     * @description List the built-in MCP servers (spec 30 T11) for the capability-management UI.
+     * @description List the MCP catalog (builtin floor + Docker mirror; spec 30 T11 + N1).
+     *
+     *     The mirror's display metadata + credential schema ride additive fields; the
+     *     secret schema is display-only (no value, D-N1-5).
      */
     get: operations["list_mcp_catalog_v1_mcp_catalog_get"];
     put?: never;
@@ -1564,12 +1567,41 @@ export interface components {
       | "vision_handoff_required"
       | "vision_handoff";
     /**
+     * MCPCatalogSecret
+     * @description A credential an MCP server requires — DISPLAY-ONLY schema (Spec N1, D-N1-5).
+     *
+     *     Carries **no value field by construction**: the catalog API exposes WHICH secret a
+     *     server needs (so the apps UX can render the setup form), never a secret value. The
+     *     credential isolation property (user → secret store → Gateway, never an LLM turn) is
+     *     upheld at the API boundary, not just internally.
+     */
+    MCPCatalogSecret: {
+      /** Name */
+      name: string;
+      /** Env */
+      env: string;
+      /**
+       * Example
+       * @default
+       */
+      example: string;
+      /**
+       * Description
+       * @default
+       */
+      description: string;
+    };
+    /**
      * MCPCatalogServer
-     * @description A built-in MCP server in the management catalog (spec 30 T11).
+     * @description An MCP server in the management catalog (spec 30 T11 + N1).
      *
      *     A persona enables a server by adding ``mcp:<name>`` to its ``tools``
      *     allow-list. ``provider`` is the recommender tag (``mcp:builtin`` /
      *     ``mcp:optional``); ``required_env`` lists env vars an operator must set.
+     *
+     *     The N1 fields below carry the Docker catalog-mirror display metadata the apps UX
+     *     (N3) renders. They are **additive-with-default** so the existing five-field
+     *     contract is unchanged — a client written against spec 30 sees no break.
      */
     MCPCatalogServer: {
       /** Name */
@@ -1582,6 +1614,50 @@ export interface components {
       default_enabled: boolean;
       /** Required Env */
       required_env?: string[];
+      /**
+       * Display Name
+       * @default
+       */
+      display_name: string;
+      /**
+       * Icon Url
+       * @default
+       */
+      icon_url: string;
+      /**
+       * Image
+       * @default
+       */
+      image: string;
+      /**
+       * Server Type
+       * @default builtin
+       */
+      server_type: string;
+      /**
+       * Risk
+       * @default low
+       */
+      risk: string;
+      /**
+       * Source Project
+       * @default
+       */
+      source_project: string;
+      /**
+       * Source Commit
+       * @default
+       */
+      source_commit: string;
+      /**
+       * Signed
+       * @default false
+       */
+      signed: boolean;
+      /** Allow Hosts */
+      allow_hosts?: string[];
+      /** Secrets */
+      secrets?: components["schemas"]["MCPCatalogSecret"][];
     };
     /**
      * MCPServerDetail
@@ -1710,6 +1786,8 @@ export interface components {
       consent_to_auto_dispatch?: boolean | null;
       /** Consent Updated At */
       consent_updated_at?: string | null;
+      /** Unavailable Mcp Servers */
+      unavailable_mcp_servers?: string[];
       /**
        * Created At
        * Format: date-time

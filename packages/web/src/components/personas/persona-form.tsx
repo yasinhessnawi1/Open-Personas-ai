@@ -24,20 +24,46 @@ import {
 import { SAFETY_CONSTRAINT } from "@/lib/persona-safety";
 import { cn } from "@/lib/utils";
 import { voiceLanguageWarning } from "@/lib/voice/language-support";
+import { AppsChooser } from "./apps-chooser";
 import { CollapsibleSection } from "./collapsible-section";
 import { RoutingSection } from "./routing-section";
 
 // Spec 30 T11 — a built-in MCP server in the capability-management catalog.
 // A persona enables a server by carrying `mcp:<name>` in its `tools` list.
+//
+// N3 (MCP-as-apps): the entry now also carries the Docker catalog-mirror display
+// metadata + trust labels + the display-only credential schema the apps UX renders
+// (icon/friendly-name/description for the chooser; signed/source/risk/allowHosts for
+// the legible-not-opaque trust disclosure; secrets[] for the read-honest needs-setup
+// affordance — N3-D-6/8/10). All are READ-only inputs; N3 never writes a secret
+// (the secret-write path is N4's, N3-D-1). Every field is additive-with-default so a
+// row from the old five-field contract still maps cleanly.
+export interface McpCatalogSecret {
+  name: string;
+  env: string;
+  example: string;
+  description: string;
+}
+
 export interface McpCatalogEntry {
   name: string;
   description: string;
   provider: string;
   defaultEnabled: boolean;
   requiredEnv: string[];
+  // -- N3: Docker catalog-mirror display metadata + trust labels + secret schema --
+  displayName: string;
+  iconUrl: string;
+  image: string;
+  serverType: string;
+  risk: string;
+  sourceProject: string;
+  sourceCommit: string;
+  signed: boolean;
+  allowHosts: string[];
+  secrets: McpCatalogSecret[];
 }
 
-const MCP_PREFIX = "mcp:";
 // Spec 30 — the accuracy-preserving combined cap across tools + skills + MCP
 // (the tool-count-cliff, Spec 26 D-26): communicated, not hard-enforced.
 const CAPABILITY_SOFT_CAP = 10;
@@ -60,6 +86,7 @@ export function PersonaForm({
   mcpServers?: McpCatalogEntry[];
 }) {
   const t = useTranslations("author");
+  const tApps = useTranslations("apps");
   const identity = readIdentity(doc);
   // The persona's current voice id (identity.voice.voice_id), if set — V6 C2.
   const identityRecord = doc.identity as Record<string, unknown> | undefined;
@@ -350,13 +377,14 @@ export function PersonaForm({
             />
           </Subsection>
         </div>
-        <Subsection title={t("mcpTitle")}>
-          <McpToggle
-            servers={mcpServers}
+        <Subsection title={tApps("title")}>
+          {/* N3: the apps experience — the MCP catalog reframed as "apps" with a
+              searchable chooser + per-app detail. Per-persona enablement stays
+              the `mcp:<name>` tools-list mechanism (same onChange path the old
+              McpToggle used). */}
+          <AppsChooser
+            apps={mcpServers}
             declaredTools={declaredTools}
-            empty={t("noMcp")}
-            defaultLabel={t("mcpDefaultBadge")}
-            requiresLabel={(env) => t("mcpRequiresEnv", { env })}
             onChange={(list) => onChange(writeStringList(doc, "tools", list))}
           />
         </Subsection>
@@ -382,73 +410,6 @@ function Subsection({
     <div className="flex flex-col gap-2">
       <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
       {children}
-    </div>
-  );
-}
-
-// Spec 30 T11 — toggle built-in MCP servers on/off as `mcp:<name>` entries in
-// the persona's `tools` list, composing with the tools ChipToggle (each writes
-// the full tools list, flipping only its own kind of entry). Each chip shows the
-// provider tag, a `default` badge, and any required env.
-function McpToggle({
-  servers,
-  declaredTools,
-  empty,
-  defaultLabel,
-  requiresLabel,
-  onChange,
-}: {
-  servers: McpCatalogEntry[];
-  declaredTools: string[];
-  empty: string;
-  defaultLabel: string;
-  requiresLabel: (env: string) => string;
-  onChange: (tools: string[]) => void;
-}) {
-  if (servers.length === 0) {
-    return <p className="text-sm text-muted-foreground">{empty}</p>;
-  }
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {servers.map((s) => {
-        const entry = `${MCP_PREFIX}${s.name}`;
-        const on = declaredTools.includes(entry);
-        return (
-          <button
-            key={s.name}
-            type="button"
-            title={s.description}
-            aria-pressed={on}
-            onClick={() =>
-              onChange(
-                on
-                  ? declaredTools.filter((x) => x !== entry)
-                  : [...declaredTools, entry],
-              )
-            }
-            className={cn(
-              "flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-xs transition-colors",
-              on
-                ? "border-primary/40 bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:border-primary/30",
-            )}
-            data-slot="mcp-chip"
-            data-on={on}
-          >
-            <span>{s.name}</span>
-            {s.defaultEnabled ? (
-              <span className="type-caption rounded-sm bg-muted px-1">
-                {defaultLabel}
-              </span>
-            ) : null}
-            {s.requiredEnv.length > 0 ? (
-              <span className="type-caption text-muted-foreground">
-                {requiresLabel(s.requiredEnv.join(", "))}
-              </span>
-            ) : null}
-          </button>
-        );
-      })}
     </div>
   );
 }

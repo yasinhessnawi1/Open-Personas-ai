@@ -725,5 +725,59 @@
     "unreadLabel": "{count} unread",
     "deleted": "{name} deleted",
     "duplicated": "{name} duplicated"
+  },
+  "apps": {
+    "title": "Apps",
+    "subtitle": "Apps your persona can use — each one a real integration running real code.",
+    "searchPlaceholder": "Search apps",
+    "empty": "No apps available.",
+    "searchEmpty": "No apps match “{query}”.",
+    "open": "Open {name}",
+    "back": "All apps",
+    "providerBuiltin": "Built-in",
+    "providerOptional": "Optional",
+    "defaultBadge": "default",
+    "capability": "Adds tools your persona can use — available once enabled.",
+    "toolsHeading": "What this app adds",
+    "state": {
+      "available": "Available",
+      "needsSetup": "Needs setup",
+      "enabled": "Enabled",
+      "unavailable": "Unavailable"
+    },
+    "enable": {
+      "enable": "Enable for this persona",
+      "disable": "Disable for this persona",
+      "enabledHint": "This app is on for this persona.",
+      "availableHint": "Turn this app on to give the persona its tools."
+    },
+    "needsSetup": {
+      "heading": "Needs a credential",
+      "summary": "This app declares it needs a credential to run.",
+      "managedNote": "Configured at the deployment level — set by your operator, not here.",
+      "credentialLabel": "Needs {env}",
+      "credentialNeedsLabel": "Needs {env} — configured at the deployment level."
+    },
+    "unavailable": {
+      "heading": "No longer available",
+      "summary": "This app was enabled for the persona but has been removed from the catalog.",
+      "tombstone": "{name} — no longer available (removed from the catalog).",
+      "note": "The persona keeps running; this capability is simply gone."
+    },
+    "trust": {
+      "heading": "What this app is",
+      "honest": "An app is a real integration that runs real code on the persona's behalf.",
+      "signed": "Signed image",
+      "unsigned": "Unsigned image",
+      "riskLabel": "Risk: {risk}",
+      "riskLow": "Low",
+      "riskMedium": "Medium",
+      "riskHigh": "High",
+      "image": "Runs {image}",
+      "source": "From {project}",
+      "sourceCommit": "From {project} @ {commit}",
+      "allowHosts": "Talks to: {hosts}",
+      "allowHostsNone": "No outbound hosts declared."
+    }
   }
 }

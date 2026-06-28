@@ -8,6 +8,7 @@ import { MemoryStores } from "@/components/persona/memory-stores";
 import { PersonaDetailManageMenu } from "@/components/persona/persona-detail-manage-menu";
 import { PersonaIdentityHeaderLive } from "@/components/persona/persona-identity-header-live";
 import { StartRunForm } from "@/components/personas/start-run-form";
+import { UnavailableApps } from "@/components/personas/unavailable-apps";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -242,6 +243,12 @@ export default async function PersonaDetailPage({
               )}
             </div>
           </Card>
+
+          {/* N3 (Task 5): graceful tombstones for apps this persona enabled that
+              were removed from the catalog (PersonaDetail.unavailable_mcp_servers,
+              N2-D-4 surface c). Informational only — NO re-add action (N3-D-9).
+              Renders nothing when the list is empty. */}
+          <UnavailableApps names={detail.unavailable_mcp_servers ?? []} />
         </aside>
       </div>
     </PageBody>

@@ -11,6 +11,62 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### MCP-as-apps — the built-in MCP catalog, reframed as "apps" (2026-06-28)
+
+> Close-out of `mcp-as-apps`. Users don't think "MCP servers and tools" — they
+> think *"my persona has apps it can use."* This reframes the built-in MCP catalog
+> in the web UI from a flat tool-toggle list into a legible **apps experience**: a
+> **searchable directory of app cards → per-app detail**, decoupled from the raw
+> tools view, with each app's friendly name, description, and trust facts surfaced
+> honestly (an app *is* a real integration running real code). Per-persona
+> enablement is unchanged — still the `mcp:<name>` entry in the persona's `tools`
+> allow-list (now reframed as a see-then-grant toggle inside each app's detail).
+> **Pure frontend** over the existing catalog data; no migration, no new backend,
+> no new dependency.
+>
+> Three intentional, decision-backed scope lines (not gaps): the credential
+> **form + secret-write** is N4's (the secret-write backend is deliberately
+> deferred — connect-only has no per-user secret path); **nested tool NAMES** are
+> not shown because the catalog carries no per-server tool list or count at render
+> time (verified — tool names exist only at live connect), so an app shows one
+> honest capability line, never a fabricated list; **remote `icon_url`** stays a
+> deferred opt-in (no `remotePatterns` configured — a local glyph avoids leaking
+> the user's IP/referrer to arbitrary hosts).
+
+#### Added
+- **Apps chooser** — the MCP catalog as a searchable directory of app cards
+  (friendly name + description + a local glyph icon), each expanding to a per-app
+  detail. Decoupled from the raw tools view; reuses the existing card / collapsible
+  / badge / input primitives (no new component library).
+- **Four app states** — `available` / `needs-setup` / `enabled` / `unavailable`,
+  from a pure, unit-tested derivation over the catalog entry + the persona's
+  `tools` + `unavailable_mcp_servers` (precedence `unavailable > enabled >
+  needs-setup > available`).
+- **Read-honest needs-setup disclosure** — a credential-declaring app shows what
+  it needs (from the catalog's display-only credential schema) as **informational
+  text** ("needs `GITHUB_TOKEN` — configured at the deployment level"), naming who
+  sets it; never a form, never a disabled field, never "your credential is missing"
+  (the web has no credential read-back).
+- **Trust disclosure (legible-not-opaque)** — a compact signal on the card
+  (signed mark + coarse risk) and full provenance in the detail (image / source
+  project + commit / egress allow-hosts), so a user can see an app is real code
+  reaching real hosts before granting it.
+- **Unavailable-app tombstones** — on the persona detail page, apps the persona
+  enabled that were removed from the catalog (`unavailable_mcp_servers`) render as
+  graceful, informational tombstones ("removed from the catalog — the persona
+  keeps running"); no re-add action (the server is gone).
+- **`apps.*` i18n namespace** — the canonical "apps" copy; no raw "MCP server"
+  jargon in the primary surface.
+
+#### Changed
+- The persona form's MCP section is now the **apps chooser** (reframed presentation
+  of the former flat `McpToggle` chip row); the underlying `mcp:<name>` tools-list
+  enablement mechanism is unchanged. The enable toggle lives in each app's detail
+  panel — an **intentional see-then-grant flow** (you see an app's provenance before
+  granting it real-code capability), not a limitation.
+- Regenerated the OpenAPI web client to surface the catalog's already-shipped N1
+  display/trust/credential-schema fields + `PersonaDetail.unavailable_mcp_servers`.
+
 ### Persona activity events — live "using X…" states + traceability (2026-06-28)
 
 > Close-out of `persona-activity-events`. Emits a structured **activity-start** event the

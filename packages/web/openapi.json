@@ -1300,7 +1300,7 @@
       "get": {
         "tags": ["catalog"],
         "summary": "List Mcp Catalog",
-        "description": "List the built-in MCP servers (spec 30 T11) for the capability-management UI.",
+        "description": "List the MCP catalog (builtin floor + Docker mirror; spec 30 T11 + N1).\n\nThe mirror's display metadata + credential schema ride additive fields; the\nsecret schema is display-only (no value, D-N1-5).",
         "operationId": "list_mcp_catalog_v1_mcp_catalog_get",
         "responses": {
           "200": {
@@ -2859,6 +2859,33 @@
         "title": "IngestStrategy",
         "description": "The ingestion paths a document can take.\n\n``VISION_HANDOFF_REQUIRED`` is what :func:`ingest_document` returns when\nthe parser sets ``needs_vision_handoff=True`` \u2014 the caller (T13's\n:func:`persona_api.services.document_service.upload`) detects this and\nperforms the actual rasterisation + ImageContent creation (T21). The\ncaller-side outcome ``VISION_HANDOFF`` records the completed handoff\non the persisted :class:`DocumentRef`."
       },
+      "MCPCatalogSecret": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "env": {
+            "type": "string",
+            "title": "Env"
+          },
+          "example": {
+            "type": "string",
+            "title": "Example",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["name", "env"],
+        "title": "MCPCatalogSecret",
+        "description": "A credential an MCP server requires \u2014 DISPLAY-ONLY schema (Spec N1, D-N1-5).\n\nCarries **no value field by construction**: the catalog API exposes WHICH secret a\nserver needs (so the apps UX can render the setup form), never a secret value. The\ncredential isolation property (user \u2192 secret store \u2192 Gateway, never an LLM turn) is\nupheld at the API boundary, not just internally."
+      },
       "MCPCatalogServer": {
         "properties": {
           "name": {
@@ -2883,13 +2910,67 @@
             },
             "type": "array",
             "title": "Required Env"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "default": ""
+          },
+          "icon_url": {
+            "type": "string",
+            "title": "Icon Url",
+            "default": ""
+          },
+          "image": {
+            "type": "string",
+            "title": "Image",
+            "default": ""
+          },
+          "server_type": {
+            "type": "string",
+            "title": "Server Type",
+            "default": "builtin"
+          },
+          "risk": {
+            "type": "string",
+            "title": "Risk",
+            "default": "low"
+          },
+          "source_project": {
+            "type": "string",
+            "title": "Source Project",
+            "default": ""
+          },
+          "source_commit": {
+            "type": "string",
+            "title": "Source Commit",
+            "default": ""
+          },
+          "signed": {
+            "type": "boolean",
+            "title": "Signed",
+            "default": false
+          },
+          "allow_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allow Hosts"
+          },
+          "secrets": {
+            "items": {
+              "$ref": "#/components/schemas/MCPCatalogSecret"
+            },
+            "type": "array",
+            "title": "Secrets"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": ["name", "description", "provider", "default_enabled"],
         "title": "MCPCatalogServer",
-        "description": "A built-in MCP server in the management catalog (spec 30 T11).\n\nA persona enables a server by adding ``mcp:<name>`` to its ``tools``\nallow-list. ``provider`` is the recommender tag (``mcp:builtin`` /\n``mcp:optional``); ``required_env`` lists env vars an operator must set."
+        "description": "An MCP server in the management catalog (spec 30 T11 + N1).\n\nA persona enables a server by adding ``mcp:<name>`` to its ``tools``\nallow-list. ``provider`` is the recommender tag (``mcp:builtin`` /\n``mcp:optional``); ``required_env`` lists env vars an operator must set.\n\nThe N1 fields below carry the Docker catalog-mirror display metadata the apps UX\n(N3) renders. They are **additive-with-default** so the existing five-field\ncontract is unchanged \u2014 a client written against spec 30 sees no break."
       },
       "MCPServerDetail": {
         "properties": {
@@ -3114,6 +3195,13 @@
               }
             ],
             "title": "Consent Updated At"
+          },
+          "unavailable_mcp_servers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unavailable Mcp Servers"
           },
           "created_at": {
             "type": "string",
