@@ -368,7 +368,7 @@ class TestTrustAndProvenance:
         assert spec.trust is SkillTrust.BUILTIN
         assert spec.provenance is not None
         assert spec.provenance.content_hash != "forged"
-        assert spec.provenance.content_hash == hashlib.sha256(
-            spec.content.encode("utf-8")
-        ).hexdigest()
+        assert (
+            spec.provenance.content_hash == hashlib.sha256(spec.content.encode("utf-8")).hexdigest()
+        )
         assert spec.provenance.source == "builtin"
