@@ -29,6 +29,19 @@ from pathlib import Path
 from persona.errors import SkillManifestError
 from persona.schema.skills import SkillSpec
 from persona.skills._tokens import count_tokens
+from persona.skills.consent import (
+    DenyUnvettedConsent,
+    SkillConsentPort,
+    injection_consent_state,
+    skill_audit_event,
+)
+from persona.skills.guard import (
+    DEFENSE_CLAIM,
+    SUBORDINATION_PREAMBLE,
+    default_nonce,
+    self_framed,
+    subordinate,
+)
 from persona.skills.index import render_skill_index
 from persona.skills.injector import SkillInjector
 from persona.skills.scanner import SkillScanner
@@ -44,12 +57,21 @@ BUILTIN_ROOT: Path = Path(__file__).parent / "builtin"
 
 __all__ = [
     "BUILTIN_ROOT",
+    "DEFENSE_CLAIM",
+    "SUBORDINATION_PREAMBLE",
+    "DenyUnvettedConsent",
+    "SkillConsentPort",
     "SkillInjector",
     "SkillManifestError",
     "SkillScanner",
     "SkillSpec",
     "collect_skill_supplements",
     "count_tokens",
+    "default_nonce",
+    "injection_consent_state",
     "make_use_skill_tool",
     "render_skill_index",
+    "self_framed",
+    "skill_audit_event",
+    "subordinate",
 ]

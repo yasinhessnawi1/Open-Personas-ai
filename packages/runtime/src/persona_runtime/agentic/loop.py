@@ -39,13 +39,23 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from persona.audit import AuditAction
 from persona.autonomy import policy_for, resolve_autonomy
 from persona.errors import SkillCompositionDepthError, SkillCycleError
 from persona.logging import get_logger
 from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
 from persona.schema.conversation import ConversationMessage
 from persona.schema.tools import ToolResult
-from persona.skills import collect_skill_supplements, count_tokens, render_skill_index
+from persona.skills import (
+    DenyUnvettedConsent,
+    collect_skill_supplements,
+    count_tokens,
+    default_nonce,
+    injection_consent_state,
+    render_skill_index,
+    self_framed,
+    skill_audit_event,
+)
 from persona.skills.composition import AdmissionResult, SkillCompositionState
 from persona.tools import format_tool_result
 
@@ -61,12 +71,13 @@ from persona_runtime.questions import QuestionRegistry
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from persona.audit import AuditLogger
     from persona.backends import ChatBackend, ChatResponse
     from persona.sandbox.result import SandboxFile
     from persona.schema.persona import Persona
     from persona.schema.skills import SkillSpec
     from persona.schema.tools import ToolCall
-    from persona.skills import SkillInjector
+    from persona.skills import SkillConsentPort, SkillInjector
     from persona.stores.protocol import MemoryStore
     from persona.tools import Toolbox
 
@@ -152,6 +163,9 @@ class AgenticLoop:
         max_steps: int = 20,
         force_frontier_tier: bool = False,
         question_author: QuestionAuthor | None = None,
+        nonce_source: Callable[[], str] | None = None,
+        skill_consent: SkillConsentPort | None = None,
+        audit_logger: AuditLogger | None = None,
     ) -> None:
         self._persona = persona
         self._stores = stores
@@ -167,6 +181,13 @@ class AgenticLoop:
         self._injector = skill_injector
         self._scanned_skills = scanned_skills
         self._skills_by_name = {s.name: s for s in scanned_skills}
+        # Spec S1 (S1-D-2): per-injection nonce source for the subordination
+        # guard; defaults to production ``default_nonce`` (tests pin it).
+        self._nonce_source = nonce_source or default_nonce
+        # Spec S1 (S1-D-6/D-7): enable-time consent gate (default DENY-unvetted)
+        # + the optional injection audit sink (``None`` ⇒ no-op).
+        self._skill_consent: SkillConsentPort = skill_consent or DenyUnvettedConsent()
+        self._audit = audit_logger
         self._builder = prompt_builder
         self._router = router  # reserved for chat-style routing; step-tier is _tier_for_step
         self._tiers = tier_registry
@@ -563,6 +584,32 @@ class AgenticLoop:
 
     # ----- use_skill intercept (D-04-10 / D-06-9) --------------------------
 
+    def _emit_skill_audit(self, spec: SkillSpec, action: AuditAction, consent_state: str) -> None:
+        """Emit exactly one skill AuditEvent (S1-D-7); ``None`` sink ⇒ no-op, inert."""
+        if self._audit is None:
+            return
+        try:
+            self._audit.emit(
+                skill_audit_event(
+                    persona_id=self._persona.persona_id or "",
+                    spec=spec,
+                    action=action,
+                    consent_state=consent_state,
+                    timestamp=datetime.now(UTC),
+                )
+            )
+        except Exception:  # noqa: BLE001 — audit must never break the run
+            _logger.warning("skill audit emit failed skill={s}", s=spec.name)
+
+    def _consent_ok(self, spec: SkillSpec) -> bool:
+        """Whether ``spec`` may be injected under the enable-time consent gate (S1-D-6)."""
+        if not spec.trust.requires_consent:
+            return True
+        content_hash = spec.provenance.content_hash if spec.provenance else ""
+        return self._skill_consent.is_enabled(
+            self._persona.persona_id or "", spec.name, content_hash or ""
+        )
+
     async def _maybe_inject_skill(
         self,
         call: ToolCall,
@@ -576,12 +623,27 @@ class AgenticLoop:
         and budget skips append an informative system message instead (the run
         proceeds); the first skill goes through the per-skill injector, a
         composed skill (already shown to fit) is appended verbatim.
+
+        Spec S1 (S1-D-6/D-7): the enable-time consent gate runs FIRST — an
+        above-threshold skill without granted consent is refused (audited
+        ``SKILL_REFUSED``, the run proceeds) and never touches the budget. A
+        successful injection is audited ``SKILL_INJECTED``.
         """
         if call.name != "use_skill" or result.data is None or "skill_name" not in result.data:
             return
         name = str(result.data["skill_name"])
         spec = self._skills_by_name.get(name)
         if spec is None:
+            return
+        if not self._consent_ok(spec):
+            self._emit_skill_audit(spec, AuditAction.SKILL_REFUSED, "refused_no_consent")
+            _logger.info("skill activation refused: no consent skill={s}", s=name)
+            context.append(
+                self._system(
+                    f"Skill '{name}' was not activated: it is an untrusted skill that has "
+                    "not been approved for this persona."
+                )
+            )
             return
         try:
             admission = self._composition.admit(name, content_tokens=spec.content_token_count)
@@ -602,7 +664,19 @@ class AgenticLoop:
         )
         self._composition.record_injected(count_tokens(content))
         self.deferred_input_files.extend(collect_skill_supplements(spec))
-        context.append(self._system(f"Activated skill '{name}':\n{content}"))
+        # Spec S1 (S1-D-2, the headline hole-closer): the agentic loop appends
+        # activated-skill content as a SYSTEM-role message — which would hand raw
+        # skill content system authority ABOVE the subordination. We append it
+        # SELF-FRAMED instead: the authority preamble + the nonce-delimited
+        # envelope ride inline (there is no single governing preamble for an
+        # appended message), so the skill content is explicitly demoted to
+        # advisory-subordinate even while it rides a system message. Without this
+        # the guard is silently bypassed on the agentic path.
+        guarded = self_framed(content, trust=spec.trust, nonce=self._nonce_source())
+        self._emit_skill_audit(
+            spec, AuditAction.SKILL_INJECTED, injection_consent_state(spec.trust)
+        )
+        context.append(self._system(f"Activated skill '{name}'.\n\n{guarded}"))
 
     # ----- dispatch + error recovery (§5.1/§5.2) ---------------------------
 

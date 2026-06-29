@@ -34,13 +34,14 @@ both paths (per spec §S04-3 + D-04-5).
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from persona.errors import SkillManifestError
 from persona.logging import get_logger
-from persona.schema.skills import SkillSpec
+from persona.schema.skills import SkillProvenance, SkillSpec, SkillTrust
 from persona.skills._frontmatter import parse_skill_markdown
 from persona.skills._tokens import count_tokens
 from persona.skills.aliases import resolve_skill_aliases
@@ -149,6 +150,18 @@ class SkillScanner:
                 composes_with=list(md.get("composes_with") or []),
                 output_format=md.get("output_format"),
                 token_budget=md.get("token_budget"),
+                # Spec S1 (S1-D-3): trust + provenance are SOURCE-assigned. The
+                # local filesystem scanner is the ``builtin`` source — we set the
+                # tier explicitly and DELIBERATELY do not read ``trust``/
+                # ``source``/``provenance`` from ``meta``/``md`` (author-controlled
+                # front matter), so a skill cannot self-declare a higher trust.
+                # ``content_hash`` is the real sha256 of the parsed body (S1-D-5),
+                # the re-consent handle — never a front-matter-supplied value.
+                trust=SkillTrust.BUILTIN,
+                provenance=SkillProvenance(
+                    source="builtin",
+                    content_hash=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                ),
             )
         except SkillManifestError as e:
             _logger.warning(

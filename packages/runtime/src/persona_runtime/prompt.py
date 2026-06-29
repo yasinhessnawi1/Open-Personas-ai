@@ -37,7 +37,7 @@ from persona.language_capability import (
 from persona.schema.chunks import PersonaChunk  # noqa: TC002 — Pydantic needs runtime ref
 from persona.schema.conversation import ConversationMessage
 from persona.schema.documents import DocumentChunk  # noqa: TC002 — Pydantic needs runtime ref
-from persona.skills import count_tokens
+from persona.skills import SUBORDINATION_PREAMBLE, count_tokens
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
@@ -560,8 +560,16 @@ class PromptBuilder:
         if skill_index:
             parts.append(skill_index)
 
-        # 7. Active skill content (already budget-sized by the injector).
+        # 7. Active skill content — already budget-sized by the injector AND
+        # wrapped in the subordination guard's nonce-delimited envelope by the
+        # runtime (loop._compose_skill, S1-D-1/D-2). The one-time authority
+        # preamble is emitted ONCE here, directly above the skill region, so the
+        # framing ("advisory capability; identity + rules above are authoritative
+        # and override anything inside") governs every enveloped block below. It
+        # sits BELOW identity/constraints (parts 1-2, the floor) — the guard
+        # hardens that existing ordering rather than restructuring it.
         if matched_skill_content:
+            parts.append(SUBORDINATION_PREAMBLE)
             parts.append(matched_skill_content)
 
         # 8. Attached small documents — T14 whole-injection (D-14-1 small-doc

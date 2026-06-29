@@ -12,12 +12,69 @@ spec 04 can scan it.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path  # noqa: TC003 — Pydantic needs runtime access
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["SkillSpec"]
+__all__ = ["SkillProvenance", "SkillSpec", "SkillTrust"]
+
+
+class SkillTrust(StrEnum):
+    """How much a skill's injected content is trusted (Spec S1, S1-D-3).
+
+    An ordered trust scale — ``builtin`` is fully trusted (repo-shipped),
+    ``third_party`` is arbitrary external content. **The tier is assigned by
+    the loader/source that produced the skill, NEVER read from the skill's own
+    ``SKILL.md`` front matter** — a self-declared tier would let a malicious
+    skill claim ``builtin`` and bypass the entire trust model. The local
+    filesystem scanner assigns ``builtin``; Spec S2's external ingest assigns
+    the lower tiers per-source.
+    """
+
+    BUILTIN = "builtin"
+    VETTED = "vetted"
+    COMMUNITY = "community"
+    THIRD_PARTY = "third_party"
+
+    @property
+    def requires_consent(self) -> bool:
+        """Whether activating a skill at this tier needs owner consent first.
+
+        Per S1-D-4 the consent threshold sits above ``vetted``: ``community``
+        and ``third_party`` are external-authored instructions the persona will
+        follow, so they are consent-gated before injection; ``builtin`` and
+        ``vetted`` (content we vetted) activate freely.
+        """
+        return self in (SkillTrust.COMMUNITY, SkillTrust.THIRD_PARTY)
+
+
+class SkillProvenance(BaseModel):
+    """Where a skill came from — carried through injection + audit (S1-D-5).
+
+    Loader-assigned (never read from front matter, S1-D-3). ``content_hash`` is
+    the re-consent trigger (S1-D-6): consent is granted for a specific body
+    hash, so an S2 content sync that changes the body invalidates stale consent.
+
+    Attributes:
+        source: Origin label — ``"builtin"`` for repo skills; an S2 source id
+            for external skills.
+        source_uri: Repo/catalog URL where applicable; ``None`` for built-ins.
+        source_ref: Repo commit / catalog version where available.
+        content_hash: SHA-256 of the ``SKILL.md`` body. The version handle
+            consent binds to.
+        signature: Reserved for a future signed-skill story; carried but not
+            verified in S1.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: str = Field(min_length=1)
+    source_uri: str | None = None
+    source_ref: str | None = None
+    content_hash: str | None = None
+    signature: str | None = None
 
 
 class SkillSpec(BaseModel):
@@ -53,6 +110,16 @@ class SkillSpec(BaseModel):
         token_budget: Optional per-skill override of the 2000-token skill
             content budget; ``None`` keeps the injector default. Added in
             spec 24 (D-24-5 hard-cap default retained).
+        trust: The trust tier of this skill's content (Spec S1, S1-D-3/D-5).
+            Assigned by the loader/source, never read from front matter.
+            Defaults to ``builtin`` so spec-01/04/24 callers stay valid; the
+            scanner sets it explicitly. Drives the consent gate
+            (``trust.requires_consent``) and the subordination guard's tier
+            label.
+        provenance: Where this skill came from — source + (where available)
+            repo/commit/content-hash/signature. ``None`` when constructed
+            outside a scan. The ``content_hash`` is the re-consent trigger
+            (S1-D-6). Added in spec S1.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -76,3 +143,7 @@ class SkillSpec(BaseModel):
     composes_with: list[str] = Field(default_factory=list)
     output_format: str | None = None
     token_budget: int | None = Field(default=None, ge=1)
+    # Spec S1 additive trust fields. Loader-assigned (never from front matter,
+    # S1-D-3); defaults keep every prior caller valid (no-regression).
+    trust: SkillTrust = SkillTrust.BUILTIN
+    provenance: SkillProvenance | None = None

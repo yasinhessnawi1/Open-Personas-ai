@@ -683,6 +683,11 @@ class RuntimeFactory:
             # K3: the owner-scoped graph-knowledge retrieval (None until graph
             # writes were enabled — additive, zero-graph otherwise).
             graph_retrieval=self._build_graph_retrieval(),
+            # Spec S1 (S1-D-7 / S1-D-X-consent-wiring): the injection audit sink
+            # (same JSONL posture the stores use). Consent defaults to
+            # DENY-unvetted in the loop until Spec S3 wires a real consent store;
+            # every current skill is ``builtin`` so the gate is inert today.
+            audit_logger=JSONLAuditLogger(self._audit_root),
             # K4: the per-category care-text the surfacing slot rides (K4-D-3). Stateless;
             # wired only when the graph is composed, so a zero-graph loop is byte-identical.
             graph_surfacing_guidance=(
@@ -720,6 +725,9 @@ class RuntimeFactory:
             prompt_builder=PromptBuilder(),
             router=Router(),
             tier_registry=self._tier_registry,
+            # Spec S1 (S1-D-7): injection audit sink; consent gate defaults to
+            # DENY-unvetted in the loop (inert today — all skills are builtin).
+            audit_logger=JSONLAuditLogger(self._audit_root),
         )
         loop.deferred_input_files = deferred_holder
         return loop

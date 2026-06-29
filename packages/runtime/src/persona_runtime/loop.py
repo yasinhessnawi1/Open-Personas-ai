@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict
 
+from persona.audit import AuditAction
 from persona.autonomy import policy_for, resolve_autonomy
 from persona.backends.errors import IntelligentRoutingError
 from persona.backends.types import reasoning_as_text
@@ -45,7 +46,16 @@ from persona.logging import get_logger
 from persona.schema.chunks import ChunkProvenance, PersonaChunk, WriteSource, make_chunk_id
 from persona.schema.conversation import ConversationMessage
 from persona.schema.tools import ToolCall, ToolResult, truncated_tool_call_message
-from persona.skills import collect_skill_supplements, count_tokens, render_skill_index
+from persona.skills import (
+    DenyUnvettedConsent,
+    collect_skill_supplements,
+    count_tokens,
+    default_nonce,
+    injection_consent_state,
+    render_skill_index,
+    skill_audit_event,
+    subordinate,
+)
 from persona.skills.composition import AdmissionResult, SkillCompositionState
 from persona.tools import format_tool_result
 
@@ -77,6 +87,7 @@ from persona_runtime.routing import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
 
+    from persona.audit import AuditLogger
     from persona.backends import ChatBackend, StreamChunk, TokenUsage
     from persona.history import ConversationHistoryManager
     from persona.sandbox.result import SandboxFile
@@ -84,7 +95,7 @@ if TYPE_CHECKING:
     from persona.schema.conversation import Conversation
     from persona.schema.persona import Persona
     from persona.schema.skills import SkillSpec
-    from persona.skills import SkillInjector, SkillScanner
+    from persona.skills import SkillConsentPort, SkillInjector, SkillScanner
     from persona.stores.protocol import MemoryStore
     from persona.tools import Toolbox
 
@@ -309,11 +320,27 @@ class ConversationLoop:
         question_author: QuestionAuthor | None = None,
         intelligent_router: IntelligentRouter | None = None,
         graph_retrieval: Callable[[str], GraphContext] | None = None,
+        nonce_source: Callable[[], str] | None = None,
+        skill_consent: SkillConsentPort | None = None,
+        audit_logger: AuditLogger | None = None,
         graph_surfacing_guidance: Callable[[str, GraphRecency], str | None] | None = None,
     ) -> None:
         self._persona = persona
         self._stores = stores
         self._toolbox = toolbox
+        # Spec S1 (S1-D-2 / S1-D-X-nonce-injection): the per-injection delimiter
+        # nonce source for the subordination guard. ``None`` defaults to the
+        # production ``default_nonce`` (secrets-backed); tests pin it for
+        # determinism. An unpredictable nonce per injection defeats an
+        # adversarial SKILL.md forging the guard's closing marker to escape it.
+        self._nonce_source = nonce_source or default_nonce
+        # Spec S1 (S1-D-6/D-7): the enable-time consent gate + the injection
+        # audit. Consent defaults to DENY-unvetted (above-threshold skills are
+        # not injectable until Spec S3 wires a real consent store); ``builtin``/
+        # ``vetted`` never consult it. The audit logger is optional — ``None`` is
+        # the no-op sink (the audit must never crash or perturb the turn).
+        self._skill_consent: SkillConsentPort = skill_consent or DenyUnvettedConsent()
+        self._audit = audit_logger
         # K3 (D-K3-X-a2-seam): the owner-scoped graph-knowledge retrieval, queried
         # per turn alongside the persona's own memory. ``None`` (the default) is
         # the additive zero-graph path — every existing caller is byte-identical
@@ -1069,6 +1096,40 @@ class ConversationLoop:
     def _system_message(text: str) -> ConversationMessage:
         return ConversationMessage(role="system", content=text, created_at=datetime.now(UTC))
 
+    def _emit_skill_audit(self, spec: SkillSpec, action: AuditAction, consent_state: str) -> None:
+        """Emit exactly one skill AuditEvent (S1-D-7); ``None`` sink ⇒ no-op.
+
+        Best-effort + inert: a failing audit sink must never perturb the
+        injection path or the guard, so emission is swallow-and-log.
+        """
+        if self._audit is None:
+            return
+        try:
+            self._audit.emit(
+                skill_audit_event(
+                    persona_id=self._persona.persona_id or "",
+                    spec=spec,
+                    action=action,
+                    consent_state=consent_state,
+                    timestamp=datetime.now(UTC),
+                )
+            )
+        except Exception:  # noqa: BLE001 — audit must never break the turn
+            _logger.warning("skill audit emit failed skill={s}", s=spec.name)
+
+    def _consent_ok(self, spec: SkillSpec) -> bool:
+        """Whether ``spec`` may be injected under the enable-time consent gate (S1-D-6).
+
+        ``builtin``/``vetted`` skip the gate; above-threshold skills must be
+        consent-enabled at the current ``content_hash``.
+        """
+        if not spec.trust.requires_consent:
+            return True
+        content_hash = spec.provenance.content_hash if spec.provenance else ""
+        return self._skill_consent.is_enabled(
+            self._persona.persona_id or "", spec.name, content_hash or ""
+        )
+
     async def _compose_skill(
         self,
         spec: SkillSpec,
@@ -1084,7 +1145,21 @@ class ConversationLoop:
         would overflow the remaining shared budget is skipped whole (never
         truncated). The first skill goes through the per-skill injector; a
         composed skill (already shown to fit) is appended verbatim.
+
+        Spec S1 (S1-D-6/D-7): the enable-time consent gate runs FIRST — an
+        above-threshold skill without granted consent is refused (audited
+        ``SKILL_REFUSED``, the turn proceeds) and never touches the composition
+        budget. A successful injection is audited ``SKILL_INJECTED``.
         """
+        if not self._consent_ok(spec):
+            self._emit_skill_audit(spec, AuditAction.SKILL_REFUSED, "refused_no_consent")
+            _logger.info("skill activation refused: no consent skill={s}", s=spec.name)
+            return _ComposedSkill(
+                None,
+                f"Skill '{spec.name}' was not activated: it is an untrusted skill that has "
+                "not been approved for this persona.",
+                None,
+            )
         try:
             admission = state.admit(spec.name, content_tokens=spec.content_token_count)
         except (SkillCycleError, SkillCompositionDepthError) as exc:
@@ -1101,7 +1176,17 @@ class ConversationLoop:
         injected_tokens = count_tokens(content)
         state.record_injected(injected_tokens)
         self.deferred_input_files.extend(collect_skill_supplements(spec))
-        merged = content if current_content is None else f"{current_content}\n\n{content}"
+        # Spec S1 (S1-D-1/D-2): every skill — depth-1 injector output AND a
+        # composed (verbatim) skill — enters the prompt through the subordination
+        # guard. The envelope (nonce-delimited, tier-labelled) is applied AFTER
+        # budget accounting so the 2000-token cap stays on skill content, not the
+        # framing. The one-time authority preamble is emitted once above this
+        # region by the prompt builder (PromptBuilder._render_system).
+        guarded = subordinate(content, trust=spec.trust, nonce=self._nonce_source())
+        self._emit_skill_audit(
+            spec, AuditAction.SKILL_INJECTED, injection_consent_state(spec.trust)
+        )
+        merged = guarded if current_content is None else f"{current_content}\n\n{guarded}"
         record = SkillInvocation(
             name=spec.name, parameters=parameters, content_tokens=injected_tokens
         )

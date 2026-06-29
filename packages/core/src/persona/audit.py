@@ -39,22 +39,29 @@ __all__ = [
 
 # The four typed stores (Spec 01) + the user-scoped knowledge graph (Spec K0 T8 —
 # additive: every graph mutation emits exactly one AuditEvent through this same
-# port; existing stores are unaffected).
-StoreKind = Literal["identity", "self_facts", "worldview", "episodic", "knowledge_graph"]
+# port; existing stores are unaffected) + the skill-injection event sentinel
+# (Spec S1 T4 — skill injection is not a store mutation, so ``"skill"`` is the
+# honest non-store ``store`` value, additive like ``knowledge_graph``).
+StoreKind = Literal["identity", "self_facts", "worldview", "episodic", "knowledge_graph", "skill"]
 
 
 class AuditAction(StrEnum):
-    """The mutating actions a store may perform.
+    """The mutating actions a store may perform, plus the Spec S1 skill events.
 
-    A rejected mutation does NOT produce an audit event — rejections are
-    surfaced via ``persona.logging`` instead. Only allowed mutations land
-    in the audit log.
+    A rejected store mutation does NOT produce an audit event — rejections are
+    surfaced via ``persona.logging`` instead. Skill events (Spec S1, S1-D-7) are
+    the exception: a skill *injection* is audited, and a consent *refusal* is
+    audited too, because a blocked injection of an untrusted skill is itself a
+    security signal worth the durable trail.
     """
 
     WRITE = "write"
     DELETE = "delete"
     REMOVE_DOCUMENTS = "remove_documents"
     ROLLBACK = "rollback"
+    # Spec S1 (S1-D-7): one event per skill injection; one per consent refusal.
+    SKILL_INJECTED = "skill_injected"
+    SKILL_REFUSED = "skill_refused"
 
 
 class AuditEvent(BaseModel):

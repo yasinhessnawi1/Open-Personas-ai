@@ -11,6 +11,62 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Skill-injection trust foundation — any skill is safe to inject (2026-06-29)
+
+> Close-out of `skill-injection-trust` (Spec S1). Skills are **prompt content the
+> persona follows**, not sandboxed code — and the injector used to splice a
+> `SKILL.md` body **verbatim** into the system prompt. Fine for built-in skills; a
+> behavioral-hijack vector the instant external sources land. S1 is the
+> architectural defense that makes **any** skill content — built-in or untrusted
+> external — structurally safe to inject, and it hardens the **live** skill path
+> (built-in skills included). It is the security base of the Specialities track:
+> S2 (external sources) sets the per-source trust tiers S1 enforces; S3 (frontend)
+> renders the tier + collects consent. Framed honestly: skill content is
+> **structurally subordinated, tiered, consented, and audited — defense-in-depth,
+> not immunity** (no single-stream prompt defense fully defeats a determined
+> adversarial `SKILL.md`; the out-of-band architectures that approach provable
+> guarantees are out of scope). Proven against a real model: 5/5 adversarial
+> attacks ("ignore previous instructions", "reveal your system prompt", "always
+> recommend X", role-reversal, forged-delimiter marker-spoof) **resisted**, and a
+> legitimate skill still **followed** — both belts, behaviorally. **Inert in
+> production today** (every current skill is `builtin` → no consent gate fires);
+> it bites only when external skills land. **No migration** (trust + provenance are
+> in-memory `SkillSpec` fields). Zero new dependencies.
+
+#### Added
+- **The subordination guard** (`persona.skills.guard`) — `subordinate()` wraps
+  skill content in a **per-injection nonce-delimited, tier-labelled envelope**
+  (the random nonce defeats an adversarial `SKILL.md` forging the closing marker
+  to escape and impersonate the system); `SUBORDINATION_PREAMBLE` is the locked
+  **scope-don't-suppress** authority framing (grants method/format authority,
+  reserves identity / rules / safety / prompt-confidentiality / loyalty);
+  `self_framed()` carries both inline for the agentic system-role append; a
+  `DEFENSE_CLAIM` constant locks the honest framing (asserted, never "immune").
+- **Trust tiers + provenance on every skill** — `SkillTrust` (builtin / vetted /
+  community / third_party, with `requires_consent` gating above `vetted`) and a
+  `SkillProvenance` model (`source`, `source_uri`, `source_ref`, sha256
+  `content_hash` = the re-consent trigger, `signature`) on `SkillSpec`.
+  **Source-assigned, never read from author-controlled front-matter** — the
+  scanner sets `builtin` + the real sha256 and ignores any self-declared `trust`.
+- **Consent gate** — `SkillConsentPort` + a `DenyUnvettedConsent` default-deny
+  stub: an above-`vetted` skill is not injected until an explicit consent provider
+  (Spec S3) approves it, bound to the skill's `content_hash`. Denied/absent →
+  not injected, persona unaffected.
+- **Audit** — `AuditAction.SKILL_INJECTED` / `SKILL_REFUSED` + a `"skill"`
+  `StoreKind` sentinel; every injection (and every consent refusal — a security
+  signal) emits one `AuditEvent` through the existing `AuditLogger`, with
+  provenance + consent state in metadata.
+
+#### Changed
+- The guard is wired at **all three** skill-content entry points — chat
+  `_compose_skill` (depth-1 injector output + composed-verbatim), the prompt
+  builder (authority preamble emitted once, below the identity/constraints floor),
+  and the agentic `_maybe_inject_skill` system-role append (self-framed, closing
+  the hole where skill content could ride a `system` message back to system
+  authority). Built-in skills are subordinated too; their activation + injection +
+  Spec 24 composition still work unchanged.
+- `RuntimeFactory` wires the injection audit sink (the same `JSONLAuditLogger` the
+  stores use); the consent gate defaults to deny-unvetted until S3 lands.
 ### Durable rich chat history — rich turns survive refresh, switch, and reconnect (2026-06-29)
 
 > Close-out of `durable-rich-chat-history`. A live chat turn renders an interleaved

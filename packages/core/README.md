@@ -142,6 +142,18 @@ per-turn logging — compose `persona-core` with
   (`SkillInjector.TOKEN_BUDGET`), depth-3 composition (cycle detection + shared
   budget), `collection:` refs, and an alias shim so deprecated skill names still
   resolve.
+- **Skill-injection trust.** Skills are *prompt content the persona follows*, so
+  any skill — built-in or untrusted external `SKILL.md` — is injected through a
+  **subordination guard** (`persona.skills.guard`): a nonce-delimited, tier-labelled
+  envelope under a scope-don't-suppress authority preamble, so skill content can
+  guide *how* the persona works but structurally cannot override its identity,
+  the platform rules, the prompt's confidentiality, or its loyalties. Every skill
+  carries a **trust tier** (`SkillTrust`: builtin / vetted / community /
+  third_party — **source-assigned, never self-declared**) + **provenance**
+  (sha256 `content_hash`); activating an above-`vetted` skill is **consent-gated**
+  (`SkillConsentPort`, default-deny) and every injection (and consent refusal)
+  emits an `AuditEvent`. This is defense-in-depth — *structurally subordinated,
+  tiered, consented, and audited*, **not** immunity (see `DEFENSE_CLAIM`).
 - **Image generation** (OpenAI gpt-image-1, fal.ai Flux 1.1 [pro]) with a
   three-layer safety + categorical hard-line filter, plus `craft_avatar_prompt` —
   a deterministic, demographic-safe avatar-prompt crafter.
