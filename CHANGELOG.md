@@ -11,6 +11,18 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Persona MCP Self-Extension — the setup form (Spec N4 Group D, 2026-06-30)
+
+> The user-facing half of the credential-isolation mechanism, completing N4. A
+> schema-driven setup form occupies N3's reserved `needs-setup` slot for an
+> **adoptable** remote app (one that declares a credential): the user pastes the
+> credential and it posts **straight to the store** via `POST /v1/personas/{id}/adopted-apps`
+> — never through a persona turn (N4-D-1). The connection url/auth come from the catalog
+> server-side (N4-D-10); the form sends only the secret, clears it on success, and never
+> persists it client-side. It sits after the trust disclosure in the expanded card
+> (see-then-grant). Local-container / no-credential apps keep the read-honest disclosure +
+> the allow-list toggle (the N3 behavior); the form shows only in the edit flow (an existing
+> persona to adopt against). A 409 surfaces a clear "already set up" message, not a crash.
 ### Synthetic-Media Provenance & Disclosure — AI-generated images are recorded and disclosed (2026-06-30)
 
 > Every image the system **generates** is now recorded as generated-vs-uploaded and disclosed as

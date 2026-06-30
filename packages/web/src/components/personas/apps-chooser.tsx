@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { AppSetupForm } from "./app-setup-form";
 import { type AppState, deriveAppState, isAppEnabled } from "./app-state";
 import type { McpCatalogEntry } from "./persona-form";
 
@@ -41,12 +42,20 @@ export function AppsChooser({
   apps,
   declaredTools,
   unavailableMcpServers = [],
+  personaId,
   onChange,
 }: {
   apps: McpCatalogEntry[];
   declaredTools: string[];
   /** PersonaDetail.unavailable_mcp_servers — empty on surfaces without it. */
   unavailableMcpServers?: string[];
+  /**
+   * Spec N4 (Group D) — the persona being edited. Present in the edit flow only;
+   * absent in author/new (no id to adopt against). When present, a remote app that
+   * declares a credential renders the credential-isolated setup form (adoption);
+   * absent → the read-honest needs-setup disclosure (the N3 behavior).
+   */
+  personaId?: string;
   onChange: (tools: string[]) => void;
 }) {
   const t = useTranslations("apps");
@@ -103,6 +112,7 @@ export function AppsChooser({
                   declaredTools,
                   unavailableMcpServers,
                 )}
+                personaId={personaId}
                 onToggle={() => toggle(app)}
               />
             </li>
@@ -126,16 +136,24 @@ function appInitials(label: string): string {
 function AppCard({
   app,
   state,
+  personaId,
   onToggle,
 }: {
   app: McpCatalogEntry;
   state: AppState;
+  personaId?: string;
   onToggle: () => void;
 }) {
   const t = useTranslations("apps");
   const title = app.displayName || app.name;
   const enabled = state === "enabled";
   const unavailable = state === "unavailable";
+  // Spec N4 (Group D): a remote app that declares a credential is self-adoptable —
+  // the user supplies the secret via the setup form (N4-D-1/N4-D-10). Requires an
+  // existing persona to adopt against (edit flow only). Local-container / no-credential
+  // apps keep the read-honest disclosure + the allow-list toggle (the N3 behavior).
+  const adoptable =
+    !!personaId && app.serverType === "remote" && app.secrets.length > 0;
 
   return (
     <Card size="sm" data-slot="app-card" data-state={state}>
@@ -187,6 +205,11 @@ function AppCard({
               >
                 {t("unavailable.summary")}
               </p>
+            ) : adoptable && personaId ? (
+              // N4: the credential-isolated setup form IS the grant for an adoptable
+              // remote app — the user supplies the secret, it posts straight to the
+              // store, and adoption assigns the app to the persona.
+              <AppSetupForm app={app} personaId={personaId} />
             ) : (
               <>
                 {app.requiredEnv.length > 0 || app.secrets.length > 0 ? (

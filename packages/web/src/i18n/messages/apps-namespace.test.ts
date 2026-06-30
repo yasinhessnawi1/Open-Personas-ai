@@ -96,6 +96,27 @@ describe("apps.* i18n namespace", () => {
     );
   });
 
+  it("N4 (Group D): the setup-form keys exist with their placeholders + an honest isolation line", () => {
+    const sf = apps.setupForm;
+    for (const key of [
+      "intro",
+      "credentialLabel",
+      "credentialPlaceholder",
+      "submit",
+      "submitting",
+      "done",
+      "error",
+      "errorAlready",
+      "errorNotVetted",
+    ] as const) {
+      expect(sf[key]).toBeTruthy();
+    }
+    expect(sf.credentialLabel).toContain("{env}");
+    expect(sf.done).toContain("{name}");
+    // the isolation promise is stated honestly: the persona never sees the secret.
+    expect(sf.intro.toLowerCase()).toContain("never sees");
+  });
+
   it("N3-D-9: unavailable is removed-after-enable, surfaced gracefully", () => {
     const un = apps.unavailable;
     expect(un.tombstone).toContain("{name}");

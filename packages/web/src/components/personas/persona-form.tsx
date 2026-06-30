@@ -76,6 +76,7 @@ export function PersonaForm({
   tools,
   skills,
   mcpServers = [],
+  personaId,
 }: {
   doc: PersonaDoc;
   onChange: (doc: PersonaDoc) => void;
@@ -84,6 +85,10 @@ export function PersonaForm({
   // Spec 30 T11 — built-in MCP servers (from GET /v1/mcp-catalog). Optional so
   // existing callers/tests that don't pass it render tools+skills unchanged.
   mcpServers?: McpCatalogEntry[];
+  // Spec N4 (Group D) — the persona being edited, threaded to the apps chooser so a
+  // remote app that declares a credential can render the setup form. Absent in the
+  // author/new flow (no id yet) → the read-honest needs-setup disclosure.
+  personaId?: string;
 }) {
   const t = useTranslations("author");
   const tApps = useTranslations("apps");
@@ -385,6 +390,7 @@ export function PersonaForm({
           <AppsChooser
             apps={mcpServers}
             declaredTools={declaredTools}
+            personaId={personaId}
             onChange={(list) => onChange(writeStringList(doc, "tools", list))}
           />
         </Subsection>

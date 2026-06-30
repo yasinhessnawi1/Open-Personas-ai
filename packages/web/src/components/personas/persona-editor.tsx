@@ -242,6 +242,7 @@ export function PersonaEditor({
             tools={tools}
             skills={skills}
             mcpServers={mcpServers}
+            personaId={personaId}
           />
 
           {/* Autonomy + consent: existing-persona edit only (D-31-X-autonomy-placement). */}

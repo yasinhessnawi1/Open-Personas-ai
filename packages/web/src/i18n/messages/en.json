@@ -759,6 +759,17 @@
       "credentialLabel": "Needs {env}",
       "credentialNeedsLabel": "Needs {env} — configured at the deployment level."
     },
+    "setupForm": {
+      "intro": "Set this app up for this persona. You provide the credential directly — it is stored securely and the persona never sees it.",
+      "credentialLabel": "{env}",
+      "credentialPlaceholder": "Paste your token",
+      "submit": "Set up & connect",
+      "submitting": "Setting up…",
+      "done": "{name} is set up and connected for this persona.",
+      "error": "Could not set this app up. Check the credential and try again.",
+      "errorAlready": "This app is already set up for this persona.",
+      "errorNotVetted": "This app is not available to add on this deployment."
+    },
     "unavailable": {
       "heading": "No longer available",
       "summary": "This app was enabled for the persona but has been removed from the catalog.",
