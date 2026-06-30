@@ -22,7 +22,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from persona.errors import PersonaError, PersonaNotFoundError
-from persona.tools._sandbox import resolve_sandbox_path
+from persona.tools._sandbox import is_regular_file_nofollow, resolve_sandbox_path
 
 from persona_api.auth import AuthenticatedUser, get_current_user
 from persona_api.middleware.rate_limit import rate_limit
@@ -266,13 +266,18 @@ async def delete_artifact(
             context={"reason": "not_found", "ref": ref[:120]},
         ) from exc
 
-    if not resolved.is_file():
+    # R2 F-03: lstat-based check (no symlink follow). A symlink swapped into the
+    # final component after resolve would pass a plain ``is_file()`` (which follows
+    # the link to an out-of-sandbox target); ``is_regular_file_nofollow`` treats it
+    # as not-found, so we never act on a planted link.
+    if not is_regular_file_nofollow(resolved):
         raise PersonaNotFoundError(
             "artifact not found",
             context={"reason": "not_found", "ref": ref[:120]},
         )
 
-    # Bytes-first per the atomicity invariant.
+    # Bytes-first per the atomicity invariant. ``unlink`` removes the path itself
+    # (never follows a final symlink), so the delete stays inside the sandbox.
     try:
         resolved.unlink()
     except OSError as exc:

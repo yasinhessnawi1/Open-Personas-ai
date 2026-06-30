@@ -60,6 +60,15 @@ def _app() -> FastAPI:
     async def _schema() -> None:
         raise SchemaVersionMismatchError("bad version")
 
+    @app.get("/provider-auth")
+    async def _provider_auth() -> None:
+        # Spec R2 F-07: the PROVIDER-key auth error (a rotated/invalid cloud model
+        # key mid-request), distinct from persona.errors.AuthenticationError. Pre-fix
+        # this fell through the catch-all _domain_500 → 500; it must be 401.
+        from persona.backends.errors import AuthenticationError as BackendAuthError
+
+        raise BackendAuthError("provider rejected the API key", context={"secret": "sk-LEAKED123"})
+
     class Body(BaseModel):
         n: int
 
@@ -94,6 +103,23 @@ def test_exception_maps_to_status_and_body(
     resp = client.get(path)
     assert resp.status_code == code
     assert resp.json()["error"] == error
+
+
+def test_provider_authentication_error_maps_to_401_not_500(client: TestClient) -> None:
+    """Spec R2 F-07 (R2-D-8): a backend/provider ``AuthenticationError`` (rotated or
+    invalid model key mid-request) returns 401, not the catch-all 500. FastAPI MRO
+    dispatch selects the specific handler over the ``PersonaError`` ``_domain_500``."""
+    resp = client.get("/provider-auth")
+    assert resp.status_code == 401
+    assert resp.json()["error"] == "provider_auth_failed"
+
+
+def test_provider_authentication_error_body_does_not_leak_the_key(client: TestClient) -> None:
+    """The 401 body must be generic — no provider message, no key/context leak."""
+    resp = client.get("/provider-auth")
+    body = resp.text
+    assert "sk-LEAKED123" not in body, "the provider secret must never reach the client"
+    assert "provider rejected the API key" not in body, "no internal provider detail in the body"
 
 
 def test_auth_sets_www_authenticate_header(client: TestClient) -> None:

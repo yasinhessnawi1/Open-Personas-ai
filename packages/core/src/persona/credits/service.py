@@ -161,19 +161,36 @@ def require_credits(*, rls_engine: Engine, user_id: str) -> int:
 def deduct(*, rls_engine: Engine, user_id: str, amount: int, reason: str) -> int:
     """Deduct ``amount`` credits and record a transaction. Returns the new balance.
 
-    Idempotent in spirit but not by key (v0.1): the caller deducts once per
-    successful turn/authoring call. Allows the balance to go negative (a stub —
-    we never block on exhaustion in v0.1; the counter exists for forward
-    compatibility). Returns the post-deduction balance.
+    Spec R2 R2-D-3 (F-04): the decrement is **conditional and atomic** — the
+    ``UPDATE`` carries ``WHERE balance >= :amount`` so a decrement that would
+    overdraw matches no row and is rejected (``RETURNING`` yields nothing). This
+    closes the double-spend race: the pre-flight :func:`require_credits` gate
+    runs in a separate transaction, so two concurrent turns could each pass it at
+    balance=1; the floor on the decrement itself is the single point of truth.
+
+    On insufficient balance this raises :class:`CreditsExhaustedError` (→ 402)
+    and writes **no** ledger row (CQS: a failed decrement records nothing). The
+    deduct runs in its own transaction on a fresh pooled connection (R2-D-7), so
+    the conditional predicate adds no new lock scope and cannot deadlock with the
+    caller's transaction. A DB-level ``CHECK (balance >= 0)`` constraint
+    (migration 024) is the belt-and-braces durable guard.
     """
     ensure_balance(rls_engine=rls_engine, user_id=user_id)
     with rls_engine.begin() as conn:
         new_balance = conn.execute(
             update(_credits_t)
-            .where(_credits_t.c.user_id == user_id)
+            .where(_credits_t.c.user_id == user_id, _credits_t.c.balance >= amount)
             .values(balance=_credits_t.c.balance - amount, updated_at=text("now()"))
             .returning(_credits_t.c.balance)
-        ).scalar_one()
+        ).scalar_one_or_none()
+        if new_balance is None:
+            # No row matched ``balance >= amount`` → insufficient funds. Raise
+            # WITHOUT writing a ledger row; the rolled-back transaction records
+            # nothing (the ``with`` block rolls back on the exception).
+            raise CreditsExhaustedError(
+                "Your free credits are used up. Top-up coming soon — contact support.",
+                context={"amount": str(amount), "reason": reason},
+            )
         conn.execute(
             insert(_credit_tx_t).values(
                 id=f"ctx_{uuid.uuid4().hex}",

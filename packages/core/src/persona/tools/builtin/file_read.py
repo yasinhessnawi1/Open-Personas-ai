@@ -26,6 +26,7 @@ from persona.logging import get_logger
 from persona.schema.tools import ToolResult
 from persona.tools._sandbox import (
     SandboxRootProvider,
+    open_nofollow,
     resolve_request_sandbox_root,
     resolve_sandbox_path,
 )
@@ -82,9 +83,10 @@ def make_file_read_tool(*, sandbox_root: SandboxRootProvider) -> AsyncTool:
 
         # O_NOFOLLOW closes the TOCTOU window between resolver's symlink check
         # and this open() — a swap of the final path component to a symlink
-        # between the two operations is rejected (security review T09).
+        # between the two operations is rejected (security review T09). Via the
+        # shared sandbox opener (R2-D-4).
         try:
-            fd = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW)
+            fd = open_nofollow(resolved, os.O_RDONLY)
         except FileNotFoundError:
             return ToolResult(
                 tool_name="file_read",

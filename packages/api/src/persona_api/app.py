@@ -47,6 +47,7 @@ from persona_api.db.engine import create_db_engine
 from persona_api.editions import (
     build_credits_policy,
     build_owner_resolver,
+    check_cloud_config_guard,
     check_gateway_edition_posture,
     check_public_noauth_guard,
 )
@@ -228,6 +229,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             rls_engine = make_rls_engine(
                 config.effective_app_database_url, pool_size=config.db_pool_size
             )
+            # Spec R2 R2-D-1 (defense-in-depth): now that the rls_engine exists, probe
+            # its role — refuse to serve if it is a PostgreSQL superuser (RLS-bypassing),
+            # even if the DSN strings differ from ``database_url`` (F-06). Runs before the
+            # app accepts a request; the cheap config asserts already ran at ``create_app``.
+            check_cloud_config_guard(config, probe_engine=rls_engine)
         # Superuser engine for JIT user provisioning (spec-09 integration): a
         # freshly authenticated Clerk user has no `users` row (webhook mirroring
         # deferred, spec 08), yet everything FKs users.id. The auth dep upserts it
@@ -487,6 +493,10 @@ def create_app(config: APIConfig | None = None) -> FastAPI:
     # Spec 33 D-33-4: refuse to start a community/no-auth process on a public
     # bind unless explicitly opted in — fail-safe before any collaborator wiring.
     check_public_noauth_guard(config)
+    # Spec R2 R2-D-1: refuse to start a misconfigured cloud deploy (authless / superuser
+    # request path / no JWT audience). The pure-config asserts run here, before any engine
+    # exists; the is_superuser probe leg runs in ``_lifespan`` once the rls_engine is built.
+    check_cloud_config_guard(config)
     # Spec N1 D-N1-7: refuse to start cloud with a Docker MCP Gateway URL unless the
     # operator acknowledges the vetted-shared-across-tenants posture (community: no gate).
     check_gateway_edition_posture(config)

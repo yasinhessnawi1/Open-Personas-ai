@@ -160,5 +160,15 @@ def test_create_app_wires_the_gateway_guard(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setenv("PERSONA_DOCKER_MCP_GATEWAY_URL", _GW_URL)
     monkeypatch.delenv("PERSONA_ALLOW_CLOUD_GATEWAY", raising=False)
+    # The cloud-config guard (Spec R2) runs before the gateway guard, so give this
+    # cloud config a valid DSN/audience pair to reach the gateway assertion under test.
     with pytest.raises(CloudGatewayNotVettedError):
-        create_app(APIConfig(edition=Edition.cloud, allow_cloud_gateway=False))
+        create_app(
+            APIConfig(
+                edition=Edition.cloud,
+                allow_cloud_gateway=False,
+                database_url="postgresql+psycopg://super@db/persona",
+                app_database_url="postgresql+psycopg://persona_app@db/persona",
+                jwt_audience="persona-api",
+            )
+        )

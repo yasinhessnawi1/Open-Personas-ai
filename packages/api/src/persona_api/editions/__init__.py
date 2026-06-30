@@ -9,6 +9,7 @@ guard lives in :mod:`persona_api.editions.guard`.
 
 from __future__ import annotations
 
+from persona_api.editions.cloud_guard import check_cloud_config_guard
 from persona_api.editions.credits_policy import (
     CreditsPolicy,
     MeteredCreditsPolicy,
@@ -32,6 +33,7 @@ __all__ = [
     "UnlimitedCreditsPolicy",
     "build_credits_policy",
     "build_owner_resolver",
+    "check_cloud_config_guard",
     "check_gateway_edition_posture",
     "check_public_noauth_guard",
 ]

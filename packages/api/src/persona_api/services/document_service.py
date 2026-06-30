@@ -68,7 +68,7 @@ from persona.documents.ingest import IngestStrategy, ingest_document
 from persona.documents.parsers import SUPPORTED_EXTENSIONS, parse_document
 from persona.logging import get_logger
 from persona.schema.content import ImageContent
-from persona.tools._sandbox import resolve_sandbox_path
+from persona.tools._sandbox import read_nofollow_bytes, resolve_sandbox_path
 from pydantic import BaseModel, ConfigDict, Field
 
 from persona_api.services.artifact_metadata import (
@@ -546,7 +546,9 @@ def read_document_bytes(
     for candidate in base.iterdir():
         if _is_original_document(candidate, doc_ref):
             try:
-                return candidate.read_bytes()
+                # R2 F-03: O_NOFOLLOW read so a symlink swapped into the final
+                # component can't serve an out-of-sandbox file (OSError → skip).
+                return read_nofollow_bytes(candidate)
             except OSError:
                 _log.warning("read_document_bytes failed for ref {}", doc_ref)
                 return None

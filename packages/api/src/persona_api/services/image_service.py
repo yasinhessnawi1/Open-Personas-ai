@@ -50,7 +50,6 @@ per message, 20 MB total upload cap) are the active decisions. The downscale
 from __future__ import annotations
 
 import hashlib
-import os
 import struct
 from dataclasses import dataclass
 from io import BytesIO
@@ -58,7 +57,12 @@ from pathlib import Path
 
 from persona.errors import PersonaError, SandboxViolationError
 from persona.logging import get_logger
-from persona.tools._sandbox import resolve_sandbox_path
+from persona.tools._sandbox import (
+    is_regular_file_nofollow,
+    read_nofollow_bytes,
+    resolve_sandbox_path,
+    write_nofollow_bytes,
+)
 from PIL import Image, UnidentifiedImageError
 
 # Defence-in-depth: Pillow's own decompression-bomb guard. The pre-decode
@@ -153,8 +157,8 @@ def upload(
     On success: storage path is
     ``workspace_root/owner_id/persona_id/uploads/<ref><ext>`` where
     ``<ref>`` is ``blake2b(file_bytes, digest_size=16).hexdigest()``.
-    The bytes are written via ``os.open`` with ``O_NOFOLLOW`` + mode
-    ``0o600`` (mirrors :mod:`persona.tools.builtin.file_write`).
+    The bytes are written via the shared ``O_NOFOLLOW`` opener
+    (:func:`persona.tools._sandbox.write_nofollow_bytes`), mode ``0o600``.
 
     Args:
         workspace_root: Root of the per-deployment workspace (typically
@@ -240,18 +244,10 @@ def upload(
     resolved = resolve_sandbox_path(sandbox_root, relative)
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
-    # O_NOFOLLOW closes the TOCTOU window between resolver + open (mirrors
-    # persona.tools.builtin.file_write). O_EXCL would reject re-upload of
-    # the same content; we tolerate that (idempotent content-addressed write).
-    fd = os.open(
-        resolved,
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
-        0o600,
-    )
-    try:
-        os.write(fd, file_bytes)
-    finally:
-        os.close(fd)
+    # O_NOFOLLOW closes the TOCTOU window between resolver + open, via the shared
+    # sandbox opener (R2-D-4). O_EXCL would reject re-upload of the same content;
+    # we tolerate that (idempotent content-addressed write).
+    write_nofollow_bytes(resolved, file_bytes)
 
     _log.info(
         "image upload accepted",
@@ -340,7 +336,10 @@ def fetch(
             context={"reason": "not_found", "ref": ref[:120]},
         ) from exc
 
-    if not resolved.is_file():
+    # R2 F-03: lstat check (no symlink follow) — a symlink swapped into the final
+    # component would pass a plain ``is_file()`` (which follows it to an
+    # out-of-sandbox target). Treat a non-regular/symlinked entry as not_found.
+    if not is_regular_file_nofollow(resolved):
         raise PersonaError(
             "image not found",
             context={"reason": "not_found", "ref": ref[:120]},
@@ -355,7 +354,16 @@ def fetch(
             context={"reason": "not_found", "ref": ref[:120]},
         )
 
-    return resolved.read_bytes(), media_type
+    # R2 F-03: read via the O_NOFOLLOW opener so a symlink swapped into the final
+    # component after resolution cannot serve an out-of-sandbox file. A swapped
+    # link raises OSError → treated as not_found (no information leak).
+    try:
+        return read_nofollow_bytes(resolved), media_type
+    except OSError as exc:
+        raise PersonaError(
+            "image not found",
+            context={"reason": "not_found", "ref": ref[:120]},
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

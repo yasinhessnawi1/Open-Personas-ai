@@ -23,6 +23,7 @@ Returns the resolved absolute ``Path`` (which may not yet exist —
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
@@ -37,7 +38,99 @@ from persona.errors import SandboxViolationError
 #: :func:`resolve_request_sandbox_root`.
 SandboxRootProvider = Path | Callable[[], Path | None]
 
-__all__ = ["SandboxRootProvider", "resolve_request_sandbox_root", "resolve_sandbox_path"]
+__all__ = [
+    "SandboxRootProvider",
+    "is_regular_file_nofollow",
+    "open_nofollow",
+    "read_nofollow_bytes",
+    "resolve_request_sandbox_root",
+    "resolve_sandbox_path",
+    "write_nofollow_bytes",
+]
+
+# Default mode for a freshly created sandbox file: owner read/write only. Matches
+# the single-user CLI posture of file_write / image_service (spec 03 §6.4).
+_NEW_FILE_MODE = 0o600
+
+
+def open_nofollow(path: Path, flags: int, mode: int = _NEW_FILE_MODE) -> int:
+    """Open ``path`` with ``O_NOFOLLOW`` and return the file descriptor (Spec R2, F-03).
+
+    The single hardened opener shared by every sandbox read/write/serve site
+    (R2-D-4). ``O_NOFOLLOW`` closes the narrow TOCTOU window between
+    :func:`resolve_sandbox_path`'s symlink check and the actual ``open()``: if the
+    final path component is (or is swapped to) a symlink, the open fails with
+    ``ELOOP`` rather than following the link out of the sandbox. Used on **every**
+    platform (R2-D-5); ``openat2(RESOLVE_NO_SYMLINKS)`` — which would additionally
+    reject symlinks in *intermediate* directories — is an unbuilt Linux-only future
+    hardening (R2-R-1), not in stdlib.
+
+    Args:
+        path: The already-resolved (sandbox-validated) path to open.
+        flags: ``os.open`` flags (e.g. ``os.O_RDONLY`` or
+            ``os.O_WRONLY | os.O_CREAT | os.O_TRUNC``). ``O_NOFOLLOW`` is added.
+        mode: Permission bits for a newly created file (default ``0o600``).
+
+    Returns:
+        The open file descriptor. The caller owns it and MUST close it.
+
+    Raises:
+        OSError: ``ELOOP`` when ``path``'s final component is a symlink; plus the
+            usual ``FileNotFoundError`` / ``IsADirectoryError`` / ``PermissionError``
+            / other ``OSError`` cases the caller maps to its domain response.
+    """
+    return os.open(path, flags | os.O_NOFOLLOW, mode)
+
+
+def is_regular_file_nofollow(path: Path) -> bool:
+    """Whether ``path`` is a regular file, WITHOUT following a final symlink.
+
+    The serve/delete sites check ``Path.is_file()`` to decide a target exists —
+    but ``is_file()`` *follows* a trailing symlink, so a link swapped into the
+    final component after :func:`resolve_sandbox_path` would report ``True`` for an
+    out-of-sandbox target (a confused-deputy). This uses ``os.lstat`` so a
+    symlink (or any non-regular entry) reads as ``False``; a missing path is
+    ``False`` (mirrors ``Path.is_file()``'s missing-ok semantics).
+    """
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode)
+
+
+def read_nofollow_bytes(path: Path) -> bytes:
+    """Read all bytes from ``path`` via :func:`open_nofollow` (symlink-swap safe).
+
+    The serve/read counterpart used by the image/document/artifact download sites.
+    Raises ``OSError`` (``ELOOP``) if the final component is a symlink.
+    """
+    fd = open_nofollow(path, os.O_RDONLY)
+    try:
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1 << 20)  # 1 MiB at a time
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def write_nofollow_bytes(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` via :func:`open_nofollow` (symlink-swap safe).
+
+    The mirror/stage counterpart. ``O_CREAT | O_TRUNC`` overwrites an existing
+    regular file; a swapped-in symlink as the final component is rejected with
+    ``OSError`` (``ELOOP``) rather than clobbering its out-of-sandbox target.
+    """
+    fd = open_nofollow(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
 
 _MAX_PATH_LENGTH = 4096
 

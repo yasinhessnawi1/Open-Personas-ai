@@ -194,11 +194,21 @@ def _default_cloud_edition() -> Iterator[None]:
     """
     prior = os.environ.get("PERSONA_EDITION")
     os.environ["PERSONA_EDITION"] = "cloud"
+    # Spec R2 R2-D-1: the cloud-edition startup fail-fast refuses a cloud boot with
+    # an empty JWT audience (F-05). The existing suite runs as cloud (above) but did
+    # not set an audience; provide a default so ``create_app`` reaches the behavior
+    # under test. A test asserting the empty-audience refusal sets it explicitly.
+    prior_aud = os.environ.get("PERSONA_API_JWT_AUDIENCE")
+    os.environ.setdefault("PERSONA_API_JWT_AUDIENCE", "persona-api-test")
     yield
     if prior is None:
         os.environ.pop("PERSONA_EDITION", None)
     else:
         os.environ["PERSONA_EDITION"] = prior
+    if prior_aud is None:
+        os.environ.pop("PERSONA_API_JWT_AUDIENCE", None)
+    else:
+        os.environ["PERSONA_API_JWT_AUDIENCE"] = prior_aud
 
 
 class HashEmbedder384:

@@ -244,6 +244,33 @@ async def test_deduct_fires_once_on_clean_completion() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deduct_exhaustion_does_not_lose_the_completed_turn() -> None:
+    """Spec R2 F-04: the post-success biller may now raise ``CreditsExhaustedError``
+    (the conditional decrement floors at 0). A turn that already RAN must still emit
+    ``done`` + the sentinel — billing failure of completed work never discards it."""
+    from persona.errors import CreditsExhaustedError
+
+    class _ExhaustedCredits(_RecordingCredits):
+        def deduct(self, *, rls_engine: object, user_id: str, amount: int, reason: str) -> int:
+            self.deducts.append((user_id, amount, reason))
+            raise CreditsExhaustedError("exhausted", context={"amount": str(amount)})
+
+    exhausted_credits = _ExhaustedCredits()
+    handle = _start(
+        _registry(_RecordingSink(), recording_credits=exhausted_credits, credits_per_turn=5),
+        _ScriptedLoop(["ok"]),
+    )
+    await handle.task
+    kinds = _kinds(_drain(handle))
+    # The deduct was attempted, raised, and yet the completed turn still finished
+    # cleanly: a ``done`` frame is present and the stream is sentinel-terminated.
+    assert exhausted_credits.deducts == [(_OWNER, 5, "chat_turn")]
+    assert "done" in kinds, "an exhausted post-success bill must not drop the completed turn"
+    assert "error" not in kinds, "a completed turn that can't be billed is not an error turn"
+    assert kinds[-1] is None  # end-of-stream sentinel
+
+
+@pytest.mark.asyncio
 async def test_deduct_not_fired_on_error() -> None:
     class _BoomLoop:
         async def turn(self, *_a: object, **_k: object) -> AsyncIterator[StreamChunk]:

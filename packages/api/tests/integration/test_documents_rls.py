@@ -78,7 +78,15 @@ class _InMemoryBackend:
 def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     """Test client where ONLY 'astrid' persona + 'conv_u1' conversation are
     visible under the user's RLS scope. Anything else → 404."""
-    app = create_app(APIConfig())
+    app = create_app(
+        # Cloud auth wall, but no lifespan engine is built here (the fixture
+        # returns the client without entering its context + sets rls_engine=None).
+        # Distinct app DSN satisfies the R2 cloud-config guard (R2-D-1).
+        APIConfig(
+            database_url="postgresql+psycopg://super@localhost/persona_shell",
+            app_database_url="postgresql+psycopg://persona_app@localhost/persona_shell",
+        )
+    )
 
     async def _verify(token: str) -> AuthenticatedUser:
         return AuthenticatedUser(id=token, email=None)

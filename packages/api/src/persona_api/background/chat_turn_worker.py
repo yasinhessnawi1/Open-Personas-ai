@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from persona.logging import get_logger
 
-from persona_api.errors import TurnAlreadyActiveError
+from persona_api.errors import CreditsExhaustedError, TurnAlreadyActiveError
 from persona_api.middleware.rls_context import current_user_id
 from persona_api.sandbox import (
     SandboxRequestContext,
@@ -315,15 +315,30 @@ class ChatTurnRegistry:
 
         Fires regardless of client presence (the turn ran), via the owner's bound
         RLS scope. ``None`` policy/engine → no billing (unit / community-unmetered).
+
+        Spec R2 F-04: the decrement is now a conditional atomic floor that raises
+        :class:`CreditsExhaustedError` rather than driving the balance negative.
+        This is **post-success** billing of an already-completed turn, so an
+        exhausted balance must NOT discard the work — the floor already kept the
+        balance >= 0; we log and let the turn finish (``done`` + synthesis). The
+        pre-flight :func:`require_credits` gate still refuses the NEXT turn.
         """
         if self._credits_policy is None or self._engine is None:
             return
-        self._credits_policy.deduct(
-            rls_engine=self._engine,
-            user_id=handle.owner_id,
-            amount=self._credits_per_turn,
-            reason="chat_turn",
-        )
+        try:
+            self._credits_policy.deduct(
+                rls_engine=self._engine,
+                user_id=handle.owner_id,
+                amount=self._credits_per_turn,
+                reason="chat_turn",
+            )
+        except CreditsExhaustedError:
+            _log.warning(
+                "post-turn billing skipped: insufficient credits to bill the completed turn "
+                "(balance floored at 0); owner={owner} conversation={conv}",
+                owner=handle.owner_id,
+                conv=handle.conversation_id,
+            )
 
     def _enqueue_synthesis(self, handle: ChatTurnHandle, conversation: Conversation) -> None:
         """Enqueue off-critical-path conversation synthesis at the turn boundary (K2 T8d).

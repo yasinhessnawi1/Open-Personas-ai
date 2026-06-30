@@ -662,7 +662,10 @@ def _stage_documents_for_file_read(
     # Local import: keep the api module-load import graph free of the core
     # sandbox resolver (mirrors the lazy-import discipline elsewhere here).
     from persona.errors import SandboxViolationError  # noqa: PLC0415
-    from persona.tools._sandbox import resolve_sandbox_path  # noqa: PLC0415
+    from persona.tools._sandbox import (  # noqa: PLC0415
+        resolve_sandbox_path,
+        write_nofollow_bytes,
+    )
 
     # The EXACT root the file_read provider resolves at dispatch time
     # (runtime_factory._build_file_sandbox_root_provider). Keeping the two in
@@ -681,7 +684,10 @@ def _stage_documents_for_file_read(
             continue
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(sf.content_bytes)
+            # R2 F-03: write via the O_NOFOLLOW opener so a symlink swapped into the
+            # final component cannot redirect the mirror write outside the sandbox
+            # (a swapped link raises OSError → skip, like any other write failure).
+            write_nofollow_bytes(target, sf.content_bytes)
         except OSError as exc:
             _log.warning(
                 "could not mirror document into the file_read root; skipping",

@@ -40,6 +40,7 @@ _log = get_logger("api.errors")
 
 __all__ = [
     "AuthenticationError",
+    "CloudConfigRefusedError",
     "ConcurrencyCappedError",
     "ConversationNotFoundError",
     "CreditsExhaustedError",
@@ -64,6 +65,12 @@ __all__ = [
 # extracted ``persona.auth.jwt_verifier.make_jwt_verifier`` without taking a
 # persona-api dependency. Re-exported here for back-compat with the existing
 # persona-api import sites (``from persona_api.errors import AuthenticationError``).
+# Spec R2 F-07 (R2-D-8): the PROVIDER-key auth error — a subclass of
+# ``ProviderError(PersonaError)``, NOT of the ``persona.errors.AuthenticationError``
+# above. A rotated/invalid model key surfaces this mid-request; without a dedicated
+# handler it falls through the catch-all ``_domain_500`` → 500. Aliased to avoid
+# shadowing the auth class; mapped to 401 below.
+from persona.backends.errors import AuthenticationError as BackendAuthenticationError  # noqa: E402
 from persona.errors import AuthenticationError  # noqa: E402, F401
 
 # CreditsExhaustedError was relocated to ``persona.errors`` at Spec 19 L6c
@@ -82,6 +89,26 @@ class PublicNoAuthRefusedError(PersonaError):
     that would burn the operator's model keys. ``context`` carries the offending
     ``host``. Set ``PERSONA_ALLOW_PUBLIC_NOAUTH=1`` to override, or run the
     ``cloud`` edition for a public/shared deploy.
+    """
+
+
+class CloudConfigRefusedError(PersonaError):
+    """Raised at startup when a ``cloud`` deploy is misconfigured (Spec R2, R2-D-1).
+
+    The fail-fast for the highest-severity audit findings — a cloud edition must
+    not silently ship authless (F-01) or run the request path as an
+    RLS-bypassing superuser (F-06) or skip the JWT audience check (F-05). The
+    guard refuses to start unless, for ``PERSONA_EDITION=cloud``:
+
+    - ``APP_DATABASE_URL`` is set AND distinct from ``DATABASE_URL`` (the request
+      path must use the non-superuser ``persona_app`` role, not the superuser DSN);
+    - ``PERSONA_API_JWT_AUDIENCE`` is non-empty (cloud forces the ``aud`` check);
+    - a defense-in-depth probe finds the rls_engine's role is NOT a superuser.
+
+    ``context`` carries the offending ``edition`` (+ ``reason`` for which check
+    tripped). There is intentionally NO request-time exception handler: like its
+    sibling guards (:class:`PublicNoAuthRefusedError`,
+    :class:`CloudGatewayNotVettedError`) this must crash the boot, never degrade.
     """
 
 
@@ -230,6 +257,21 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=_body(
                 "authentication_error", exc.message or "authentication required", exc.context
             ),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.exception_handler(BackendAuthenticationError)
+    async def _provider_auth(_: Request, exc: BackendAuthenticationError) -> JSONResponse:
+        # Spec R2 F-07 (R2-D-8): a provider/model-key auth failure (rotated or invalid
+        # key) is a 401, not a leaked 500. GENERIC body — never echo the provider
+        # message or context (it can carry the key); the detail is logged server-side
+        # only. FastAPI dispatches by the exception's MRO and picks this specific
+        # handler over the ``PersonaError`` ``_domain_500``, regardless of order.
+        # Log the type only — the exception message/context can carry the key.
+        _log.warning("provider authentication failed ({kind})", kind=type(exc).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content=_body("provider_auth_failed", "upstream authentication failed", {}),
             headers={"WWW-Authenticate": "Bearer"},
         )
 

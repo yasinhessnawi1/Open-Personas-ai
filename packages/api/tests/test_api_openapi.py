@@ -12,12 +12,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from persona_api.app import create_app
-from persona_api.config import APIConfig
+from persona_api.config import APIConfig, Edition
 
 
 @pytest.fixture
 def spec() -> dict:
-    app = create_app(APIConfig())
+    # Community: a no-infra boot for the OpenAPI smoke (the cloud-config guard
+    # no-ops; no DSN needed). The schema is edition-independent.
+    app = create_app(APIConfig(edition=Edition.community))
     with TestClient(app) as c:
         resp = c.get("/openapi.json")
         assert resp.status_code == 200

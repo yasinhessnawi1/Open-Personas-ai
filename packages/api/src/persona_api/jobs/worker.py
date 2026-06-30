@@ -36,6 +36,7 @@ from persona.logging import get_logger
 from sqlalchemy import text
 
 from persona_api.db.engine import create_db_engine
+from persona_api.editions import check_cloud_config_guard
 from persona_api.jobs.executor import JobExecutor
 from persona_api.jobs.queue import JobQueue
 from persona_api.middleware.rls_context import make_rls_engine
@@ -391,16 +392,15 @@ def build_worker(
         raise ValueError(msg)
     # The RLS engine MUST be the non-superuser persona_app role — a superuser
     # connection bypasses RLS entirely, silently negating the tenant boundary for
-    # every handler. Fall back to ``database_url`` only for single-role dev, and
-    # WARN loudly so the bypass is never silent (security review T4).
-    if not config.app_database_url:
-        _log.warning(
-            "APP_DATABASE_URL unset: worker RLS engine falls back to the superuser DSN — "
-            "RLS is BYPASSED for handler execution. Set APP_DATABASE_URL (persona_app) in "
-            "any multi-tenant deployment."
-        )
+    # every handler. Spec R2 R2-D-2: the worker is the SECOND call site of the
+    # cloud-config fail-fast — a misconfigured worker running as superuser is the
+    # same hole as the API path (F-06), so it REFUSES to start (was a soft WARN).
+    # The pure-config asserts run here before the engine is built; the is_superuser
+    # probe runs once the rls_engine exists (community: never gated).
+    check_cloud_config_guard(config)
     dispatch_engine = create_db_engine(dispatch_url)
     rls_engine = make_rls_engine(config.effective_app_database_url)
+    check_cloud_config_guard(config, probe_engine=rls_engine)
     scheduler_tick = (
         scheduler_tick_builder(dispatch_engine, rls_engine)
         if scheduler_tick_builder is not None

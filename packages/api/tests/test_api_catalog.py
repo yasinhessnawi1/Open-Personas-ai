@@ -18,7 +18,15 @@ from persona_api.config import APIConfig
 
 @pytest.fixture
 def client() -> TestClient:
-    app = create_app(APIConfig())  # no DB needed for the catalog routes
+    app = create_app(
+        # Cloud auth wall, but no lifespan engine is built here (the fixture
+        # returns the client without entering its context + sets rls_engine=None).
+        # Distinct app DSN satisfies the R2 cloud-config guard (R2-D-1).
+        APIConfig(
+            database_url="postgresql+psycopg://super@localhost/persona_shell",
+            app_database_url="postgresql+psycopg://persona_app@localhost/persona_shell",
+        )
+    )  # no DB needed for the catalog routes
 
     async def _verify(token: str) -> AuthenticatedUser:
         return AuthenticatedUser(id=token, email=None)

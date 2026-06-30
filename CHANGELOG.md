@@ -11,6 +11,41 @@ Per-spec entries are added by the close-out phase of each spec.
 
 ## [Unreleased]
 
+### Production Safety & Security Hardening (2026-06-30)
+
+> A test-first hardening pass over already-shipped surfaces — no new features. A misconfigured
+> cloud deployment now **fails loudly at startup instead of silently shipping authless or
+> RLS-bypassing**, credits **cannot be double-spent** under concurrency, the file serve/stage
+> layer's symlink-swap (TOCTOU) window is **closed**, and a rotated model-provider key returns
+> the **correct HTTP status**. Every fix ships a regression test that fails before it and a
+> durable guard (a startup assertion, a DB constraint, or a default-lane test) so the unsafe
+> state cannot silently return. The guiding invariant: **fail-fast, never fail-open.**
+
+#### Security
+
+- **Cloud-edition startup fail-fast.** A new guard refuses to start a `cloud` deployment that
+  is misconfigured: it requires an explicit `PERSONA_EDITION=cloud`, an `APP_DATABASE_URL` that
+  is set **and distinct from** the superuser `DATABASE_URL` (so the request path never runs as
+  an RLS-bypassing superuser), and a non-empty `PERSONA_API_JWT_AUDIENCE` (so the JWT `aud`
+  check is actually enforced). A defense-in-depth probe additionally refuses if the request
+  engine's role is a PostgreSQL superuser. The guard runs at the API composition root **and**
+  the background-worker composition root — a misconfigured worker now refuses rather than
+  warning. Community (the zero-infra self-host) is unaffected.
+- **Credits cannot double-spend.** The credit decrement is now a conditional atomic operation
+  (`UPDATE … WHERE balance >= :amount RETURNING`): an overdraw is rejected rather than driving
+  the balance negative, and a DB-level `CHECK (balance >= 0)` constraint enforces the floor
+  regardless of code path. Post-success turn billing tolerates an exhausted balance gracefully
+  (the completed turn is never discarded; the next turn's pre-flight gate still refuses).
+- **File serve/stage TOCTOU closed.** A single audited `O_NOFOLLOW` opener now backs every
+  sandbox read/write/serve site, so a symlink swapped into a path's final component after
+  validation can no longer redirect a read, write, or download outside the sandbox. The
+  artifact-delete and image-serve existence checks were also hardened to not follow a trailing
+  symlink. (Symlinks in *intermediate* directories remain a documented, accepted v1 residual,
+  matching the prior file-tool behavior; the Linux-only `openat2` hardening is noted for later.)
+- **Provider-auth status correctness.** A rotated or invalid model-provider API key surfaced
+  mid-request now returns `401` with a generic, non-leaking body, instead of falling through to
+  a `500`. (The keyless-deployment `503`, shipped earlier, is unchanged.)
+
 ### Persona MCP Self-Extension — in-role, credential-isolated app adoption (2026-06-29)
 
 > Close-out of `persona-mcp-self-extension` (Spec N4, backend). A persona that hits an

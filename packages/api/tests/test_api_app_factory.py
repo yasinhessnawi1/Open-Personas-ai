@@ -11,21 +11,25 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from persona_api.app import create_app
-from persona_api.config import APIConfig
+from persona_api.config import APIConfig, Edition
 
 if TYPE_CHECKING:
     import pytest
 
 
 def test_create_app_returns_fastapi_instance() -> None:
-    app = create_app(APIConfig())
+    # Community edition: a no-infra boot (no DSN needed, the cloud-config guard
+    # no-ops). The factory smoke tests assert the app exists / serves OpenAPI.
+    app = create_app(APIConfig(edition=Edition.community))
     assert isinstance(app, FastAPI)
     assert app.title == "Persona API"
 
 
 def test_app_boots_with_test_client() -> None:
     # A trivial client boot: the app starts and serves the auto OpenAPI doc.
-    app = create_app(APIConfig())
+    # Community edition: a no-infra boot (no DSN needed, the cloud-config guard
+    # no-ops). The factory smoke tests assert the app exists / serves OpenAPI.
+    app = create_app(APIConfig(edition=Edition.community))
     with TestClient(app) as client:
         resp = client.get("/openapi.json")
         assert resp.status_code == 200

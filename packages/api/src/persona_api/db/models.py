@@ -551,6 +551,13 @@ credits = Table(  # noqa: A001 — schema table name (spec §5), not the stdlib 
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
     Column("balance", Integer, nullable=False, server_default=text("100000")),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # Spec R2 R2-D-3 (F-04): the durable DB-level floor for the money path. The
+    # conditional decrement in ``persona.credits.service.deduct`` makes a negative
+    # balance unreachable from the app; this CHECK enforces it regardless of any
+    # future write path. Added on a deployed DB by migration 024 (after a one-shot
+    # repair of any pre-fix negative rows); declared here so a fresh-DB
+    # ``metadata.create_all`` builds it too (split-home discipline, cf. messages).
+    CheckConstraint("balance >= 0", name="credits_balance_nonneg_check"),
 )
 
 credit_transactions = Table(

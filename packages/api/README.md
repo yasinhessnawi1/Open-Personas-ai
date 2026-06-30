@@ -145,6 +145,11 @@ uv run alembic -c packages/api/alembic.ini upgrade head    # migrations are expl
 cd packages/api && bash run-local.sh          # api :8000 (+ voice :8001)
 ```
 
+A `cloud` deploy **refuses to start** if it is misconfigured (fail-fast, never fail-open):
+`APP_DATABASE_URL` must be set and distinct from the superuser `DATABASE_URL` (so the request
+path never runs as an RLS-bypassing superuser), and `PERSONA_API_JWT_AUDIENCE` must be set (so
+the JWT `aud` claim is verified).
+
 Migrations never run on container start. Production runs from the included
 `Dockerfile`:
 

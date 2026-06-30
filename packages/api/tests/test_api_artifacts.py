@@ -44,7 +44,15 @@ def client(
     monkeypatch: pytest.MonkeyPatch,
     workspace_root: Path,
 ) -> TestClient:
-    app = create_app(APIConfig())
+    app = create_app(
+        # Cloud auth wall, but no lifespan engine is built here (the fixture
+        # returns the client without entering its context + sets rls_engine=None).
+        # Distinct app DSN satisfies the R2 cloud-config guard (R2-D-1).
+        APIConfig(
+            database_url="postgresql+psycopg://super@localhost/persona_shell",
+            app_database_url="postgresql+psycopg://persona_app@localhost/persona_shell",
+        )
+    )
 
     async def _verify(token: str) -> AuthenticatedUser:
         return AuthenticatedUser(id=token, email=None)

@@ -27,6 +27,7 @@ from persona.logging import get_logger
 from persona.schema.tools import PersistedArtifact, ToolResult
 from persona.tools._sandbox import (
     SandboxRootProvider,
+    open_nofollow,
     resolve_request_sandbox_root,
     resolve_sandbox_path,
 )
@@ -130,14 +131,15 @@ def make_file_write_tool(
                 is_error=True,
             )
 
-        # O_NOFOLLOW closes the TOCTOU window between resolver check and open.
-        # O_CREAT|O_TRUNC overwrites existing files per spec §6.4.
-        # File mode 0o600 is correct for v0.1 single-user CLI; the hosted path
-        # (spec 08) uses Postgres-backed storage and does not produce local files.
+        # O_NOFOLLOW closes the TOCTOU window between resolver check and open,
+        # via the shared sandbox opener (R2-D-4). O_CREAT|O_TRUNC overwrites
+        # existing files per spec §6.4. File mode 0o600 is correct for v0.1
+        # single-user CLI; the hosted path (spec 08) uses Postgres-backed storage
+        # and does not produce local files.
         try:
-            fd = os.open(
+            fd = open_nofollow(
                 resolved,
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
                 0o600,
             )
         except PermissionError as e:
