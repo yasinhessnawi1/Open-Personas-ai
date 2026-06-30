@@ -103,14 +103,19 @@ def test_tool_result_payload_keys_match_frontend() -> None:
     assert data["tool_name"] == "web_search"
     assert data["is_error"] is False
     # NB the artifact ref shape MUST match the frontend `ArtifactRef` (mime_type, NOT
-    # media_type; no `name` — the web normaliser derives the display name).
+    # media_type; no `name` — the web normaliser derives the display name). Spec R3
+    # (R3-D-4 / Art. 50) adds `ai_generated` — the synthetic-media disclosure the web
+    # renders an "AI-generated" badge from (the web normaliser/`ArtifactRef` must read
+    # it; tracked as the merge-back web-render note).
     assert set(data["artifacts"][0]) == {
         "workspace_path",
         "mime_type",
         "size_bytes",
         "rendered_inline",
+        "ai_generated",
     }
     assert data["artifacts"][0]["workspace_path"] == "uploads/a.png"
+    assert data["artifacts"][0]["ai_generated"] is True
 
 
 def test_tool_result_produced_files_key_present_when_set() -> None:

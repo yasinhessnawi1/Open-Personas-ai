@@ -2266,6 +2266,17 @@
             "type": "string",
             "title": "Source"
           },
+          "ai_generated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Generated"
+          },
           "type": {
             "type": "string",
             "title": "Type"
@@ -3266,6 +3277,28 @@
               }
             ],
             "title": "Avatar Url"
+          },
+          "avatar_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Source"
+          },
+          "avatar_ai_generated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Ai Generated"
           },
           "capabilities": {
             "anyOf": [

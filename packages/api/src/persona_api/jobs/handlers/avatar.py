@@ -119,12 +119,15 @@ class AvatarGenerationHandler:
             detail={"provider": result.provider, "surface": "avatar"},
         )
         # Compare-and-set: only set if STILL null, so a concurrent re-delivery that
-        # also generated cannot overwrite — exactly one avatar_url wins.
+        # also generated cannot overwrite — exactly one avatar_url wins. ``avatar_source``
+        # is co-written ``'generated'`` in the SAME ``.values(...)`` (Spec R3, R3-D-3) so the
+        # "exactly one avatar_url wins" invariant extends to provenance — no window where the
+        # url is set but provenance is NULL. The Art. 50 disclosure derives from this signal.
         with context.connection() as conn:
             conn.execute(
                 update(personas)
                 .where(personas.c.id == persona_id, personas.c.avatar_url.is_(None))
-                .values(avatar_url=result.avatar_url)
+                .values(avatar_url=result.avatar_url, avatar_source="generated")
             )
 
 

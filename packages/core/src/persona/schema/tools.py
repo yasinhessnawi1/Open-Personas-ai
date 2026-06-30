@@ -107,6 +107,17 @@ class PersistedArtifact(BaseModel):
         size_bytes: Size of the persisted bytes.
         rendered_inline: Frontend hint — render inline (image thumbnail / inline
             SVG) above the file card vs. card-only. Defaults to ``False``.
+        ai_generated: Synthetic-media provenance (Spec R3, R3-D-4 / EU AI Act
+            Art. 50). Every artifact on :attr:`ToolResult.artifacts` is a
+            *system-produced* output — a generated image (``generate_image``),
+            a rendered diagram, or a code-execution produced file — never a
+            user upload (uploads do not flow through tool results). So this
+            defaults ``True``: the bytes are AI-/system-generated. The
+            recipient-facing "AI-generated" disclosure derives from this stored
+            signal at the render boundary; the SSE payload carries it so an
+            inline-rendered chat image is disclosed (it previously carried no
+            provenance at all). Default-valued so pre-Spec-R3 serialisation
+            stays byte-identical when an empty ``artifacts`` tuple is omitted.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -115,6 +126,7 @@ class PersistedArtifact(BaseModel):
     mime_type: str
     size_bytes: int = Field(ge=0)
     rendered_inline: bool = False
+    ai_generated: bool = True
 
 
 class ToolResult(BaseModel):

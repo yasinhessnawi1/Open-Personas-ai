@@ -13,7 +13,24 @@ mirrors only the `persona-api`-touching surface.
 
 ## [Unreleased]
 
-(empty — future post-v0.1 work lands here)
+### Synthetic-Media Provenance & Disclosure (Spec R3 — EU AI Act Art. 50)
+
+- **`personas.avatar_source` column + migration `025_avatar_source_provenance`** (nullable
+  `TEXT`: `generated` / `uploaded` / `NULL` = unknown). Split-home + idempotent
+  `ADD COLUMN IF NOT EXISTS` (mirrors migration 008); no RLS change, no `schema_version` bump.
+  Backfill = NULL = unknown (no audit-backfill — old uploads/generations are not reliably
+  distinguishable after the fact).
+- **Provenance co-written with `avatar_url` across all four write paths** (R3-D-3): the inline
+  create-hook (`set_avatar_url` → `generated`), the async `AvatarGenerationHandler` compare-and-set
+  (`generated`), the upload-to-change PATCH (`update_persona` → `uploaded`), and the
+  create-with-user-avatar INSERT (`create_persona` → `uploaded`). Same write ⇒ no NULL window;
+  RLS-scoped ⇒ no cross-tenant leak.
+- **Derived Art. 50 disclosure** (`services.provenance.ai_generated_from_source`, the single
+  derivation): `PersonaDetail` gains `avatar_source` + derived `avatar_ai_generated`;
+  `ArtifactMetadataView` gains derived `ai_generated`. `PersistedArtifact` (persona-core) gains
+  `ai_generated` (defaults `True`) so the SSE inline-render payload (chat + voice) discloses a
+  generated image — it previously carried none. Response-schema additions → the web TS client
+  regenerates at merge-back; the visible "AI-generated" badge is a web-render follow-up.
 
 ---
 

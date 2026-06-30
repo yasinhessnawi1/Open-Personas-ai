@@ -118,6 +118,21 @@ personas = Table(
     # pre-spec-09 patch. Not part of the persona YAML schema — a presentation
     # field owned by the API row.
     Column("avatar_url", Text),
+    # Synthetic-media provenance for the avatar (Spec R3, R3-D-2 / EU AI Act Art. 50).
+    # ``'generated'`` = the avatar bytes were produced by the system's image-gen
+    # path (the inline create-hook or the async avatar job); ``'uploaded'`` = a user
+    # supplied the bytes via the upload-to-change PATCH; ``NULL`` = unknown (every
+    # row that predates this column — the explicit, honest backfill state per
+    # R3-D-5: pre-existing avatars cannot be reliably distinguished post-hoc, so
+    # they read unknown rather than being mislabelled). The Art. 50 "AI-generated"
+    # disclosure is *derived* from this stored signal (``avatar_source == 'generated'``),
+    # never guessed. Set in the SAME write as ``avatar_url`` so it is unforgeable
+    # (R3-D-3 — no window where the url is set but provenance is NULL). Added by
+    # migration 025; nullable TEXT (not an SQL ENUM/CHECK — string keeps the
+    # community SQLite edition byte-identical to Postgres; app-layer is the gate).
+    # Like ``avatar_url`` this is an API-row presentation field, NOT part of the
+    # persona YAML schema, so it does not move ``schema_version``.
+    Column("avatar_source", Text),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # Spec 21 T09 (D-21-7): tri-state auto-dispatch consent. NULL = never asked /

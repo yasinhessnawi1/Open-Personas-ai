@@ -38,6 +38,7 @@ from persona_api.services.artifact_metadata import (
     is_any_sidecar,
     read_artifact_sidecar,
 )
+from persona_api.services.provenance import ai_generated_from_source
 
 router = APIRouter(prefix="/v1/personas", tags=["artifacts"])
 
@@ -94,6 +95,8 @@ def _to_view(meta: WorkspaceArtifactMetadata | None) -> ArtifactMetadataView | N
         return None
     return ArtifactMetadataView(
         source=meta.source,
+        # Spec R3 (R3-D-4 / Art. 50): derive the disclosure from the stored source.
+        ai_generated=ai_generated_from_source(meta.source),
         type=meta.type,
         producing_spec=meta.producing_spec,
         conversation_id=meta.conversation_id,

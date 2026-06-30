@@ -49,6 +49,7 @@ from persona_api.services import (
     tool_consent_service,
     voice_assignment_service,
 )
+from persona_api.services.provenance import avatar_ai_generated_from_source
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -145,11 +146,19 @@ def _persona_detail(
     avatar = row.get("avatar_url")
     consent = row.get("consent_to_auto_dispatch")
     yaml_str = str(row["yaml"])
+    # Spec R3 (R3-D-4 / Art. 50): derive the recipient-facing disclosure from the
+    # stored provenance signal — never guessed. 'generated' → AI-generated (True),
+    # 'uploaded' → not (False), NULL/unknown → None (legacy rows; no claim).
+    avatar_source = row.get("avatar_source")
+    avatar_src = str(avatar_source) if avatar_source is not None else None
+    avatar_ai_generated = avatar_ai_generated_from_source(avatar_src)
     return PersonaDetail(
         id=str(row["id"]),
         yaml=yaml_str,
         schema_version=str(row["schema_version"]),
         avatar_url=str(avatar) if avatar is not None else None,
+        avatar_source=avatar_src,
+        avatar_ai_generated=avatar_ai_generated,
         capabilities=_capabilities_from_registry(tier_registry),
         consent_to_auto_dispatch=bool(consent) if consent is not None else None,
         consent_updated_at=row.get("consent_updated_at"),  # type: ignore[arg-type]

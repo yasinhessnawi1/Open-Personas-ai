@@ -395,6 +395,10 @@ class TestToolResultArtifactsForwarding:
                 "mime_type": "image/png",
                 "size_bytes": 2048,
                 "rendered_inline": True,
+                # Spec R3 (R3-D-4 / Art. 50): synthetic-media provenance now rides the
+                # artifact payload so the SSE inline render discloses (defaults True —
+                # every ToolResult artifact is a system-produced output).
+                "ai_generated": True,
             }
         ]
 

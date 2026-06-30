@@ -116,6 +116,15 @@ class PersonaDetail(_Output):
     yaml: str
     schema_version: str
     avatar_url: str | None = None
+    # Spec R3 (R3-D-2 / R3-D-4 / EU AI Act Art. 50): synthetic-media provenance for
+    # the avatar. ``avatar_source`` is the structural signal stored on the row
+    # (``'generated'`` / ``'uploaded'`` / ``None`` = unknown for legacy rows).
+    # ``avatar_ai_generated`` is the *derived* recipient-facing disclosure the web
+    # renders an "AI-generated" badge from: True when generated, False when uploaded,
+    # None when unknown — derived from the stored signal, never guessed. Additive;
+    # both default None so legacy rows + unit fixtures stay byte-identical.
+    avatar_source: str | None = None
+    avatar_ai_generated: bool | None = None
     capabilities: PersonaCapabilities | None = None
     # Spec 21 T09 (D-21-7): tri-state auto-dispatch consent surfaced to the
     # settings UI. None = never asked / revoked-to-ask, True = granted,
@@ -493,6 +502,11 @@ class ArtifactMetadataView(_Output):
     """
 
     source: str
+    # Spec R3 (R3-D-4 / EU AI Act Art. 50): the *derived* recipient-facing
+    # disclosure — True when ``source == 'generated'``, False when ``'uploaded'``,
+    # None when unknown. Rides the existing structural ``source`` signal (not a
+    # duplicate); the web renders an "AI-generated" badge from this. Additive.
+    ai_generated: bool | None = None
     type: str
     producing_spec: str
     conversation_id: str | None

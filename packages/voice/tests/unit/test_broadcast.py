@@ -212,6 +212,9 @@ async def test_tool_result_frame_carries_artifacts_flat_reliable_on_topic() -> N
         "mime_type": "image/png",
         "size_bytes": 1024,
         "rendered_inline": True,
+        # Spec R3 (R3-D-4 / Art. 50): the synthetic-media disclosure rides the voice
+        # render frame too — a voice-rendered chat image is disclosed AI-generated.
+        "ai_generated": True,
     }
 
 

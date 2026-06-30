@@ -223,6 +223,12 @@ def create_persona(
     persona, yaml_str = _guard_default_capabilities(persona, yaml_str)
     _warn_if_language_unserviceable(persona)
 
+    # Synthetic-media provenance (Spec R3, R3-D-3): a user-supplied ``avatar_url`` at
+    # create IS an upload, so co-write ``avatar_source='uploaded'`` in the SAME INSERT.
+    # When ``avatar_url`` is null the row stays ``avatar_source=NULL`` (unknown) — the
+    # avatar auto-generation hook (B1/B2) sets ``'generated'`` afterwards if it runs, or
+    # it remains unknown (the honest floor). No NULL window for the upload case.
+    avatar_source = "uploaded" if avatar_url is not None else None
     with rls_engine.begin() as conn:
         conn.execute(
             insert(personas_t).values(
@@ -231,6 +237,7 @@ def create_persona(
                 yaml=yaml_str,
                 schema_version=persona.schema_version,
                 avatar_url=avatar_url,
+                avatar_source=avatar_source,
             )
         )
     # Persona row committed → its FK target is visible to the store connections.
@@ -253,7 +260,11 @@ def update_persona(
     """Replace a persona's YAML (re-validated) and re-index its memory.
 
     ``avatar_url`` is updated only when provided (``None`` leaves it untouched —
-    a PATCH semantics for the presentation field).
+    a PATCH semantics for the presentation field). When a new ``avatar_url`` is
+    supplied this is the **upload-to-change** path: the bytes came from the user,
+    so ``avatar_source`` is co-written ``'uploaded'`` in the SAME ``UPDATE`` (Spec
+    R3, R3-D-3) — unforgeable synthetic-media provenance, no NULL window. The Art.
+    50 disclosure derives from this stored signal.
     """
     persona = load_persona_from_yaml(yaml_str, persona_id=persona_id, owner_id=owner_id)
     persona, yaml_str = _guard_safety(persona, yaml_str)
@@ -262,6 +273,7 @@ def update_persona(
     values: dict[str, object] = {"yaml": yaml_str, "schema_version": persona.schema_version}
     if avatar_url is not None:
         values["avatar_url"] = avatar_url
+        values["avatar_source"] = "uploaded"
     with rls_engine.begin() as conn:
         result = conn.execute(
             update(personas_t)
@@ -275,20 +287,30 @@ def update_persona(
     registry.load_persona(persona)
 
 
-def set_avatar_url(*, rls_engine: Engine, persona_id: str, avatar_url: str) -> None:
-    """Set a persona's ``avatar_url`` presentation field (Spec 29 D-29-3).
+def set_avatar_url(
+    *, rls_engine: Engine, persona_id: str, avatar_url: str, avatar_source: str = "generated"
+) -> None:
+    """Set a persona's ``avatar_url`` + provenance presentation fields (Spec 29 D-29-3).
 
     A narrow, RLS-scoped write for the build-time avatar auto-generation hook:
     unlike :func:`update_persona` it does NOT re-validate the YAML or re-index
-    memory — it touches only the ``avatar_url`` column. Silent if the row is
-    absent (the create transaction just committed it; a concurrent delete is a
-    no-op rather than an error, per the idempotency standard). The auto-gen hook
-    runs only when ``avatar_url`` was null at create, so this never overwrites a
-    user-supplied avatar (D-29 criterion 6).
+    memory — it touches only the ``avatar_url`` + ``avatar_source`` columns. Silent
+    if the row is absent (the create transaction just committed it; a concurrent
+    delete is a no-op rather than an error, per the idempotency standard). The
+    auto-gen hook runs only when ``avatar_url`` was null at create, so this never
+    overwrites a user-supplied avatar (D-29 criterion 6).
+
+    ``avatar_source`` is co-written in the SAME ``UPDATE`` as ``avatar_url`` (Spec
+    R3, R3-D-3) so the synthetic-media provenance is unforgeable — there is no
+    window where the url is set but provenance is NULL. Defaults to ``'generated'``
+    because the only caller is the avatar auto-generation hook (the bytes came from
+    the image-gen path); the Art. 50 disclosure derives from this stored signal.
     """
     with rls_engine.begin() as conn:
         conn.execute(
-            update(personas_t).where(personas_t.c.id == persona_id).values(avatar_url=avatar_url)
+            update(personas_t)
+            .where(personas_t.c.id == persona_id)
+            .values(avatar_url=avatar_url, avatar_source=avatar_source)
         )
 
 

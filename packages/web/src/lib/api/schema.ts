@@ -1129,6 +1129,8 @@ export interface components {
     ArtifactMetadataView: {
       /** Source */
       source: string;
+      /** Ai Generated */
+      ai_generated?: boolean | null;
       /** Type */
       type: string;
       /** Producing Spec */
@@ -1829,6 +1831,10 @@ export interface components {
       schema_version: string;
       /** Avatar Url */
       avatar_url?: string | null;
+      /** Avatar Source */
+      avatar_source?: string | null;
+      /** Avatar Ai Generated */
+      avatar_ai_generated?: boolean | null;
       capabilities?: components["schemas"]["PersonaCapabilities"] | null;
       /** Consent To Auto Dispatch */
       consent_to_auto_dispatch?: boolean | null;
