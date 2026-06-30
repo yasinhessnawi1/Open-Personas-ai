@@ -126,11 +126,18 @@ export function useChat(
         params: { path: { conversation_id: conversationId } },
       }),
     );
-    // Read the history SYNCHRONOUSLY here (not inside the setMessages updater): a
-    // failed/empty GET throws on THIS line, where it rejects the `reload` promise
-    // and is swallowed by the caller's `.catch` — instead of throwing later inside
-    // React's render (uncatchable, crashes the hook).
+    // Read + validate the history SYNCHRONOUSLY here (in the async body, NOT inside
+    // the setMessages updater): a malformed / empty GET that lacks `messages` throws
+    // on THIS line, where it rejects the `reload` promise and is swallowed by the
+    // caller's `.catch`. If the `.map` were the FIRST contact with a missing
+    // `messages`, that throw would happen later inside the React render phase (the
+    // updater runs during render) — uncatchable, crashing the whole hook (and any
+    // turn already rendered, e.g. a just-landed proactive rail). Validating up front
+    // keeps the failure inside the catchable async boundary.
     const incoming = conv.messages;
+    if (!Array.isArray(incoming)) {
+      throw new Error("reload: conversation GET returned no messages array");
+    }
     // Spec P3 (P3-D-4/5a): reconstruct the interleaved view from the persisted
     // ordered log via the SHARED `persistedToView` — the one mapper that replaced
     // the old two divergent text-only maps. This is what makes a refresh /
