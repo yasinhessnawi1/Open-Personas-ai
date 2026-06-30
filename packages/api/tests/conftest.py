@@ -150,6 +150,38 @@ def _isolate_test_db() -> None:
         )
 
 
+def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001 — pytest hook signature
+    """Pre-import ``sentence_transformers`` once, before collection + any test timer.
+
+    Every persona-create in the integration suite indexes the persona's identity
+    through the real ``bge-small-en-v1.5`` embedder (the app-built ``memory_backend``
+    bakes it in, so a fixture's ``app.state.embedder`` override does not reach the
+    identity-index path). The FIRST such create therefore pays the *one-time*
+    ``from sentence_transformers import SentenceTransformer`` cost — which drags in
+    ``transformers`` + ``torch._dynamo`` and, on a cold interpreter, can exceed the
+    per-test ``pytest-timeout`` ceiling (120s, ``func_only=False`` so even fixture
+    setup counts), failing whichever persona-creating test happens to run first.
+
+    CI sidesteps this with a separate "warm embedder cache" job step that runs the
+    import in its own process before pytest (``.github/workflows/ci.yml``). This
+    hook is the local-run equivalent. ``pytest_configure`` runs during plugin init —
+    BEFORE collection and before any per-test ``--timeout`` signal is armed — so the
+    cold import is paid entirely outside every test's timer (a session-autouse
+    *fixture* would not suffice: its setup runs inside the first requesting test's
+    timed window under ``func_only=False``).
+
+    Integration-gated (``PERSONA_TEST_DB=1``) so the unit suite — which never touches
+    the real embedder — is unaffected and pays nothing. Best-effort: if the optional
+    heavy dep is absent, the integration tests that need it skip anyway.
+    """
+    if os.environ.get("PERSONA_TEST_DB") != "1":
+        return
+    try:
+        import sentence_transformers  # noqa: F401 — imported for its side-effect cost
+    except ImportError:  # pragma: no cover - optional heavy dep absent
+        return
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _default_cloud_edition() -> Iterator[None]:
     """Run the existing api suite as the CLOUD edition (Spec 33).
