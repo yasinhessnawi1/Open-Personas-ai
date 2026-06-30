@@ -34,13 +34,18 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
-_APP_URL = os.environ.get("APP_DATABASE_URL")
-
 
 def _require_app_role() -> str:
-    if not _APP_URL:
+    # Read APP_DATABASE_URL LAZILY (not at module import): the conftest's
+    # per-worktree ``_isolate_test_db`` fixture rewrites ``os.environ`` to a
+    # worktree-unique ``persona_test_*`` DB at session start, AFTER this module is
+    # imported. Capturing it at import time pinned the read to the stale shared DB
+    # while the ``database_url`` fixture (lazy) used the isolated one — the seed
+    # and the RLS read then hit different databases (→ empty result, not a leak).
+    app_url = os.environ.get("APP_DATABASE_URL")
+    if not app_url:
         pytest.skip("APP_DATABASE_URL (the non-superuser persona_app role) not set")
-    return _APP_URL.replace("+asyncpg", "+psycopg")
+    return app_url.replace("+asyncpg", "+psycopg")
 
 
 def _seed_two_tenants(superuser_url: str, emb: HashEmbedder384) -> tuple[str, str, str, str]:
